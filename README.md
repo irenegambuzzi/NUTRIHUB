@@ -1,16 +1,32 @@
-# React + Vite
+# Home & Nutri Hub
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, a grocery list, a pantry tracker, and an expense tracker with customizable categories. No login — everything is saved to a shared Supabase project and visible to both profiles at once.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React + Vite, Tailwind CSS v4
+- Supabase (Postgres) as the data store — no Supabase Auth, no per-user accounts
+- React Router for navigation
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Copy `.env.example` to `.env` and fill in the Supabase URL/anon key.
+2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`.
+3. `npm install`
+4. `npm run dev`
 
-## Expanding the Oxlint configuration
+## Deployment (GitHub Pages)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Pushing to `main` builds and publishes the site automatically via `.github/workflows/deploy.yml`. One-time setup in the GitHub repo:
+
+1. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
+2. Settings → Secrets and variables → Actions → add repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (same values as your local `.env`).
+
+The site is served from a subpath (`/NUTRIHUB/`), so routing uses `HashRouter` and `vite.config.js` sets `base: '/NUTRIHUB/'` — keep both in sync if the repo is ever renamed.
+
+## Structure
+
+- `src/pages/` — one file per section (Planner, Profiles, Recipes, Grocery, Expenses, Pantry)
+- `src/hooks/` — data-fetching/CRUD hooks per Supabase table
+- `src/components/` — layout shell and small reusable UI primitives
+- `supabase/schema.sql` — the full database schema
