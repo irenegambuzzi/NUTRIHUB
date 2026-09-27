@@ -6,10 +6,13 @@ import { Input, Select } from '../components/ui/Field'
 import { cn } from '../lib/cn'
 import { useMealPlan } from '../hooks/useMealPlan'
 import { useRecipes } from '../hooks/useRecipes'
+import { useProfiles } from '../hooks/useProfiles'
 import { WEEKDAYS, WEEKDAY_SHORT_LABELS, MEAL_TYPES, MEAL_TYPE_LABELS } from '../data/constants'
 
 export function PlannerPage() {
-  const { plan, loading, setMeal, clearMeal, resetPlan } = useMealPlan()
+  const { profiles } = useProfiles()
+  const [selectedProfileId, setSelectedProfileId] = useState('irene')
+  const { plan, loading, setMeal, clearMeal, resetPlan } = useMealPlan(selectedProfileId)
   const { recipes } = useRecipes()
   const [selectedDay, setSelectedDay] = useState('Monday')
 
@@ -27,6 +30,23 @@ export function PlannerPage() {
           <RefreshCw size={12} /> Reset
         </Button>
       </div>
+
+      {profiles.length > 0 && (
+        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 w-fit">
+          {profiles.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setSelectedProfileId(p.id)}
+              className={cn(
+                'px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
+                selectedProfileId === p.id ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
+              )}
+            >
+              {p.display_name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-1 overflow-x-auto pb-1 text-xs">
         {WEEKDAYS.map((day) => (

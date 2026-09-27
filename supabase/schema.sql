@@ -47,10 +47,11 @@ create table meal_plan_entries (
   week_start date not null,
   day_of_week text not null,
   meal_type text not null,
+  profile_id text not null references profiles(id),
   recipe_id uuid references recipes(id) on delete set null,
   custom_text text,
   created_at timestamptz not null default now(),
-  unique (week_start, day_of_week, meal_type)
+  unique (week_start, day_of_week, meal_type, profile_id)
 );
 
 create table grocery_items (

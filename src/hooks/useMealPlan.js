@@ -12,13 +12,18 @@ function buildEmptyPlan() {
   return plan
 }
 
-export function useMealPlan() {
+export function useMealPlan(profileId) {
   const weekStart = useMemo(() => getCurrentWeekStart(), [])
   const [plan, setPlan] = useState(buildEmptyPlan)
   const [loading, setLoading] = useState(true)
 
   const fetchPlan = useCallback(async () => {
-    const { data } = await supabase.from('meal_plan_entries').select('*').eq('week_start', weekStart)
+    if (!profileId) return
+    const { data } = await supabase
+      .from('meal_plan_entries')
+      .select('*')
+      .eq('week_start', weekStart)
+      .eq('profile_id', profileId)
     const next = buildEmptyPlan()
     if (data) {
       for (const entry of data) {
@@ -27,7 +32,7 @@ export function useMealPlan() {
     }
     setPlan(next)
     setLoading(false)
-  }, [weekStart])
+  }, [weekStart, profileId])
 
   useEffect(() => {
     fetchPlan()
@@ -43,8 +48,8 @@ export function useMealPlan() {
       const { data, error } = await supabase
         .from('meal_plan_entries')
         .upsert(
-          { week_start: weekStart, day_of_week: day, meal_type: mealType, recipe_id: recipeId, custom_text: customText },
-          { onConflict: 'week_start,day_of_week,meal_type' }
+          { week_start: weekStart, day_of_week: day, meal_type: mealType, profile_id: profileId, recipe_id: recipeId, custom_text: customText },
+          { onConflict: 'week_start,day_of_week,meal_type,profile_id' }
         )
         .select()
         .single()
@@ -54,7 +59,7 @@ export function useMealPlan() {
       }
       return { error }
     },
-    [weekStart]
+    [weekStart, profileId]
   )
 
   const clearMeal = useCallback(
@@ -62,16 +67,16 @@ export function useMealPlan() {
       await supabase
         .from('meal_plan_entries')
         .delete()
-        .match({ week_start: weekStart, day_of_week: day, meal_type: mealType })
+        .match({ week_start: weekStart, day_of_week: day, meal_type: mealType, profile_id: profileId })
       setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: null } }))
     },
-    [weekStart]
+    [weekStart, profileId]
   )
 
   const resetPlan = useCallback(async () => {
-    await supabase.from('meal_plan_entries').delete().eq('week_start', weekStart)
+    await supabase.from('meal_plan_entries').delete().eq('week_start', weekStart).eq('profile_id', profileId)
     setPlan(buildEmptyPlan())
-  }, [weekStart])
+  }, [weekStart, profileId])
 
   return { plan, loading, weekStart, setMeal, clearMeal, resetPlan }
 }
