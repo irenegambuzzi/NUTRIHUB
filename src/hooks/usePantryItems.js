@@ -24,6 +24,13 @@ export function usePantryItems() {
     return { data: data?.[0], error }
   }, [])
 
+  const updateQuantity = useCallback(async (id, quantity, unit) => {
+    const status = quantity > 0 ? 'ok' : 'out'
+    const { error } = await supabase.from('pantry_items').update({ quantity, unit, status }).eq('id', id)
+    if (!error) setItems((prev) => prev.map((i) => (i.id === id ? { ...i, quantity, unit, status } : i)))
+    return { error }
+  }, [])
+
   const toggleStatus = useCallback(async (id, currentStatus) => {
     const status = currentStatus === 'ok' ? 'out' : 'ok'
     await supabase.from('pantry_items').update({ status }).eq('id', id)
@@ -35,5 +42,5 @@ export function usePantryItems() {
     setItems((prev) => prev.filter((i) => i.id !== id))
   }, [])
 
-  return { items, addItem, toggleStatus, deleteItem }
+  return { items, addItem, toggleStatus, updateQuantity, deleteItem }
 }
