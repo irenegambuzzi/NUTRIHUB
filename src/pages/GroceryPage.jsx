@@ -12,7 +12,7 @@ import { groceryCategoryColor } from '../lib/categoryColors'
 
 export function GroceryPage() {
   const { items, addItem, toggleComplete, updatePrice, deleteItem, clearCompleted } = useGroceryItems()
-  const { expenses } = useExpenses()
+  const { expenses, deleteExpenses } = useExpenses()
   const [view, setView] = useState('list')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [name, setName] = useState('')
@@ -192,19 +192,25 @@ export function GroceryPage() {
           )}
         </>
       ) : (
-        <ReceiptsView receipts={receipts} />
+        <ReceiptsView receipts={receipts} onDeleteReceipt={deleteExpenses} />
       )}
     </div>
   )
 }
 
-function ReceiptsView({ receipts }) {
+function ReceiptsView({ receipts, onDeleteReceipt }) {
   if (receipts.length === 0) {
     return (
       <Card className="text-center rounded-3xl">
         <p className="text-xs text-[var(--color-text-muted)]">No receipts yet — they appear here as you check off priced items.</p>
       </Card>
     )
+  }
+
+  const handleDelete = (date, list) => {
+    if (window.confirm(`Delete the receipt from ${new Date(date).toLocaleDateString('en-GB')} (${list.length} item${list.length === 1 ? '' : 's'})?`)) {
+      onDeleteReceipt(list.map((e) => e.id))
+    }
   }
 
   return (
@@ -215,7 +221,12 @@ function ReceiptsView({ receipts }) {
             <span className="text-xs font-bold text-[var(--color-text)]">
               {new Date(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
-            <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+              <button onClick={() => handleDelete(date, list)} className="text-[var(--color-icon-muted)] hover:text-rose-400 transition">
+                <Trash2 size={13} />
+              </button>
+            </div>
           </div>
           <div className="space-y-1">
             {list.map((e) => (

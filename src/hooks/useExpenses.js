@@ -47,5 +47,10 @@ export function useExpenses() {
     setExpenses((prev) => prev.filter((e) => e.id !== id))
   }, [])
 
-  return { expenses, categories, addExpense, addCategory, deleteExpense }
+  const deleteExpenses = useCallback(async (ids) => {
+    await supabase.from('expenses').delete().in('id', ids)
+    setExpenses((prev) => prev.filter((e) => !ids.includes(e.id)))
+  }, [])
+
+  return { expenses, categories, addExpense, addCategory, deleteExpense, deleteExpenses }
 }
