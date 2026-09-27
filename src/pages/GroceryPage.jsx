@@ -6,7 +6,7 @@ import { Input, Select } from '../components/ui/Field'
 import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { cn } from '../lib/cn'
 import { useGroceryItems } from '../hooks/useGroceryItems'
-import { GROCERY_CATEGORIES } from '../data/constants'
+import { GROCERY_CATEGORIES, UNIT_OPTIONS } from '../data/constants'
 import { groceryCategoryColor } from '../lib/categoryColors'
 
 export function GroceryPage() {
@@ -15,6 +15,8 @@ export function GroceryPage() {
   const [name, setName] = useState('')
   const [category, setCategory] = useState(GROCERY_CATEGORIES[0])
   const [price, setPrice] = useState('')
+  const [quantity, setQuantity] = useState('1')
+  const [unit, setUnit] = useState(UNIT_OPTIONS[0])
 
   const filteredItems = selectedCategory === 'All' ? items : items.filter((i) => i.category === selectedCategory)
   const totalBudget = filteredItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
@@ -29,13 +31,20 @@ export function GroceryPage() {
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
-    const { error } = await addItem({ name, category, price: parseFloat(price) || 0 })
+    const { error } = await addItem({
+      name,
+      category,
+      price: parseFloat(price) || 0,
+      quantity: parseFloat(quantity) || 1,
+      unit,
+    })
     if (error) {
       alert('Could not save the item: ' + error.message)
       return
     }
     setName('')
     setPrice('')
+    setQuantity('1')
   }
 
   return (
@@ -91,6 +100,16 @@ export function GroceryPage() {
             </Select>
             <Input type="number" step="0.01" placeholder="Estimated price (€)" value={price} onChange={(e) => setPrice(e.target.value)} />
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="number" step="0.01" min="0" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+            <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              {UNIT_OPTIONS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </Select>
+          </div>
           <Button type="submit" className="w-full rounded-2xl">
             <Plus size={16} /> Add to list
           </Button>
@@ -141,6 +160,9 @@ export function GroceryPage() {
 
                   <p className={cn('text-sm font-bold leading-tight', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
                     {item.name}
+                  </p>
+                  <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                    {item.quantity} {item.unit}
                   </p>
                   {Number(item.price) > 0 && (
                     <p className="text-xs font-mono font-bold text-[var(--color-accent)] mt-1">€{Number(item.price).toFixed(2)}</p>

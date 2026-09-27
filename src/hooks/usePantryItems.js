@@ -18,8 +18,8 @@ export function usePantryItems() {
     return () => supabase.removeChannel(channel)
   }, [fetchItems])
 
-  const addItem = useCallback(async ({ name, category, status = 'ok' }) => {
-    const { data, error } = await supabase.from('pantry_items').insert([{ name, category, status }]).select()
+  const addItem = useCallback(async ({ name, category, status = 'ok', quantity = 1, unit = 'pcs' }) => {
+    const { data, error } = await supabase.from('pantry_items').insert([{ name, category, status, quantity, unit }]).select()
     if (!error && data) setItems((prev) => [data[0], ...prev])
     return { data: data?.[0], error }
   }, [])

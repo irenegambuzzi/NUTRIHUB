@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, Wallet } from 'lucide-react'
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Label, Input, Select } from '../components/ui/Field'
 import { useExpenses } from '../hooks/useExpenses'
-import { PAID_BY_OPTIONS } from '../data/constants'
-import { colorForIndex } from '../lib/categoryColors'
+import { PAID_BY_OPTIONS, EXPENSE_PERIODS, EXPENSE_PERIOD_LABELS } from '../data/constants'
+import { colorForIndex, hexForIndex } from '../lib/categoryColors'
+import { isInPeriod, getPeriodBuckets, bucketKeyForDate } from '../lib/expensePeriods'
 import { cn } from '../lib/cn'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
+const AXIS_COLOR = 'var(--color-text-muted)'
 
 export function ExpensesPage() {
   const { expenses, categories, addExpense, addCategory, deleteExpense } = useExpenses()
@@ -20,32 +23,45 @@ export function ExpensesPage() {
   const [paidBy, setPaidBy] = useState('shared')
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10))
 
-  const total = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+  const [period, setPeriod] = useState('month')
+  const [paidByFilter, setPaidByFilter] = useState('all')
 
-  const categoryColorMap = useMemo(() => {
+  const colorForCategory = useMemo(() => {
     const map = new Map()
-    categories.forEach((c, i) => map.set(c.name, colorForIndex(i)))
-    return map
+    categories.forEach((c, i) => map.set(c.name, { chip: colorForIndex(i), hex: hexForIndex(i) }))
+    return (name) => map.get(name) || { chip: colorForIndex(categories.length), hex: hexForIndex(categories.length) }
   }, [categories])
-  const colorForCategory = (name) => categoryColorMap.get(name) || colorForIndex(categories.length)
 
-  const totalsByCategory = useMemo(() => {
+  const filteredExpenses = useMemo(
+    () =>
+      expenses.filter((e) => {
+        if (!isInPeriod(e.expense_date, period)) return false
+        if (paidByFilter !== 'all' && e.paid_by !== paidByFilter) return false
+        return true
+      }),
+    [expenses, period, paidByFilter]
+  )
+
+  const total = filteredExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+
+  const pieData = useMemo(() => {
     const map = new Map()
-    for (const e of expenses) {
+    for (const e of filteredExpenses) {
       const label = e.expense_categories?.name || 'Uncategorized'
       map.set(label, (map.get(label) || 0) + Number(e.amount || 0))
     }
-    return [...map.entries()].sort((a, b) => b[1] - a[1])
-  }, [expenses])
+    return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+  }, [filteredExpenses])
 
-  const totalsByMonth = useMemo(() => {
-    const map = new Map()
-    for (const e of expenses) {
-      const month = e.expense_date?.slice(0, 7)
-      map.set(month, (map.get(month) || 0) + Number(e.amount || 0))
+  const barData = useMemo(() => {
+    const buckets = getPeriodBuckets(period)
+    const totals = new Map(buckets.map((b) => [b.key, 0]))
+    for (const e of filteredExpenses) {
+      const key = bucketKeyForDate(e.expense_date, period)
+      if (totals.has(key)) totals.set(key, totals.get(key) + Number(e.amount || 0))
     }
-    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6)
-  }, [expenses])
+    return buckets.map((b) => ({ label: b.label, amount: Math.round((totals.get(b.key) || 0) * 100) / 100 }))
+  }, [filteredExpenses, period])
 
   const handleAddExpense = async (e) => {
     e.preventDefault()
@@ -149,67 +165,115 @@ export function ExpensesPage() {
         </Card>
       </form>
 
-      {totalsByCategory.length > 0 && (
-        <Card className="space-y-2">
-          <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1.5">
+      <div className="flex flex-wrap gap-2">
+        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1">
+          {EXPENSE_PERIODS.map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
+                period === p ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]'
+              )}
+            >
+              {EXPENSE_PERIOD_LABELS[p]}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1">
+          {[{ value: 'all', label: 'Everyone' }, ...PAID_BY_OPTIONS].map((o) => (
+            <button
+              key={o.value}
+              onClick={() => setPaidByFilter(o.value)}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
+                paidByFilter === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
+              )}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1.5 mb-2">
             <Wallet size={14} /> By category
           </p>
-          {totalsByCategory.map(([label, sum]) => {
-            const c = colorForCategory(label)
-            return (
-              <div key={label} className="flex justify-between items-center text-xs">
-                <span className={cn('inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold', c.bg, c.text)}>
-                  <span className={cn('w-1.5 h-1.5 rounded-full', c.solid)} />
-                  {label}
-                </span>
-                <span className="font-mono font-bold text-[var(--color-accent)]">€{sum.toFixed(2)}</span>
-              </div>
-            )
-          })}
+          {pieData.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)] py-8 text-center">No expenses in this period.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={80} paddingAngle={2}>
+                  {pieData.map((entry) => (
+                    <Cell key={entry.name} fill={colorForCategory(entry.name).hex} stroke="var(--color-surface)" strokeWidth={2} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(value) => `€${Number(value).toFixed(2)}`}
+                  contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text)' }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11, color: AXIS_COLOR }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </Card>
-      )}
 
-      {totalsByMonth.length > 0 && (
-        <Card className="space-y-2">
-          <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">By month</p>
-          {totalsByMonth.map(([month, sum]) => (
-            <div key={month} className="flex justify-between text-xs">
-              <span className="text-[var(--color-text)]">{month}</span>
-              <span className="font-mono font-bold text-[var(--color-accent)]">€{sum.toFixed(2)}</span>
-            </div>
-          ))}
+        <Card>
+          <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Trend</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={barData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: AXIS_COLOR, fontSize: 11 }} axisLine={{ stroke: 'var(--color-border)' }} tickLine={false} />
+              <YAxis tick={{ fill: AXIS_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} width={36} />
+              <Tooltip
+                formatter={(value) => `€${Number(value).toFixed(2)}`}
+                contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text)' }}
+              />
+              <Bar dataKey="amount" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
-      )}
+      </div>
 
       <div className="space-y-2">
-        {expenses.map((e) => {
-          const c = colorForCategory(e.expense_categories?.name)
-          return (
-            <div
-              key={e.id}
-              className="bg-[var(--color-surface)] border border-[var(--color-border)] p-3 rounded-2xl flex justify-between items-center text-xs shadow-sm transition-all duration-200 hover:shadow-md"
-            >
-              <div className="flex items-center gap-3">
-                <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', c.solid)} />
-                <div>
-                  <p className="font-bold text-[var(--color-text)]">{e.description || e.expense_categories?.name || 'Expense'}</p>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
-                    {new Date(e.expense_date).toLocaleDateString('en-GB')} · {e.expense_categories?.name || 'Uncategorized'} · {paidByLabel(e.paid_by)}
-                  </span>
+        {filteredExpenses.length === 0 ? (
+          <Card className="text-center">
+            <p className="text-xs text-[var(--color-text-muted)]">No expenses match this filter.</p>
+          </Card>
+        ) : (
+          filteredExpenses.map((e) => {
+            const c = colorForCategory(e.expense_categories?.name)
+            return (
+              <div
+                key={e.id}
+                className="bg-[var(--color-surface)] border border-[var(--color-border)] p-3 rounded-2xl flex justify-between items-center text-xs shadow-sm transition-all duration-200 hover:shadow-md"
+              >
+                <div className="flex items-center gap-3">
+                  <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', c.chip.solid)} />
+                  <div>
+                    <p className="font-bold text-[var(--color-text)]">{e.description || e.expense_categories?.name || 'Expense'}</p>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      {new Date(e.expense_date).toLocaleDateString('en-GB')} · {e.expense_categories?.name || 'Uncategorized'} · {paidByLabel(e.paid_by)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono font-bold text-[var(--color-accent)]">€{Number(e.amount).toFixed(2)}</span>
+                  <button
+                    onClick={() => window.confirm('Delete this expense?') && deleteExpense(e.id)}
+                    className="text-[var(--color-icon-muted)] hover:text-rose-400 transition"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="font-mono font-bold text-[var(--color-accent)]">€{Number(e.amount).toFixed(2)}</span>
-                <button
-                  onClick={() => window.confirm('Delete this expense?') && deleteExpense(e.id)}
-                  className="text-[var(--color-icon-muted)] hover:text-rose-400 transition"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          )
-        })}
+            )
+          })
+        )}
       </div>
     </div>
   )

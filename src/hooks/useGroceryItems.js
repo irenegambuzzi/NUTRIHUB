@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { GROCERY_TO_PANTRY_CATEGORY } from '../data/constants'
 
 export function useGroceryItems() {
   const [items, setItems] = useState([])
@@ -18,23 +19,26 @@ export function useGroceryItems() {
     return () => supabase.removeChannel(channel)
   }, [fetchItems])
 
-  const addItem = useCallback(async ({ name, category, price }) => {
+  const addItem = useCallback(async ({ name, category, price, quantity = 1, unit = 'pcs' }) => {
     const { data, error } = await supabase
       .from('grocery_items')
-      .insert([{ name, category, price: price || 0, completed: false }])
+      .insert([{ name, category, price: price || 0, quantity, unit, completed: false }])
       .select()
 
     if (!error && data) setItems((prev) => [data[0], ...prev])
     return { error }
   }, [])
 
-  // Checking off an item with a price logs it as a Groceries expense.
+  // Checking off an item logs it as a Groceries expense (if priced)
+  // and merges its quantity into the matching pantry item.
   const toggleComplete = useCallback(async (item) => {
     const completed = !item.completed
     await supabase.from('grocery_items').update({ completed }).eq('id', item.id)
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed } : i)))
 
-    if (completed && Number(item.price) > 0) {
+    if (!completed) return
+
+    if (Number(item.price) > 0) {
       const { data: category } = await supabase
         .from('expense_categories')
         .select('id')
@@ -47,6 +51,30 @@ export function useGroceryItems() {
           amount: item.price,
           description: item.name,
           paid_by: 'shared',
+        },
+      ])
+    }
+
+    const pantryCategory = GROCERY_TO_PANTRY_CATEGORY[item.category] || 'Home'
+    const { data: existing } = await supabase
+      .from('pantry_items')
+      .select('*')
+      .ilike('name', item.name)
+      .maybeSingle()
+
+    if (existing) {
+      await supabase
+        .from('pantry_items')
+        .update({ quantity: Number(existing.quantity) + Number(item.quantity || 1), status: 'ok' })
+        .eq('id', existing.id)
+    } else {
+      await supabase.from('pantry_items').insert([
+        {
+          name: item.name,
+          category: pantryCategory,
+          quantity: item.quantity || 1,
+          unit: item.unit || 'pcs',
+          status: 'ok',
         },
       ])
     }

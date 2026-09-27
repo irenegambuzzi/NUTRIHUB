@@ -8,7 +8,7 @@ import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { cn } from '../lib/cn'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useGroceryItems } from '../hooks/useGroceryItems'
-import { PANTRY_CATEGORIES } from '../data/constants'
+import { PANTRY_CATEGORIES, PANTRY_TO_GROCERY_CATEGORY, UNIT_OPTIONS } from '../data/constants'
 import { pantryCategoryColor } from '../lib/categoryColors'
 
 export function PantryPage() {
@@ -18,21 +18,37 @@ export function PantryPage() {
 
   const [name, setName] = useState('')
   const [category, setCategory] = useState(PANTRY_CATEGORIES[0])
+  const [quantity, setQuantity] = useState('1')
+  const [unit, setUnit] = useState(UNIT_OPTIONS[0])
   const [alreadyOut, setAlreadyOut] = useState(false)
 
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
-    const { data } = await addItem({ name, category, status: alreadyOut ? 'out' : 'ok' })
+    const qty = parseFloat(quantity) || 1
+    const { data } = await addItem({
+      name,
+      category,
+      status: alreadyOut ? 'out' : 'ok',
+      quantity: alreadyOut ? 0 : qty,
+      unit,
+    })
     if (alreadyOut && data) {
-      await addGroceryItem({ name: data.name, category: 'Kitchen', price: 0 })
+      await addGroceryItem({ name: data.name, category: PANTRY_TO_GROCERY_CATEGORY[category] || 'Kitchen', price: 0, quantity: qty, unit })
     }
     setName('')
+    setQuantity('1')
     setAlreadyOut(false)
   }
 
   const sendToGrocery = async (item) => {
-    await addGroceryItem({ name: item.name, category: 'Kitchen', price: 0 })
+    await addGroceryItem({
+      name: item.name,
+      category: PANTRY_TO_GROCERY_CATEGORY[item.category] || 'Kitchen',
+      price: 0,
+      quantity: item.quantity || 1,
+      unit: item.unit || 'pcs',
+    })
     navigate('/grocery')
   }
 
@@ -49,6 +65,23 @@ export function PantryPage() {
               {PANTRY_CATEGORIES.map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder={alreadyOut ? 'Quantity to buy' : 'Quantity in stock'}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+            <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              {UNIT_OPTIONS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
                 </option>
               ))}
             </Select>
@@ -101,6 +134,9 @@ export function PantryPage() {
                 </div>
 
                 <p className="text-sm font-bold leading-tight text-[var(--color-text)]">{item.name}</p>
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  {item.quantity} {item.unit}
+                </p>
 
                 <div className="flex items-center gap-1.5 mt-2">
                   <button

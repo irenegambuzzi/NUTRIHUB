@@ -13,10 +13,27 @@ const PALETTE = {
   emerald: { bg: 'bg-emerald-500/15', text: 'text-emerald-300', border: 'border-emerald-500/30', solid: 'bg-emerald-500' },
 }
 
+// Same rotation, as real hex values for chart libraries (recharts
+// can't render Tailwind utility classes as fill colors).
+const HEX = {
+  orange: '#f97316',
+  pink: '#ec4899',
+  violet: '#8b5cf6',
+  teal: '#14b8a6',
+  sky: '#0ea5e9',
+  amber: '#f59e0b',
+  rose: '#f43f5e',
+  emerald: '#10b981',
+}
+
 const ROTATION = ['orange', 'pink', 'violet', 'teal', 'sky', 'amber', 'rose', 'emerald']
 
 export function colorForIndex(i) {
   return PALETTE[ROTATION[i % ROTATION.length]]
+}
+
+export function hexForIndex(i) {
+  return HEX[ROTATION[i % ROTATION.length]]
 }
 
 export function colorByName(name) {

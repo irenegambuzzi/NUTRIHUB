@@ -58,6 +58,8 @@ create table grocery_items (
   name text not null,
   category text not null default 'Kitchen',
   price numeric not null default 0,
+  quantity numeric not null default 1,
+  unit text not null default 'pcs',
   completed boolean not null default false,
   created_at timestamptz not null default now()
 );
@@ -67,6 +69,8 @@ create table pantry_items (
   name text not null,
   category text not null default 'Home',
   status text not null default 'ok',
+  quantity numeric not null default 1,
+  unit text not null default 'pcs',
   created_at timestamptz not null default now()
 );
 
