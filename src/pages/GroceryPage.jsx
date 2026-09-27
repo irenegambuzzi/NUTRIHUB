@@ -1,16 +1,19 @@
-import { useState } from 'react'
-import { Plus, Check, Trash2, X, Pencil } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Plus, Check, Trash2, X, Pencil, Receipt } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
 import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { cn } from '../lib/cn'
 import { useGroceryItems } from '../hooks/useGroceryItems'
+import { useExpenses } from '../hooks/useExpenses'
 import { GROCERY_CATEGORIES, UNIT_OPTIONS } from '../data/constants'
 import { groceryCategoryColor } from '../lib/categoryColors'
 
 export function GroceryPage() {
   const { items, addItem, toggleComplete, updatePrice, deleteItem, clearCompleted } = useGroceryItems()
+  const { expenses } = useExpenses()
+  const [view, setView] = useState('list')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [name, setName] = useState('')
   const [category, setCategory] = useState(GROCERY_CATEGORIES[0])
@@ -22,10 +25,41 @@ export function GroceryPage() {
   const totalBudget = filteredItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
   const completedCount = items.filter((i) => i.completed).length
 
+  // Every checked-off grocery item logs a "Groceries" expense — reuse
+  // that history both to remember prices and to build receipts.
+  const groceryExpenses = useMemo(() => expenses.filter((e) => e.expense_categories?.name === 'Groceries'), [expenses])
+
+  const lastKnownPrices = useMemo(() => {
+    const map = new Map()
+    for (const e of groceryExpenses) {
+      const key = (e.description || '').trim().toLowerCase()
+      if (key && !map.has(key)) map.set(key, Number(e.amount))
+    }
+    return map
+  }, [groceryExpenses])
+
+  const receipts = useMemo(() => {
+    const map = new Map()
+    for (const e of groceryExpenses) {
+      const list = map.get(e.expense_date) || []
+      list.push(e)
+      map.set(e.expense_date, list)
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([date, list]) => ({ date, list, total: list.reduce((sum, e) => sum + Number(e.amount || 0), 0) }))
+  }, [groceryExpenses])
+
   const handleClearCompleted = () => {
     if (window.confirm(`Remove ${completedCount} checked item${completedCount === 1 ? '' : 's'} from the list?`)) {
       clearCompleted()
     }
+  }
+
+  const handleNameBlur = () => {
+    if (price.trim() || !name.trim()) return
+    const known = lastKnownPrices.get(name.trim().toLowerCase())
+    if (known) setPrice(String(known))
   }
 
   const handleAdd = async (e) => {
@@ -56,86 +90,143 @@ export function GroceryPage() {
         </span>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1 text-xs">
+      <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 w-fit text-xs font-bold">
         <button
-          onClick={() => setSelectedCategory('All')}
+          onClick={() => setView('list')}
+          className={cn('px-4 py-1.5 rounded-full transition-all duration-200', view === 'list' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]')}
+        >
+          List
+        </button>
+        <button
+          onClick={() => setView('receipts')}
           className={cn(
-            'px-4 py-2 rounded-full border whitespace-nowrap font-bold transition-all duration-200',
-            selectedCategory === 'All'
-              ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white shadow-sm'
-              : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)]'
+            'px-4 py-1.5 rounded-full transition-all duration-200 flex items-center gap-1.5',
+            view === 'receipts' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]'
           )}
         >
-          All
+          <Receipt size={13} /> Receipts
         </button>
-        {GROCERY_CATEGORIES.map((cat) => {
-          const c = groceryCategoryColor(cat)
-          const active = selectedCategory === cat
-          return (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={cn(
-                'px-4 py-2 rounded-full border whitespace-nowrap font-bold transition-all duration-200 flex items-center gap-1.5',
-                active ? cn(c.solid, 'border-transparent text-white shadow-sm') : cn(c.bg, c.border, c.text)
-              )}
-            >
-              <CategoryIcon category={cat} size={14} />
-              {cat}
-            </button>
-          )
-        })}
       </div>
 
-      <form onSubmit={handleAdd}>
-        <Card className="space-y-3 rounded-3xl">
-          <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => setName(e.target.value)} />
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-              {GROCERY_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
+      {view === 'list' ? (
+        <>
+          <div className="flex gap-2 overflow-x-auto pb-1 text-xs">
+            <button
+              onClick={() => setSelectedCategory('All')}
+              className={cn(
+                'px-4 py-2 rounded-full border whitespace-nowrap font-bold transition-all duration-200',
+                selectedCategory === 'All'
+                  ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white shadow-sm'
+                  : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)]'
+              )}
+            >
+              All
+            </button>
+            {GROCERY_CATEGORIES.map((cat) => {
+              const c = groceryCategoryColor(cat)
+              const active = selectedCategory === cat
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={cn(
+                    'px-4 py-2 rounded-full border whitespace-nowrap font-bold transition-all duration-200 flex items-center gap-1.5',
+                    active ? cn(c.solid, 'border-transparent text-white shadow-sm') : cn(c.bg, c.border, c.text)
+                  )}
+                >
+                  <CategoryIcon category={cat} size={14} />
                   {cat}
-                </option>
-              ))}
-            </Select>
-            <Input type="number" step="0.01" placeholder="Estimated price (€)" value={price} onChange={(e) => setPrice(e.target.value)} />
+                </button>
+              )
+            })}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Input type="number" step="0.01" min="0" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-            <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
-              {UNIT_OPTIONS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
+
+          <form onSubmit={handleAdd}>
+            <Card className="space-y-3 rounded-3xl">
+              <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => setName(e.target.value)} onBlur={handleNameBlur} />
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+                  {GROCERY_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </Select>
+                <Input type="number" step="0.01" placeholder="Estimated price (€)" value={price} onChange={(e) => setPrice(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="number" step="0.01" min="0" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+                  {UNIT_OPTIONS.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <Button type="submit" className="w-full rounded-2xl">
+                <Plus size={16} /> Add to list
+              </Button>
+            </Card>
+          </form>
+
+          {completedCount > 0 && (
+            <button
+              onClick={handleClearCompleted}
+              className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-rose-400 transition"
+            >
+              <X size={13} /> Clear {completedCount} checked item{completedCount === 1 ? '' : 's'}
+            </button>
+          )}
+
+          {filteredItems.length === 0 ? (
+            <Card className="text-center rounded-3xl">
+              <p className="text-xs text-[var(--color-text-muted)]">Nothing here yet — add your first item above.</p>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {filteredItems.map((item) => (
+                <GroceryItemTile key={item.id} item={item} onToggle={toggleComplete} onDelete={deleteItem} onUpdatePrice={updatePrice} />
               ))}
-            </Select>
-          </div>
-          <Button type="submit" className="w-full rounded-2xl">
-            <Plus size={16} /> Add to list
-          </Button>
-        </Card>
-      </form>
-
-      {completedCount > 0 && (
-        <button
-          onClick={handleClearCompleted}
-          className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-rose-400 transition"
-        >
-          <X size={13} /> Clear {completedCount} checked item{completedCount === 1 ? '' : 's'}
-        </button>
-      )}
-
-      {filteredItems.length === 0 ? (
-        <Card className="text-center rounded-3xl">
-          <p className="text-xs text-[var(--color-text-muted)]">Nothing here yet — add your first item above.</p>
-        </Card>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {filteredItems.map((item) => (
-            <GroceryItemTile key={item.id} item={item} onToggle={toggleComplete} onDelete={deleteItem} onUpdatePrice={updatePrice} />
-          ))}
-        </div>
+        <ReceiptsView receipts={receipts} />
       )}
+    </div>
+  )
+}
+
+function ReceiptsView({ receipts }) {
+  if (receipts.length === 0) {
+    return (
+      <Card className="text-center rounded-3xl">
+        <p className="text-xs text-[var(--color-text-muted)]">No receipts yet — they appear here as you check off priced items.</p>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {receipts.map(({ date, list, total }) => (
+        <Card key={date} className="rounded-3xl">
+          <div className="flex justify-between items-center border-b border-[var(--color-border)] pb-2 mb-2">
+            <span className="text-xs font-bold text-[var(--color-text)]">
+              {new Date(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+            </span>
+            <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+          </div>
+          <div className="space-y-1">
+            {list.map((e) => (
+              <div key={e.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
+                <span>{e.description || 'Item'}</span>
+                <span className="font-mono">€{Number(e.amount).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ))}
     </div>
   )
 }
@@ -148,7 +239,7 @@ function GroceryItemTile({ item, onToggle, onDelete, onUpdatePrice }) {
   const savePrice = async () => {
     setEditingPrice(false)
     const value = parseFloat(priceDraft) || 0
-    if (value !== Number(item.price)) await onUpdatePrice(item.id, value)
+    if (value !== Number(item.price)) await onUpdatePrice(item, value)
   }
 
   return (

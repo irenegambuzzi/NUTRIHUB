@@ -94,6 +94,11 @@ create table expenses (
   created_at timestamptz not null default now()
 );
 
+-- Links a grocery item to the expense it generated, so editing the
+-- price after checking it off updates that expense instead of never
+-- creating one (added after `expenses` since it references it).
+alter table grocery_items add column expense_id uuid references expenses(id) on delete set null;
+
 -- No login anymore, so there's no auth.uid() to scope rows by.
 -- This is a private two-person app; open access to the anon key is
 -- an accepted tradeoff (equivalent to what the anon key could already

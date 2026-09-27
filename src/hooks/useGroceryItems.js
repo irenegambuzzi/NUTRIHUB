@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { GROCERY_TO_PANTRY_CATEGORY } from '../data/constants'
 
+async function getGroceriesCategoryId() {
+  const { data } = await supabase.from('expense_categories').select('id').eq('name', 'Groceries').maybeSingle()
+  return data?.id ?? null
+}
+
 export function useGroceryItems() {
   const [items, setItems] = useState([])
 
@@ -30,37 +35,34 @@ export function useGroceryItems() {
   }, [])
 
   // Checking off an item logs it as a Groceries expense (if priced)
-  // and merges its quantity into the matching pantry item.
+  // and merges its quantity into the matching pantry item. Unchecking
+  // removes that expense again.
   const toggleComplete = useCallback(async (item) => {
     const completed = !item.completed
-    await supabase.from('grocery_items').update({ completed }).eq('id', item.id)
-    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed } : i)))
 
-    if (!completed) return
-
-    if (Number(item.price) > 0) {
-      const { data: category } = await supabase
-        .from('expense_categories')
-        .select('id')
-        .eq('name', 'Groceries')
-        .maybeSingle()
-
-      await supabase.from('expenses').insert([
-        {
-          category_id: category?.id ?? null,
-          amount: item.price,
-          description: item.name,
-          paid_by: 'shared',
-        },
-      ])
+    if (!completed) {
+      await supabase.from('grocery_items').update({ completed, expense_id: null }).eq('id', item.id)
+      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed, expense_id: null } : i)))
+      if (item.expense_id) await supabase.from('expenses').delete().eq('id', item.expense_id)
+      return
     }
 
+    let expenseId = item.expense_id ?? null
+    if (Number(item.price) > 0) {
+      const categoryId = await getGroceriesCategoryId()
+      const { data } = await supabase
+        .from('expenses')
+        .insert([{ category_id: categoryId, amount: item.price, description: item.name, paid_by: 'shared' }])
+        .select()
+        .single()
+      expenseId = data?.id ?? null
+    }
+
+    await supabase.from('grocery_items').update({ completed, expense_id: expenseId }).eq('id', item.id)
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed, expense_id: expenseId } : i)))
+
     const pantryCategory = GROCERY_TO_PANTRY_CATEGORY[item.category] || 'Home'
-    const { data: existing } = await supabase
-      .from('pantry_items')
-      .select('*')
-      .ilike('name', item.name)
-      .maybeSingle()
+    const { data: existing } = await supabase.from('pantry_items').select('*').ilike('name', item.name).maybeSingle()
 
     if (existing) {
       await supabase
@@ -80,10 +82,37 @@ export function useGroceryItems() {
     }
   }, [])
 
-  const updatePrice = useCallback(async (id, price) => {
-    const { error } = await supabase.from('grocery_items').update({ price }).eq('id', id)
-    if (!error) setItems((prev) => prev.map((i) => (i.id === id ? { ...i, price } : i)))
-    return { error }
+  // Editing the price after the item is already checked off keeps the
+  // linked expense in sync instead of leaving it stuck at whatever it
+  // was worth at check-off time (or never created at all).
+  const updatePrice = useCallback(async (item, price) => {
+    await supabase.from('grocery_items').update({ price }).eq('id', item.id)
+
+    let expenseId = item.expense_id ?? null
+
+    if (item.completed) {
+      if (price > 0) {
+        if (expenseId) {
+          await supabase.from('expenses').update({ amount: price }).eq('id', expenseId)
+        } else {
+          const categoryId = await getGroceriesCategoryId()
+          const { data } = await supabase
+            .from('expenses')
+            .insert([{ category_id: categoryId, amount: price, description: item.name, paid_by: 'shared' }])
+            .select()
+            .single()
+          expenseId = data?.id ?? null
+          await supabase.from('grocery_items').update({ expense_id: expenseId }).eq('id', item.id)
+        }
+      } else if (expenseId) {
+        await supabase.from('expenses').delete().eq('id', expenseId)
+        expenseId = null
+        await supabase.from('grocery_items').update({ expense_id: null }).eq('id', item.id)
+      }
+    }
+
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, price, expense_id: expenseId } : i)))
+    return { error: null }
   }, [])
 
   const deleteItem = useCallback(async (id) => {
