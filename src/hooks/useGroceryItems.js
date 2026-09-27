@@ -80,6 +80,12 @@ export function useGroceryItems() {
     }
   }, [])
 
+  const updatePrice = useCallback(async (id, price) => {
+    const { error } = await supabase.from('grocery_items').update({ price }).eq('id', id)
+    if (!error) setItems((prev) => prev.map((i) => (i.id === id ? { ...i, price } : i)))
+    return { error }
+  }, [])
+
   const deleteItem = useCallback(async (id) => {
     await supabase.from('grocery_items').delete().eq('id', id)
     setItems((prev) => prev.filter((i) => i.id !== id))
@@ -90,5 +96,5 @@ export function useGroceryItems() {
     setItems((prev) => prev.filter((i) => !i.completed))
   }, [])
 
-  return { items, addItem, toggleComplete, deleteItem, clearCompleted }
+  return { items, addItem, toggleComplete, updatePrice, deleteItem, clearCompleted }
 }

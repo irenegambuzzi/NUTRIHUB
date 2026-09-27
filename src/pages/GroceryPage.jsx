@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Check, Trash2, X } from 'lucide-react'
+import { Plus, Check, Trash2, X, Pencil } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
@@ -10,7 +10,7 @@ import { GROCERY_CATEGORIES, UNIT_OPTIONS } from '../data/constants'
 import { groceryCategoryColor } from '../lib/categoryColors'
 
 export function GroceryPage() {
-  const { items, addItem, toggleComplete, deleteItem, clearCompleted } = useGroceryItems()
+  const { items, addItem, toggleComplete, updatePrice, deleteItem, clearCompleted } = useGroceryItems()
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [name, setName] = useState('')
   const [category, setCategory] = useState(GROCERY_CATEGORIES[0])
@@ -131,47 +131,85 @@ export function GroceryPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {filteredItems.map((item) => {
-            const c = groceryCategoryColor(item.category)
-            return (
-              <div
-                key={item.id}
-                className={cn(
-                  'relative rounded-3xl border p-3.5 shadow-sm transition-all duration-200',
-                  item.completed ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : cn(c.bg, c.border)
-                )}
-              >
-                <button
-                  onClick={() => window.confirm(`Remove "${item.name}" from the list?`) && deleteItem(item.id)}
-                  className="absolute top-2 right-2 text-[var(--color-icon-muted)] hover:text-rose-400 transition p-1 z-10"
-                >
-                  <Trash2 size={13} />
-                </button>
-
-                <button onClick={() => toggleComplete(item)} className="w-full text-left hover:-translate-y-0.5 transition-transform duration-200">
-                  <div
-                    className={cn(
-                      'w-9 h-9 rounded-2xl flex items-center justify-center mb-2 transition-all duration-200',
-                      item.completed ? 'bg-[var(--color-primary)] text-white' : cn(c.solid, 'text-white')
-                    )}
-                  >
-                    {item.completed ? <Check size={18} /> : <CategoryIcon category={item.category} size={18} />}
-                  </div>
-
-                  <p className={cn('text-sm font-bold leading-tight', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
-                    {item.name}
-                  </p>
-                  <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                    {item.quantity} {item.unit}
-                  </p>
-                  {Number(item.price) > 0 && (
-                    <p className="text-xs font-mono font-bold text-[var(--color-accent)] mt-1">€{Number(item.price).toFixed(2)}</p>
-                  )}
-                </button>
-              </div>
-            )
-          })}
+          {filteredItems.map((item) => (
+            <GroceryItemTile key={item.id} item={item} onToggle={toggleComplete} onDelete={deleteItem} onUpdatePrice={updatePrice} />
+          ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+function GroceryItemTile({ item, onToggle, onDelete, onUpdatePrice }) {
+  const c = groceryCategoryColor(item.category)
+  const [editingPrice, setEditingPrice] = useState(false)
+  const [priceDraft, setPriceDraft] = useState(item.price || '')
+
+  const savePrice = async () => {
+    setEditingPrice(false)
+    const value = parseFloat(priceDraft) || 0
+    if (value !== Number(item.price)) await onUpdatePrice(item.id, value)
+  }
+
+  return (
+    <div
+      className={cn(
+        'relative rounded-3xl border p-3.5 shadow-sm transition-all duration-200',
+        item.completed ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : cn(c.bg, c.border)
+      )}
+    >
+      <button
+        onClick={() => window.confirm(`Remove "${item.name}" from the list?`) && onDelete(item.id)}
+        className="absolute top-2 right-2 text-[var(--color-icon-muted)] hover:text-rose-400 transition p-1 z-10"
+      >
+        <Trash2 size={13} />
+      </button>
+
+      <button onClick={() => onToggle(item)} className="w-full text-left hover:-translate-y-0.5 transition-transform duration-200">
+        <div
+          className={cn(
+            'w-9 h-9 rounded-2xl flex items-center justify-center mb-2 transition-all duration-200',
+            item.completed ? 'bg-[var(--color-primary)] text-white' : cn(c.solid, 'text-white')
+          )}
+        >
+          {item.completed ? <Check size={18} /> : <CategoryIcon category={item.category} size={18} />}
+        </div>
+
+        <p className={cn('text-sm font-bold leading-tight', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
+          {item.name}
+        </p>
+        <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+          {item.quantity} {item.unit}
+        </p>
+      </button>
+
+      {editingPrice ? (
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          autoFocus
+          value={priceDraft}
+          onChange={(e) => setPriceDraft(e.target.value)}
+          onBlur={savePrice}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') {
+              setPriceDraft(item.price || '')
+              setEditingPrice(false)
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-full mt-1.5 bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-lg px-2 py-1 text-xs font-mono text-[var(--color-accent)] focus:outline-none focus:border-[var(--color-primary)]"
+        />
+      ) : (
+        <button
+          onClick={() => setEditingPrice(true)}
+          className="flex items-center gap-1 mt-1.5 text-xs font-mono font-bold text-[var(--color-accent)] hover:opacity-80 transition"
+        >
+          {Number(item.price) > 0 ? `€${Number(item.price).toFixed(2)}` : <span className="text-[var(--color-text-muted)] font-sans font-semibold">+ Add price</span>}
+          <Pencil size={10} className="text-[var(--color-icon-muted)]" />
+        </button>
       )}
     </div>
   )
