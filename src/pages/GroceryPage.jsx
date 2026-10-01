@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Check, Trash2, X, Pencil, Receipt } from 'lucide-react'
+import { Plus, Check, Trash2, X, Pencil, Receipt, Sparkles } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
@@ -7,21 +7,55 @@ import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { cn } from '../lib/cn'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useExpenses } from '../hooks/useExpenses'
-import { GROCERY_CATEGORIES, UNIT_OPTIONS } from '../data/constants'
-import { groceryCategoryColor } from '../lib/categoryColors'
+import { usePantryItems } from '../hooks/usePantryItems'
+import { useInventoryCategories } from '../hooks/useInventoryCategories'
+import { DEFAULT_UNIT, PACKAGING_UNITS, UNIT_GROUPS, UNIT_VALUES } from '../data/constants'
+import { inventoryCategoryColor } from '../lib/categoryColors'
+import { stockStatus, syncShoppingForItem } from '../lib/inventory'
+
+const EXTRA_PACKAGING_UNITS = PACKAGING_UNITS.filter((u) => !UNIT_VALUES.includes(u))
+
+function UnitOptions() {
+  return (
+    <>
+      {UNIT_GROUPS.map((g) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.units.map((u) => (
+            <option key={u.value} value={u.value}>
+              {u.value}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+      <optgroup label="Packaging">
+        {EXTRA_PACKAGING_UNITS.map((u) => (
+          <option key={u} value={u}>
+            {u}
+          </option>
+        ))}
+      </optgroup>
+    </>
+  )
+}
 
 export function GroceryPage() {
   const { items, addItem, toggleComplete, updatePrice, deleteItem, clearCompleted } = useGroceryItems()
   const { expenses, deleteExpenses } = useExpenses()
+  const { items: pantryItems } = usePantryItems()
+  const { parents, categoryName } = useInventoryCategories()
   const [view, setView] = useState('list')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [name, setName] = useState('')
-  const [category, setCategory] = useState(GROCERY_CATEGORIES[0])
+  const [categoryId, setCategoryId] = useState('')
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('1')
-  const [unit, setUnit] = useState(UNIT_OPTIONS[0])
+  const [unit, setUnit] = useState(DEFAULT_UNIT)
+  const [syncing, setSyncing] = useState(false)
 
-  const filteredItems = selectedCategory === 'All' ? items : items.filter((i) => i.category === selectedCategory)
+  const filteredItems = selectedCategory === 'All' ? items : items.filter((i) => i.category_id === selectedCategory)
+  // Only show chips for categories that actually have items on the list.
+  const listCategories = parents.filter((p) => items.some((i) => i.category_id === p.id))
+  const lowStockItems = pantryItems.filter((p) => stockStatus(p) !== 'ok')
   const totalBudget = filteredItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
   const completedCount = items.filter((i) => i.completed).length
 
@@ -56,6 +90,12 @@ export function GroceryPage() {
     }
   }
 
+  const handleAddLowStock = async () => {
+    setSyncing(true)
+    for (const item of lowStockItems) await syncShoppingForItem(item)
+    setSyncing(false)
+  }
+
   const handleNameBlur = () => {
     if (price.trim() || !name.trim()) return
     const known = lastKnownPrices.get(name.trim().toLowerCase())
@@ -67,7 +107,7 @@ export function GroceryPage() {
     if (!name.trim()) return
     const { error } = await addItem({
       name,
-      category,
+      categoryId: categoryId || parents[0]?.id || null,
       price: parseFloat(price) || 0,
       quantity: parseFloat(quantity) || 1,
       unit,
@@ -122,8 +162,8 @@ export function GroceryPage() {
             >
               All
             </button>
-            {GROCERY_CATEGORIES.map((cat) => {
-              const c = groceryCategoryColor(cat)
+            {listCategories.map(({ id: cat, name: catName }) => {
+              const c = inventoryCategoryColor(cat)
               const active = selectedCategory === cat
               return (
                 <button
@@ -135,7 +175,7 @@ export function GroceryPage() {
                   )}
                 >
                   <CategoryIcon category={cat} size={14} />
-                  {cat}
+                  {catName}
                 </button>
               )
             })}
@@ -145,10 +185,10 @@ export function GroceryPage() {
             <Card className="space-y-3 rounded-3xl">
               <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => setName(e.target.value)} onBlur={handleNameBlur} />
               <div className="grid grid-cols-2 gap-2">
-                <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-                  {GROCERY_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
+                <Select value={categoryId || parents[0]?.id || ''} onChange={(e) => setCategoryId(e.target.value)}>
+                  {parents.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
                 </Select>
@@ -157,11 +197,7 @@ export function GroceryPage() {
               <div className="grid grid-cols-2 gap-2">
                 <Input type="number" step="0.01" min="0" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
                 <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
-                  {UNIT_OPTIONS.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
+                  <UnitOptions />
                 </Select>
               </div>
               <Button type="submit" className="w-full rounded-2xl">
@@ -169,6 +205,16 @@ export function GroceryPage() {
               </Button>
             </Card>
           </form>
+
+          {lowStockItems.length > 0 && (
+            <button
+              onClick={handleAddLowStock}
+              disabled={syncing}
+              className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-accent)] disabled:opacity-50"
+            >
+              <Sparkles size={13} /> {syncing ? 'Adding…' : `Make sure all ${lowStockItems.length} low/out-of-stock pantry items are on the list`}
+            </button>
+          )}
 
           {completedCount > 0 && (
             <button
@@ -186,7 +232,7 @@ export function GroceryPage() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {filteredItems.map((item) => (
-                <GroceryItemTile key={item.id} item={item} onToggle={toggleComplete} onDelete={deleteItem} onUpdatePrice={updatePrice} />
+                <GroceryItemTile key={item.id} item={item} categoryName={categoryName} onToggle={toggleComplete} onDelete={deleteItem} onUpdatePrice={updatePrice} />
               ))}
             </div>
           )}
@@ -242,8 +288,8 @@ function ReceiptsView({ receipts, onDeleteReceipt }) {
   )
 }
 
-function GroceryItemTile({ item, onToggle, onDelete, onUpdatePrice }) {
-  const c = groceryCategoryColor(item.category)
+function GroceryItemTile({ item, categoryName, onToggle, onDelete, onUpdatePrice }) {
+  const c = inventoryCategoryColor(item.category_id)
   const [editingPrice, setEditingPrice] = useState(false)
   const [priceDraft, setPriceDraft] = useState(item.price || '')
 
@@ -274,15 +320,18 @@ function GroceryItemTile({ item, onToggle, onDelete, onUpdatePrice }) {
             item.completed ? 'bg-[var(--color-primary)] text-white' : cn(c.solid, 'text-white')
           )}
         >
-          {item.completed ? <Check size={18} /> : <CategoryIcon category={item.category} size={18} />}
+          {item.completed ? <Check size={18} /> : <CategoryIcon category={item.category_id} size={18} />}
         </div>
 
         <p className={cn('text-sm font-bold leading-tight', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
           {item.name}
         </p>
         <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-          {item.quantity} {item.unit}
+          {item.quantity} {item.unit} · {categoryName(item.category_id)}
         </p>
+        {item.auto_generated && !item.completed && (
+          <span className="inline-block mt-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300">Low stock · auto</span>
+        )}
       </button>
 
       {editingPrice ? (

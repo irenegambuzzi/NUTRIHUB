@@ -24,25 +24,45 @@ export const MEAL_TYPE_CALORIE_SHARE = {
   dinner: 0.38,
 }
 
-export const GROCERY_CATEGORIES = ['Kitchen', 'Beauty Care', 'Cleaning', 'Home']
+// Metric and count units only — no US/Imperial (oz, lb, cup, ...).
+export const UNIT_GROUPS = [
+  {
+    label: 'Count',
+    units: [
+      { value: 'ea', label: 'each (ea)' },
+      { value: 'pc', label: 'piece (pc)' },
+      { value: 'pack', label: 'pack' },
+      { value: 'box', label: 'box' },
+      { value: 'btl', label: 'bottle (btl)' },
+      { value: 'can', label: 'can' },
+      { value: 'jar', label: 'jar' },
+      { value: 'tube', label: 'tube' },
+      { value: 'sachet', label: 'sachet' },
+      { value: 'roll', label: 'roll' },
+      { value: 'sheet', label: 'sheet' },
+      { value: 'tablet', label: 'tablet' },
+      { value: 'capsule', label: 'capsule' },
+      { value: 'set', label: 'set' },
+      { value: 'pair', label: 'pair' },
+    ],
+  },
+  { label: 'Weight', units: [{ value: 'g', label: 'gram (g)' }, { value: 'kg', label: 'kilogram (kg)' }] },
+  { label: 'Volume', units: [{ value: 'ml', label: 'milliliter (ml)' }, { value: 'L', label: 'liter (L)' }] },
+  { label: 'Length', units: [{ value: 'cm', label: 'centimeter (cm)' }, { value: 'm', label: 'meter (m)' }] },
+]
 
-export const PANTRY_CATEGORIES = ['Home', 'Kitchen', 'Bathroom']
+export const UNIT_VALUES = UNIT_GROUPS.flatMap((g) => g.units.map((u) => u.value))
 
-// Where a bought grocery item lands in the pantry by default, and back.
-export const GROCERY_TO_PANTRY_CATEGORY = {
-  Kitchen: 'Kitchen',
-  'Beauty Care': 'Bathroom',
-  Cleaning: 'Home',
-  Home: 'Home',
-}
+export const DEFAULT_UNIT = 'pc'
 
-export const PANTRY_TO_GROCERY_CATEGORY = {
-  Kitchen: 'Kitchen',
-  Bathroom: 'Beauty Care',
-  Home: 'Home',
-}
+// Outer packaging a multipack comes in; stock is always counted in the
+// item's base unit, so "2 case × 12 btl" is stored as 24 btl.
+export const PACKAGING_UNITS = ['pack', 'box', 'case', 'carton', 'crate', 'bag']
 
-export const UNIT_OPTIONS = ['pcs', 'g', 'kg', 'ml', 'l']
+export const PACK_SIZE_PRESETS = [6, 12, 24]
+
+// Days before expiry that trigger a reminder.
+export const EXPIRY_WARNING_DAYS = [30, 7]
 
 export const PAID_BY_OPTIONS = [
   { value: 'irene', label: 'Irene' },

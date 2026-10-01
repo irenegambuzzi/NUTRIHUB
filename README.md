@@ -1,6 +1,6 @@
 # Home & Nutri Hub
 
-A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, a grocery list, a pantry tracker, and an expense tracker with customizable categories. No login — everything is saved to a shared Supabase project and visible to both profiles at once.
+A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, a grocery list, a home inventory (stock levels, minimum stock, expiry reminders, auto shopping list, CSV/JSON export), and an expense tracker with customizable categories. No login — everything is saved to a shared Supabase project and visible to both profiles at once.
 
 ## Stack
 
@@ -11,7 +11,7 @@ A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, 
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in the Supabase URL/anon key.
-2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`.
+2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql`. (An existing database only needs `005_home_inventory.sql` — it keeps and converts current pantry/grocery data.)
 3. `npm install`
 4. `npm run dev`
 
@@ -29,4 +29,4 @@ The site is served from a subpath (`/NUTRIHUB/`), so routing uses `HashRouter` a
 - `src/pages/` — one file per section (Planner, Profiles, Recipes, Grocery, Expenses, Pantry)
 - `src/hooks/` — data-fetching/CRUD hooks per Supabase table
 - `src/components/` — layout shell and small reusable UI primitives
-- `supabase/schema.sql` — the full database schema
+- `supabase/schema.sql` — the base database schema; numbered files are later migrations

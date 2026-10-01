@@ -40,23 +40,24 @@ export function colorByName(name) {
   return PALETTE[name] || PALETTE.teal
 }
 
-export const GROCERY_CATEGORY_COLORS = {
-  Kitchen: 'orange',
-  'Beauty Care': 'pink',
-  Cleaning: 'violet',
-  Home: 'teal',
+// Keyed by parent inventory category id.
+export const INVENTORY_CATEGORY_COLORS = {
+  'pantry-staples': 'orange',
+  canned: 'amber',
+  beverages: 'sky',
+  snacks: 'pink',
+  cleaning: 'violet',
+  laundry: 'sky',
+  toiletries: 'teal',
+  'personal-care': 'pink',
+  health: 'rose',
+  baby: 'amber',
+  pet: 'orange',
+  household: 'teal',
+  automotive: 'violet',
+  misc: 'emerald',
 }
 
-export const PANTRY_CATEGORY_COLORS = {
-  Home: 'teal',
-  Kitchen: 'orange',
-  Bathroom: 'sky',
-}
-
-export function groceryCategoryColor(category) {
-  return colorByName(GROCERY_CATEGORY_COLORS[category])
-}
-
-export function pantryCategoryColor(category) {
-  return colorByName(PANTRY_CATEGORY_COLORS[category])
+export function inventoryCategoryColor(categoryId) {
+  return colorByName(INVENTORY_CATEGORY_COLORS[categoryId])
 }

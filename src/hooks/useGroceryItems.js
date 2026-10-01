@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { GROCERY_TO_PANTRY_CATEGORY } from '../data/constants'
+import { DEFAULT_UNIT } from '../data/constants'
+import { logStockChange, syncShoppingForItem, toBaseQuantity } from '../lib/inventory'
 
 async function getGroceriesCategoryId() {
   const { data } = await supabase.from('expense_categories').select('id').eq('name', 'Groceries').maybeSingle()
@@ -24,10 +25,12 @@ export function useGroceryItems() {
     return () => supabase.removeChannel(channel)
   }, [fetchItems])
 
-  const addItem = useCallback(async ({ name, category, price, quantity = 1, unit = 'pcs' }) => {
+  const addItem = useCallback(async ({ name, categoryId, price, quantity = 1, unit = DEFAULT_UNIT, pantryItemId = null }) => {
     const { data, error } = await supabase
       .from('grocery_items')
-      .insert([{ name, category, price: price || 0, quantity, unit, completed: false }])
+      .insert([
+        { name, category_id: categoryId, price: price || 0, quantity, unit, completed: false, pantry_item_id: pantryItemId },
+      ])
       .select()
 
     if (!error && data) setItems((prev) => [data[0], ...prev])
@@ -35,8 +38,8 @@ export function useGroceryItems() {
   }, [])
 
   // Checking off an item logs it as a Groceries expense (if priced)
-  // and merges its quantity into the matching pantry item. Unchecking
-  // removes that expense again.
+  // and adds its quantity to the linked (or same-named) pantry item,
+  // converted to that item's base unit. Unchecking removes the expense.
   const toggleComplete = useCallback(async (item) => {
     const completed = !item.completed
 
@@ -61,24 +64,37 @@ export function useGroceryItems() {
     await supabase.from('grocery_items').update({ completed, expense_id: expenseId }).eq('id', item.id)
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed, expense_id: expenseId } : i)))
 
-    const pantryCategory = GROCERY_TO_PANTRY_CATEGORY[item.category] || 'Home'
-    const { data: existing } = await supabase.from('pantry_items').select('*').ilike('name', item.name).maybeSingle()
+    let existing = null
+    if (item.pantry_item_id) {
+      const { data } = await supabase.from('pantry_items').select('*').eq('id', item.pantry_item_id).maybeSingle()
+      existing = data
+    }
+    if (!existing) {
+      const { data } = await supabase.from('pantry_items').select('*').ilike('name', item.name).limit(1)
+      existing = data?.[0] ?? null
+    }
 
     if (existing) {
-      await supabase
-        .from('pantry_items')
-        .update({ quantity: Number(existing.quantity) + Number(item.quantity || 1), status: 'ok' })
-        .eq('id', existing.id)
+      const added = toBaseQuantity(existing, item.quantity || 1, item.unit)
+      const newStock = Number(existing.current_stock) + added
+      await supabase.from('pantry_items').update({ current_stock: newStock }).eq('id', existing.id)
+      const updated = { ...existing, current_stock: newStock }
+      await logStockChange(updated, added, newStock, 'purchased')
+      await syncShoppingForItem(updated)
     } else {
-      await supabase.from('pantry_items').insert([
-        {
-          name: item.name,
-          category: pantryCategory,
-          quantity: item.quantity || 1,
-          unit: item.unit || 'pcs',
-          status: 'ok',
-        },
-      ])
+      const { data: created } = await supabase
+        .from('pantry_items')
+        .insert([
+          {
+            name: item.name,
+            category_id: item.category_id,
+            current_stock: item.quantity || 1,
+            unit: item.unit || DEFAULT_UNIT,
+          },
+        ])
+        .select()
+        .single()
+      if (created) await logStockChange(created, Number(created.current_stock), Number(created.current_stock), 'purchased')
     }
   }, [])
 
