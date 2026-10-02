@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { CATEGORY_NAME_OVERRIDES, DURABLE_CATEGORY_IDS, HIDDEN_CATEGORY_IDS } from '../data/constants'
+
+// Same list (and names) everywhere the app offers categories.
+function visibleCategories(rows) {
+  const hidden = new Set(HIDDEN_CATEGORY_IDS)
+  return rows
+    .filter((c) => !hidden.has(c.id) && !hidden.has(c.parent_id))
+    .map((c) => (CATEGORY_NAME_OVERRIDES[c.id] ? { ...c, name: CATEGORY_NAME_OVERRIDES[c.id] } : c))
+}
 
 export function useInventoryCategories() {
   const [categories, setCategories] = useState([])
 
   const fetchCategories = useCallback(async () => {
     const { data } = await supabase.from('inventory_categories').select('*').order('sort_order').order('name')
-    if (data) setCategories(data)
+    if (data) setCategories(visibleCategories(data))
   }, [])
 
   useEffect(() => {
@@ -18,14 +27,16 @@ export function useInventoryCategories() {
     return () => supabase.removeChannel(channel)
   }, [fetchCategories])
 
-  const { parents, subsByParent, byId } = useMemo(() => {
+  const { parents, pantryParents, subsByParent, byId } = useMemo(() => {
     const byId = new Map(categories.map((c) => [c.id, c]))
     const parents = categories.filter((c) => c.type === 'parent')
     const subsByParent = new Map(parents.map((p) => [p.id, []]))
     for (const c of categories) {
       if (c.type === 'sub' && subsByParent.has(c.parent_id)) subsByParent.get(c.parent_id).push(c)
     }
-    return { parents, subsByParent, byId }
+    // The pantry only tracks consumables, so durable categories are left out there.
+    const pantryParents = parents.filter((p) => !DURABLE_CATEGORY_IDS.includes(p.id))
+    return { parents, pantryParents, subsByParent, byId }
   }, [categories])
 
   const addSubcategory = useCallback(async (parentId, name) => {
@@ -41,5 +52,5 @@ export function useInventoryCategories() {
 
   const categoryName = useCallback((id) => byId.get(id)?.name ?? 'Uncategorized', [byId])
 
-  return { categories, parents, subsByParent, byId, categoryName, addSubcategory }
+  return { categories, parents, pantryParents, subsByParent, byId, categoryName, addSubcategory }
 }

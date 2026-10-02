@@ -1,8 +1,9 @@
-import { Wheat, Soup, CupSoda, Cookie, SprayCan, WashingMachine, Bath, Sparkles, Pill, Baby, PawPrint, House, Car, Snowflake, Tag } from 'lucide-react'
+import { Wheat, Drumstick, Microwave, Soup, CupSoda, Cookie, SprayCan, WashingMachine, Bath, Sparkles, Pill, Baby, PawPrint, House, Car, Snowflake, Tag } from 'lucide-react'
 
 // Keyed by parent inventory category id.
 const ICONS = {
   'pantry-staples': Wheat,
+  meat: Drumstick,
   canned: Soup,
   beverages: CupSoda,
   snacks: Cookie,
@@ -14,6 +15,7 @@ const ICONS = {
   baby: Baby,
   pet: PawPrint,
   household: House,
+  appliances: Microwave,
   automotive: Car,
   misc: Snowflake,
 }

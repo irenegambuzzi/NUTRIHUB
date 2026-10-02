@@ -43,6 +43,7 @@ export function colorByName(name) {
 // Keyed by parent inventory category id.
 export const INVENTORY_CATEGORY_COLORS = {
   'pantry-staples': 'orange',
+  meat: 'rose',
   canned: 'amber',
   beverages: 'sky',
   snacks: 'pink',
@@ -54,6 +55,7 @@ export const INVENTORY_CATEGORY_COLORS = {
   baby: 'amber',
   pet: 'orange',
   household: 'teal',
+  appliances: 'sky',
   automotive: 'violet',
   misc: 'emerald',
 }

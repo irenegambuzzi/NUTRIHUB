@@ -29,8 +29,7 @@ export const UNIT_GROUPS = [
   {
     label: 'Count',
     units: [
-      { value: 'ea', label: 'each (ea)' },
-      { value: 'pc', label: 'piece (pc)' },
+      { value: 'pcs', label: 'pieces (pcs)' },
       { value: 'pack', label: 'pack' },
       { value: 'box', label: 'box' },
       { value: 'btl', label: 'bottle (btl)' },
@@ -44,16 +43,36 @@ export const UNIT_GROUPS = [
       { value: 'capsule', label: 'capsule' },
       { value: 'set', label: 'set' },
       { value: 'pair', label: 'pair' },
+      { value: 'shaker', label: 'shaker' },
     ],
   },
-  { label: 'Weight', units: [{ value: 'g', label: 'gram (g)' }, { value: 'kg', label: 'kilogram (kg)' }] },
+  { label: 'Weight', units: [{ value: 'gr', label: 'gram (gr)' }, { value: 'kg', label: 'kilogram (kg)' }] },
   { label: 'Volume', units: [{ value: 'ml', label: 'milliliter (ml)' }, { value: 'L', label: 'liter (L)' }] },
-  { label: 'Length', units: [{ value: 'cm', label: 'centimeter (cm)' }, { value: 'm', label: 'meter (m)' }] },
 ]
 
 export const UNIT_VALUES = UNIT_GROUPS.flatMap((g) => g.units.map((u) => u.value))
 
-export const DEFAULT_UNIT = 'pc'
+export const DEFAULT_UNIT = 'pcs'
+
+// Older spellings still in the database (or in imported files) and the
+// unit they now mean.
+export const LEGACY_UNITS = {
+  g: 'gr',
+  G: 'gr',
+  gram: 'gr',
+  grams: 'gr',
+  pc: 'pcs',
+  piece: 'pcs',
+  pieces: 'pcs',
+  ea: 'pcs',
+  l: 'L',
+  lt: 'L',
+  KG: 'kg',
+  Kg: 'kg',
+  ML: 'ml',
+  Ml: 'ml',
+  mL: 'ml',
+}
 
 // Outer packaging a multipack comes in; stock is always counted in the
 // item's base unit, so "2 case × 12 btl" is stored as 24 btl.
@@ -61,8 +80,38 @@ export const PACKAGING_UNITS = ['pack', 'box', 'case', 'carton', 'crate', 'bag']
 
 export const PACK_SIZE_PRESETS = [6, 12, 24]
 
-// Days before expiry that trigger a reminder.
-export const EXPIRY_WARNING_DAYS = [30, 7]
+// Units that are usual for each parent category. Anything else still
+// saves, it just shows a warning.
+export const SUGGESTED_UNITS = {
+  beverages: ['btl', 'can', 'ml', 'L'],
+  'pantry-staples': ['gr', 'kg', 'pack', 'pcs', 'jar', 'btl', 'shaker'],
+  meat: ['gr', 'kg', 'pack', 'pcs'],
+  canned: ['can', 'jar', 'pack'],
+  snacks: ['pack', 'pcs', 'box'],
+  cleaning: ['btl', 'pack', 'pcs'],
+  laundry: ['pack', 'btl', 'pcs'],
+  toiletries: ['pcs', 'pack', 'btl'],
+  'personal-care': ['pcs', 'btl', 'tube'],
+  health: ['pcs', 'tablet', 'capsule'],
+  pet: ['pack', 'can', 'pcs'],
+  household: ['pcs', 'pack', 'roll'],
+  misc: ['pcs', 'pack'],
+  appliances: ['pcs', 'set', 'box', 'pack'],
+}
+
+// Durable one-off purchases (oven, vacuum, laptop…): they can go on the
+// grocery list, but never into the pantry, don't count towards the
+// grocery budget, and are logged under this expense category (or its
+// sub-category of the same name) instead of Groceries.
+export const DURABLE_CATEGORY_IDS = ['appliances']
+export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
+
+// Removed categories that must never be offered again, even if a stale
+// row is still in the database.
+export const HIDDEN_CATEGORY_IDS = ['baby', 'automotive']
+
+// Display names that differ from what an older database may still have.
+export const CATEGORY_NAME_OVERRIDES = { 'personal-care': 'Beauty Care' }
 
 export const PAID_BY_OPTIONS = [
   { value: 'irene', label: 'Irene' },

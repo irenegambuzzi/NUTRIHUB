@@ -1,12 +1,25 @@
 import { getWeekStart } from './week'
 
+// Dates as YYYY-MM-DD in local time. toISOString() would give UTC, which
+// in Italy turns local midnight into the previous day.
+export function localDateString(date = new Date()) {
+  return date.toLocaleDateString('sv-SE')
+}
+
+function localMonday(date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return d
+}
+
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export function getPeriodRange(period, referenceDate = new Date()) {
   const now = new Date(referenceDate)
   if (period === 'week') {
-    const start = new Date(`${getWeekStart(now)}T00:00:00`)
+    const start = localMonday(now)
     const end = new Date(start)
     end.setDate(start.getDate() + 7)
     return { start, end }
@@ -38,7 +51,7 @@ export function getPeriodBuckets(period, referenceDate = new Date()) {
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(start)
       d.setDate(start.getDate() + i)
-      return { key: d.toISOString().slice(0, 10), label: WEEKDAY_LABELS[d.getDay()] }
+      return { key: localDateString(d), label: WEEKDAY_LABELS[d.getDay()] }
     })
   }
 

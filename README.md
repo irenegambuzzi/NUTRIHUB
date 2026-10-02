@@ -11,7 +11,7 @@ A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, 
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in the Supabase URL/anon key.
-2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql`. (An existing database only needs `005_home_inventory.sql` — it keeps and converts current pantry/grocery data.)
+2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql` and `supabase/006_backfill_inventory_data.sql`. (An existing database only needs the numbered files it hasn't run yet — they keep and convert current pantry/grocery data.)
 3. `npm install`
 4. `npm run dev`
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { logStockChange, syncShoppingForItem } from '../lib/inventory'
+import { insertRows, logStockChange, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
 
 export const ITEM_FIELDS = [
   'name',
@@ -14,6 +14,11 @@ export const ITEM_FIELDS = [
   'expiry_date',
   'batch_lot',
   'notes',
+  'price',
+  'price_qty',
+  'price_unit',
+  'payer',
+  'last_purchased_at',
 ]
 
 function pickFields(source) {
@@ -28,11 +33,11 @@ export function usePantryItems() {
 
   const fetchItems = useCallback(async () => {
     const { data } = await supabase.from('pantry_items').select('*').order('created_at', { ascending: false })
-    if (data) setItems(data)
+    if (data) setItems(data.map(normalizeItem))
   }, [])
 
   const fetchLogs = useCallback(async () => {
-    const { data } = await supabase.from('stock_logs').select('*').order('created_at', { ascending: false }).limit(200)
+    const { data } = await supabase.from('stock_logs').select('*').order('created_at', { ascending: false }).limit(1000)
     if (data) setLogs(data)
   }, [])
 
@@ -48,7 +53,8 @@ export function usePantryItems() {
   }, [fetchItems, fetchLogs])
 
   const addItem = useCallback(async (fields) => {
-    const { data, error } = await supabase.from('pantry_items').insert([pickFields(fields)]).select().single()
+    const { data: rows, error } = await insertRows('pantry_items', [pickFields(fields)])
+    const data = rows?.[0]
     if (error || !data) return { error }
     setItems((prev) => [data, ...prev])
     await logStockChange(data, Number(data.current_stock), Number(data.current_stock), 'added')
@@ -58,11 +64,16 @@ export function usePantryItems() {
 
   const updateItem = useCallback(async (item, fields) => {
     const patch = pickFields(fields)
-    const { data, error } = await supabase.from('pantry_items').update(patch).eq('id', item.id).select().single()
+    const { data: rows, error } = await updateRows('pantry_items', item.id, patch)
+    const data = rows?.[0] && normalizeItem(rows[0])
     if (error || !data) return { error }
     setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
     const change = Number(data.current_stock) - Number(item.current_stock)
     await logStockChange(data, change, Number(data.current_stock), 'edited')
+    // A rename carries over to the item's open grocery entries.
+    if (data.name !== item.name) {
+      await supabase.from('grocery_items').update({ name: data.name }).eq('pantry_item_id', item.id).eq('completed', false)
+    }
     await syncShoppingForItem(data)
     return { data }
   }, [])
@@ -89,16 +100,16 @@ export function usePantryItems() {
     const withId = rows.filter((r) => r.id).map((r) => ({ id: r.id, ...pickFields(r) }))
     const withoutId = rows.filter((r) => !r.id).map(pickFields)
     if (withId.length) {
-      const { error } = await supabase.from('pantry_items').upsert(withId)
+      const { error } = await upsertRows('pantry_items', withId)
       if (error) return { error }
     }
     if (withoutId.length) {
-      const { error } = await supabase.from('pantry_items').insert(withoutId)
+      const { error } = await insertRows('pantry_items', withoutId)
       if (error) return { error }
     }
     const { data } = await supabase.from('pantry_items').select('*').order('created_at', { ascending: false })
     if (data) {
-      setItems(data)
+      setItems(data.map(normalizeItem))
       for (const item of data) await syncShoppingForItem(item)
     }
     return { error: null, count: rows.length }

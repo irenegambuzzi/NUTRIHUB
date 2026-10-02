@@ -1,9 +1,12 @@
 import { useState } from 'react'
-import { X, Package } from 'lucide-react'
+import { X, Package, AlertTriangle } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { cn } from '../../lib/cn'
-import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, UNIT_GROUPS } from '../../data/constants'
+import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS } from '../../data/constants'
+import { roundHalf, unitFactor } from '../../lib/inventory'
+import { priceUnitOptions } from '../../lib/pricing'
+import { PriceFields } from './PriceFields'
 
 const NEW_SUB = '__new__'
 
@@ -23,6 +26,9 @@ function initialState(item, parents) {
     expiry_date: item?.expiry_date ?? '',
     batch_lot: item?.batch_lot ?? '',
     notes: item?.notes ?? '',
+    price: Number(item?.price) > 0 ? String(item.price) : '',
+    price_qty: item?.price_qty ? String(item.price_qty) : '1',
+    price_unit: item?.price_unit ?? '',
   }
 }
 
@@ -31,8 +37,33 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
   const [newSubName, setNewSubName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [unitNote, setUnitNote] = useState('')
 
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }))
+  // Quantities snap to steps of 0.5 when the field is left.
+  const snap = (field) => () => setForm((f) => ({ ...f, [field]: String(roundHalf(f[field])) }))
+
+  // Switching between gr↔kg or ml↔L converts the quantities; other
+  // switches (e.g. pack → pcs) can't be converted safely, so the
+  // numbers are left for the user to check.
+  const changeUnit = (e) => {
+    const next = e.target.value
+    const factor = unitFactor(form.unit, next)
+    if (factor !== null && factor !== 1 && !form.stockInPacks) {
+      const stock = roundHalf((parseFloat(form.current_stock) || 0) * factor)
+      const min = roundHalf((parseFloat(form.min_stock) || 0) * factor)
+      setForm((f) => ({ ...f, unit: next, current_stock: String(stock), min_stock: String(min) }))
+      setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.`)
+    } else {
+      setForm((f) => ({ ...f, unit: next }))
+      setUnitNote(item && next !== item.unit ? `Quantities weren't converted — check stock and minimum in ${next}.` : '')
+    }
+  }
+
+  const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
+  const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
+  const suggestedUnits = SUGGESTED_UNITS[form.category_id] || []
+  const unusualUnit = suggestedUnits.length > 0 && !suggestedUnits.includes(form.unit)
   const subs = subsByParent.get(form.category_id) || []
   const perPack = Number(form.quantity_per_pack) || 0
   const stockValue = parseFloat(form.current_stock) || 0
@@ -66,11 +97,14 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
       unit: form.unit,
       packaging_unit: form.multipack ? form.packaging_unit : null,
       quantity_per_pack: form.multipack ? perPack : null,
-      current_stock: Math.round(baseStock * 100) / 100,
-      min_stock: parseFloat(form.min_stock) || 0,
+      current_stock: roundHalf(baseStock),
+      min_stock: roundHalf(form.min_stock),
       expiry_date: form.expiry_date || null,
       batch_lot: form.batch_lot.trim() || null,
       notes: form.notes.trim() || null,
+      ...(parseFloat(form.price) > 0
+        ? { price: parseFloat(form.price), price_qty: parseFloat(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
+        : { price: null, price_qty: null, price_unit: null }),
     })
     setSaving(false)
     if (saveError) return setError('Could not save: ' + saveError.message)
@@ -129,7 +163,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
 
         <div>
           <Label>Unit (what you count stock in)</Label>
-          <Select value={form.unit} onChange={set('unit')}>
+          <Select value={form.unit} onChange={changeUnit}>
             {UNIT_GROUPS.map((g) => (
               <optgroup key={g.label} label={g.label}>
                 {g.units.map((u) => (
@@ -140,6 +174,26 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
               </optgroup>
             ))}
           </Select>
+          {unitNote && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">{unitNote}</p>}
+          {unusualUnit && (
+            <div className="mt-1.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 p-2 space-y-1.5">
+              <p className="text-[11px] text-yellow-300 flex items-center gap-1.5">
+                <AlertTriangle size={12} /> "{form.unit}" is unusual for {parents.find((p) => p.id === form.category_id)?.name}. You can still save it.
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {suggestedUnits.map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => changeUnit({ target: { value: u } })}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--color-surface-soft)] border border-[var(--color-border)] text-[var(--color-text)]"
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-2xl border border-[var(--color-border)] p-3 space-y-3">
@@ -210,16 +264,16 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
                 </button>
               )}
             </div>
-            <Input type="number" min="0" step="0.01" value={form.current_stock} onChange={set('current_stock')} />
+            <Input type="number" min="0" step="0.5" value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
           </div>
           <div>
             <Label>Minimum stock ({form.unit})</Label>
-            <Input type="number" min="0" step="0.01" value={form.min_stock} onChange={set('min_stock')} />
+            <Input type="number" min="0" step="0.5" value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
           </div>
         </div>
         {form.multipack && form.stockInPacks && (
           <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
-            {stockValue} {form.packaging_unit} × {perPack} = {baseStock} {form.unit}
+            {stockValue} {form.packaging_unit} × {perPack} = {roundHalf(baseStock)} {form.unit}
           </p>
         )}
         <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
@@ -238,11 +292,21 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
         </div>
 
         <div>
+          <Label>Price (e.g. €2.50 per 500 gr, €1 per can, €6 per pack)</Label>
+          <PriceFields
+            value={{ price: form.price, price_qty: form.price_qty, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }}
+            onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+            unitOptions={priceUnits}
+          />
+          <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Used as the estimate when this item goes on the grocery list.</p>
+        </div>
+
+        <div>
           <Label>Notes</Label>
           <Textarea className="h-16" value={form.notes} onChange={set('notes')} />
         </div>
 
-        {error && <p className="text-xs text-rose-400">{error}</p>}
+        {error && <p className="text-xs text-red-400">{error}</p>}
 
         <Button type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : item ? 'Save changes' : 'Add to inventory'}

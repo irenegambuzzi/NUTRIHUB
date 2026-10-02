@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient'
-import { stockStatus } from './inventory'
+import { normalizeUnit, stockStatus } from './inventory'
 
 const CSV_COLUMNS = [
   'id',
@@ -15,11 +15,29 @@ const CSV_COLUMNS = [
   'expiry_date',
   'batch_lot',
   'notes',
+  'price',
+  'payer',
+  'last_purchased_at',
+  'category_id',
+  'subcategory_id',
   'created_at',
   'updated_at',
 ]
 
-const NUMERIC_FIELDS = ['quantity_per_pack', 'current_stock', 'min_stock']
+const NUMERIC_FIELDS = ['quantity_per_pack', 'current_stock', 'min_stock', 'price']
+
+// Every pantry_items field plus readable category names and status.
+function exportRows(items, categoryName) {
+  return items.map((item) => {
+    const row = {
+      ...item,
+      category: item.category_id ? categoryName(item.category_id) : '',
+      subcategory: item.subcategory_id ? categoryName(item.subcategory_id) : '',
+      status: stockStatus(item),
+    }
+    return Object.fromEntries(CSV_COLUMNS.map((c) => [c, row[c] ?? '']))
+  })
+}
 
 function csvCell(value) {
   if (value === null || value === undefined) return ''
@@ -28,12 +46,7 @@ function csvCell(value) {
 }
 
 export function itemsToCsv(items, categoryName) {
-  const rows = items.map((item) => ({
-    ...item,
-    category: item.category_id ? categoryName(item.category_id) : '',
-    subcategory: item.subcategory_id ? categoryName(item.subcategory_id) : '',
-    status: stockStatus(item),
-  }))
+  const rows = exportRows(items, categoryName)
   const lines = [CSV_COLUMNS.join(','), ...rows.map((r) => CSV_COLUMNS.map((c) => csvCell(r[c])).join(','))]
   // Leading BOM so Excel opens it as UTF-8.
   return '\uFEFF' + lines.join('\r\n')
@@ -99,18 +112,41 @@ export function csvRowsToItems(rows, categories) {
         name: r.name,
         category_id: categoryId,
         subcategory_id: find(r.subcategory_id || r.subcategory, 'sub', categoryId),
-        unit: r.unit || 'pc',
+        unit: normalizeUnit(r.unit || 'pcs'),
         packaging_unit: r.packaging_unit || null,
         expiry_date: r.expiry_date || null,
         batch_lot: r.batch_lot || null,
         notes: r.notes || null,
+        payer: r.payer || null,
       }
       for (const f of NUMERIC_FIELDS) {
-        const n = parseFloat(r[f])
-        item[f] = Number.isFinite(n) ? n : f === 'quantity_per_pack' ? null : 0
+        const n = parseFloat(String(r[f] ?? '').replace(',', '.'))
+        item[f] = Number.isFinite(n) ? n : ['quantity_per_pack', 'price'].includes(f) ? null : 0
       }
       return item
     })
+}
+
+// SheetJS is loaded only when an Excel file is actually exported or
+// imported, so it doesn't weigh down the app's first load.
+export async function itemsToXlsx(items, categoryName) {
+  const XLSX = await import('xlsx')
+  const sheet = XLSX.utils.json_to_sheet(exportRows(items, categoryName), { header: CSV_COLUMNS })
+  sheet['!cols'] = CSV_COLUMNS.map((c) => ({ wch: ['name', 'notes', 'category', 'subcategory'].includes(c) ? 28 : 14 }))
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, sheet, 'Inventory')
+  return XLSX.write(book, { type: 'array', bookType: 'xlsx' })
+}
+
+// Rows from the first sheet, keyed by lower-cased header, like parseCsv.
+export async function parseXlsx(arrayBuffer) {
+  const XLSX = await import('xlsx')
+  const book = XLSX.read(arrayBuffer, { type: 'array', cellDates: true })
+  const sheet = book.Sheets[book.SheetNames[0]]
+  if (!sheet) return []
+  return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, dateNF: 'yyyy-mm-dd' }).map((row) =>
+    Object.fromEntries(Object.entries(row).map(([k, v]) => [k.trim().toLowerCase(), String(v).trim()]))
+  )
 }
 
 export async function buildBackup() {
