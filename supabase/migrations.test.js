@@ -143,3 +143,33 @@ describe('shopping trips', () => {
     expect(await state()).toEqual(before)
   })
 })
+
+describe('a purchase edited on the confirm screen', () => {
+  it('uses the edited price, quantity, payer and day for everything, and Reopen undoes it exactly', async () => {
+    const groceries = (await one(`select id from expense_categories where name = 'Groceries'`)).id
+    const juice = (await one(`insert into pantry_items (name, unit, current_stock, price, price_qty, price_unit, payer, category_id) values ('Juice', 'btl', 1, 1, 1, 'btl', 'shared', 'beverages') returning id`)).id
+    // On the list: 1 btl at €1.
+    const entry = (await one(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, payer, pantry_item_id, in_cart, category_id) values ('Juice', 1, 'btl', 1, 1, 'btl', 'shared', $1, true, 'beverages') returning id`, [juice])).id
+    // Edited on the confirm screen: 2 btl for €2 in total, paid by Akbar —
+    // saved to the entry, then confirmed with the same values.
+    await q(`update grocery_items set quantity = 2, price = 2, price_qty = 2, price_unit = 'btl', payer = 'akbar' where id = $1`, [entry])
+    const id = '44444444-4444-4444-4444-444444444444'
+    await one(`select * from confirm_shopping_trip($1)`, [
+      { id, trip_date: '2026-10-05', items: [{ grocery_item_id: entry, line_total: 2, payer: 'akbar', expense_category_id: groceries, pantry_item_id: juice, add: 2 }] },
+    ])
+
+    expect(await one(`select amount::float, paid_by, expense_date::text from expenses where trip_id = $1`, [id])).toEqual({ amount: 2, paid_by: 'akbar', expense_date: '2026-10-05' })
+    expect(await one(`select current_stock::float, price::float, price_qty::float, payer from pantry_items where id = $1`, [juice])).toEqual({ current_stock: 3, price: 2, price_qty: 2, payer: 'akbar' })
+    expect(await one(`select change::float, new_stock::float, reason from stock_logs where item_id = $1`, [juice])).toEqual({ change: 2, new_stock: 3, reason: 'purchased' })
+    expect(await one(`select quantity::float, price::float, payer, completed from grocery_items where id = $1`, [entry])).toEqual({ quantity: 2, price: 2, payer: 'akbar', completed: true })
+    expect(Number((await one(`select total from shopping_trips where id = $1`, [id])).total)).toBe(2)
+
+    await one(`select reopen_shopping_trip($1)`, [id])
+    expect(Number((await one(`select count(*) from expenses where trip_id = $1`, [id])).count)).toBe(0)
+    expect(Number((await one(`select count(*) from stock_logs where item_id = $1`, [juice])).count)).toBe(0)
+    expect(await one(`select current_stock::float, price::float, price_qty::float, payer from pantry_items where id = $1`, [juice])).toEqual({ current_stock: 1, price: 1, price_qty: 1, payer: 'shared' })
+    // Back in the cart as edited, ready to confirm again.
+    expect(await one(`select quantity::float, price::float, payer, completed, in_cart from grocery_items where id = $1`, [entry])).toEqual({ quantity: 2, price: 2, payer: 'akbar', completed: false, in_cart: true })
+  })
+})
+

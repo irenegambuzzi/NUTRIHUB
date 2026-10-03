@@ -13,8 +13,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      // A new version takes over on the next open; nothing to click.
-      registerType: 'autoUpdate',
+      // A new version waits until the app says it's safe (or the user taps
+      // "Update"); see src/pwa.js. The app registers the worker itself.
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'favicon.ico', 'apple-touch-icon-180x180.png'],
       manifest: {
         name: 'Home & Nutri Hub',
@@ -41,6 +43,8 @@ export default defineConfig({
         // keeps its own copy of the last loaded lists.
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
         navigateFallback: `${BASE}index.html`,
+        // Reloads pages from versions that can't update themselves.
+        importScripts: ['sw-update.js'],
         // The Excel library is big and only used for import/export.
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },

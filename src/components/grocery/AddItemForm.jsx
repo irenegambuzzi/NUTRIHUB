@@ -101,7 +101,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   }
 
   return (
-    <form onSubmit={handleAdd}>
+    <form onSubmit={handleAdd} data-unsaved={name.trim() ? '' : undefined}>
       <Card className="space-y-3 rounded-3xl">
         <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => handleNameChange(e.target.value)} />
         <CategoryFields

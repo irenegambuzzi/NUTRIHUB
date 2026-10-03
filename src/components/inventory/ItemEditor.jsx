@@ -120,7 +120,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div data-unsaved className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}

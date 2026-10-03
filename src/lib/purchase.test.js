@@ -69,3 +69,41 @@ describe('confirmationPayload', () => {
     ])
   })
 })
+
+describe('edits on the confirm screen', async () => {
+  const { editPatch, editedItem } = await import('./purchase')
+  const milk = { id: 'm', name: 'Milk', quantity: 1, unit: 'btl', price: 1, price_qty: 1, price_unit: 'btl', payer: 'shared' }
+
+  it('a typed total becomes the price for exactly that quantity and unit', () => {
+    expect(editedItem(milk, { total: 2 })).toMatchObject({ price: 2, price_qty: 1, price_unit: 'btl' })
+    expect(editedItem(milk, { quantity: 3, total: 4.5 })).toMatchObject({ quantity: 3, price: 4.5, price_qty: 3, price_unit: 'btl' })
+    expect(editedItem(milk, { unit: 'pack', total: 2 })).toMatchObject({ unit: 'pack', price: 2, price_qty: 1, price_unit: 'pack' })
+  })
+
+  it('a new quantity keeps the unit price', () => {
+    expect(editedItem(milk, { quantity: 3 })).toMatchObject({ quantity: 3, price: 1, price_qty: 1 })
+  })
+
+  it('saves only what changed', () => {
+    expect(editPatch(milk, undefined)).toEqual({})
+    expect(editPatch(milk, { total: 2, payer: 'akbar' })).toEqual({ price: 2, payer: 'akbar' })
+    expect(editPatch(milk, { quantity: 2, total: 2 })).toEqual({ quantity: 2, price: 2, price_qty: 2 })
+  })
+
+  it('the payload uses the edited price, quantity, unit and payer everywhere', () => {
+    const rice = { id: 'r', name: 'Rice', quantity: 1, unit: 'pack', price: 1, price_qty: 1, price_unit: 'pack', payer: 'shared' }
+    const edited = editedItem(rice, { quantity: 1, unit: 'kg', total: 2, payer: 'akbar' })
+    const line = purchaseLine(edited, pantry)
+    const payload = confirmationPayload({
+      id: 't',
+      date: '2026-10-05',
+      lines: [line],
+      answers: {},
+      totalOf: (i) => (i.price * i.quantity) / i.price_qty,
+      expenseCategoryFor: () => 'cat',
+    })
+    // 1 kg of rice counted in gr: 1000 gr added, €2 expense, paid by Akbar.
+    expect(payload.items[0]).toMatchObject({ line_total: 2, payer: 'akbar', add: 1000 })
+    expect(payload.trip_date).toBe('2026-10-05')
+  })
+})

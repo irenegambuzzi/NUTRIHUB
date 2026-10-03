@@ -53,7 +53,7 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
         />
       )}
 
-      <form onSubmit={handleAddExpense}>
+      <form onSubmit={handleAddExpense} data-unsaved={amount || description ? '' : undefined}>
         <Card className="space-y-3">
           <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add an expense</p>
 

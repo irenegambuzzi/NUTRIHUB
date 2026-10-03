@@ -79,3 +79,31 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
     }),
   }
 }
+
+// An item as edited on the confirm screen. edit: { quantity, unit, total,
+// payer }, any of them. A typed total becomes the price for exactly this
+// quantity and unit, so the line total is what was typed — and that same
+// item is what the confirmation uses for the expense, stock, history and
+// the grocery entry.
+export function editedItem(item, edit) {
+  if (!edit) return item
+  const out = { ...item }
+  if (edit.quantity > 0) out.quantity = edit.quantity
+  if (edit.unit) out.unit = edit.unit
+  if (edit.payer) out.payer = edit.payer
+  if (edit.total != null && edit.total >= 0) {
+    out.price = edit.total
+    out.price_qty = out.quantity
+    out.price_unit = out.unit
+  }
+  return out
+}
+
+const EDITABLE = ['quantity', 'unit', 'price', 'price_qty', 'price_unit', 'payer']
+
+// The grocery fields an edit changes ({} when nothing does), to save
+// before confirming.
+export function editPatch(item, edit) {
+  const edited = editedItem(item, edit)
+  return Object.fromEntries(EDITABLE.filter((k) => edited[k] !== item[k]).map((k) => [k, edited[k]]))
+}

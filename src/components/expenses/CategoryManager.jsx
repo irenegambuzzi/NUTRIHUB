@@ -75,7 +75,7 @@ export function CategoryManager({ categories, onAdd, onDelete, onClose }) {
   const confirmingCategory = categories.find((c) => c.id === confirming)
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div data-unsaved className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-4"

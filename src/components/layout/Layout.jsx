@@ -3,6 +3,7 @@ import { Calendar, Home, ShoppingBag, Wallet } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Feedback } from '../ui/Feedback'
 import { SyncStatus } from './SyncStatus'
+import { UpdateBanner } from './UpdateBanner'
 
 // Four sections; Plan also holds Recipes and Profiles as its own tabs.
 const SECTIONS = [
@@ -126,6 +127,7 @@ export function Layout() {
         </div>
       </nav>
 
+      <UpdateBanner />
       <Feedback />
     </div>
   )

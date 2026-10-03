@@ -15,7 +15,7 @@ export function PriceCheck({ date, photos, lines, linkFor, onSave, onClose }) {
   const total = lines.reduce((sum, e) => sum + Number(e.amount || 0), 0)
 
   return (
-    <div className="fixed inset-0 z-40 bg-[var(--color-bg)] flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+    <div data-unsaved className="fixed inset-0 z-40 bg-[var(--color-bg)] flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
         <div>
           <p className="text-sm font-extrabold text-[var(--color-primary)]">Check prices</p>

@@ -101,7 +101,7 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
   }
 
   return (
-    <Card className="rounded-3xl space-y-2">
+    <Card className="rounded-3xl space-y-2" data-unsaved={text.trim() ? '' : undefined}>
       <form
         onSubmit={(e) => {
           e.preventDefault()

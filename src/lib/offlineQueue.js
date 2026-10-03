@@ -57,6 +57,7 @@ export function enqueue(type, payload, { key = null, label = type } = {}) {
 }
 
 export const getQueue = () => queue
+export const isSyncing = () => syncing
 
 // Sends the queued changes in order. Stops at a network failure (tried
 // again when back online); a change Supabase refuses is dropped with a

@@ -55,4 +55,14 @@ describe('every page renders inside the layout', () => {
     const html = renderToStaticMarkup(<HistoryView />)
     expect(html).toContain('Deleting history only removes the record')
   })
+
+  it('shows "New version available" with Update once a new version is waiting', async () => {
+    const { setUpdateAvailable } = await import('../lib/appUpdate')
+    expect(render('/grocery')).not.toContain('New version available')
+    setUpdateAvailable(() => {})
+    const html = render('/grocery')
+    expect(html).toContain('New version available')
+    expect(html).toContain('>Update</button>')
+  })
 })
+

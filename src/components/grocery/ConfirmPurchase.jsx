@@ -1,24 +1,26 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
-import { Input, Label } from '../ui/Field'
+import { Input, Label, Select } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
-import { PayerPicker } from './shared'
+import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseNumber } from '../../lib/feedback'
-import { formatUnitPrice, lineTotal, money } from '../../lib/pricing'
-import { purchaseLine } from '../../lib/purchase'
+import { formatUnitPrice, money } from '../../lib/pricing'
+import { editPatch, editedItem, purchaseLine } from '../../lib/purchase'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { usePurchase } from '../../hooks/usePurchase'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 
-// The last step of shopping: everything in the cart with quantity, price,
-// line total and payer (all still editable), the shopping day, and an
-// optional receipt photo. Questions about single items (pack size, expired
-// stock) are answered here. Nothing is saved to the pantry, history or
-// expenses until "Confirm purchase" — then all of it at once.
+// The last step of shopping: everything in the cart with quantity, unit,
+// price, line total and payer (all still editable), the shopping day, and
+// an optional receipt photo. Questions about single items (pack size,
+// expired stock) are answered here. Nothing is saved to the pantry,
+// history or expenses until "Confirm purchase" — then all of it at once,
+// with exactly the values on screen: edits are kept here as typed and
+// saved to the grocery entries just before confirming.
 export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, toggleCart, onClose }) {
   const { confirmPurchase } = usePurchase()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
@@ -29,11 +31,21 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const [answers, setAnswers] = useState({})
   const [photoIds, setPhotoIds] = useState([])
   const [busy, setBusy] = useState(false)
+  // Edits by item id ({ quantity, unit, total, payer }). Also kept in a ref,
+  // so Confirm pressed while a field is still focused sees the last digit.
+  const [edits, setEdits] = useState({})
+  const editsRef = useRef(edits)
+  const edit = (itemId, patch) => {
+    editsRef.current = { ...editsRef.current, [itemId]: { ...editsRef.current[itemId], ...patch } }
+    setEdits(editsRef.current)
+  }
 
-  const lines = cartItems.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
-  const total = cartItems.reduce((sum, i) => sum + (totalOf(i) ?? 0), 0)
+  const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
+  const items = itemsFor(edits)
+  const lines = items.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+  const total = items.reduce((sum, i) => sum + (totalOf(i) ?? 0), 0)
   const open = lines.filter((l) => !l.ready).length
-  const unknown = cartItems.filter((i) => totalOf(i) === null).length
+  const unknown = items.filter((i) => totalOf(i) === null).length
   const attached = photos.filter((p) => photoIds.includes(p.id))
   // The receipt compared with the cart, once receipts can be read
   // automatically (lib/receiptMatch.js); empty for now.
@@ -49,14 +61,19 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const confirm = async () => {
+    const latest = editsRef.current
+    const confirmed = itemsFor(latest)
+    const confirmedLines = confirmed.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+    if (confirmedLines.some((l) => !l.ready)) return
+    const patches = cartItems.map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     setBusy(true)
-    const { error } = await confirmPurchase({ id: tripId, date, lines, answers, totalOf, photoIds })
+    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches })
     setBusy(false)
     if (!error) onClose()
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-[var(--color-bg)] flex flex-col pt-[env(safe-area-inset-top)]">
+    <div data-unsaved className="fixed inset-0 z-40 bg-[var(--color-bg)] flex flex-col pt-[env(safe-area-inset-top)]">
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
         <div>
           <p className="text-sm font-extrabold text-[var(--color-primary)]">Confirm purchase</p>
@@ -80,10 +97,13 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
                 <button
                   key={o.value}
                   type="button"
-                  onClick={() => updatePayer(cartItems, o.value)}
+                  onClick={() => {
+                    cartItems.forEach((i) => edit(i.id, { payer: o.value }))
+                    updatePayer(cartItems, o.value)
+                  }}
                   className={cn(
                     'px-2.5 py-1.5 rounded-full text-[11px] font-bold border',
-                    cartItems.every((i) => (i.payer || 'shared') === o.value) ? 'bg-[var(--color-accent)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text)]'
+                    items.every((i) => (i.payer || 'shared') === o.value) ? 'bg-[var(--color-accent)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text)]'
                   )}
                 >
                   {o.label}
@@ -102,9 +122,10 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               total={totalOf(line.item)}
               categoryName={categoryName}
               onAnswer={(patch) => answer(line.item.id, patch)}
+              onEdit={(patch) => edit(line.item.id, patch)}
               updatePricing={updatePricing}
               updatePayer={updatePayer}
-              onRemove={() => toggleCart(line.item)}
+              onRemove={() => toggleCart(cartItems.find((i) => i.id === line.item.id))}
             />
           ))}
           {lines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
@@ -163,26 +184,39 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   )
 }
 
-// One item: quantity and line total to correct, payer, remove, and its
-// questions.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, updatePricing, updatePayer, onRemove }) {
+// One item: quantity, unit and line total to correct, payer, remove, and
+// its questions. Every change goes to the screen's edits at once (that's
+// what Confirm uses) and is also saved to the grocery entry when the field
+// is left, so the other phone sees it.
+function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, updatePricing, updatePayer, onRemove }) {
   const { item, pantry, needsPackSize, expired, expiredStock } = line
-  const [quantityDraft, setQuantityDraft] = useState(null)
-  const [totalDraft, setTotalDraft] = useState(null)
+  const [quantityText, setQuantityText] = useState(null)
+  const [totalText, setTotalText] = useState(null)
 
-  const saveQuantity = async () => {
-    const quantity = parseNumber(quantityDraft)
-    setQuantityDraft(null)
-    if (!(quantity > 0) || quantity === Number(item.quantity)) return
-    await updatePricing(item, { quantity }, lineTotal({ ...item, quantity }, pantry))
+  const changeQuantity = (text) => {
+    setQuantityText(text)
+    const quantity = parseNumber(text)
+    if (quantity > 0) onEdit({ quantity })
   }
 
   // A total typed here becomes the price for exactly this quantity.
-  const saveTotal = async () => {
-    const amount = Math.round(parseNumber(totalDraft) * 100) / 100
-    setTotalDraft(null)
-    if (!(amount >= 0) || amount === total) return
-    await updatePricing(item, { price: amount, price_qty: Number(item.quantity) || 1, price_unit: item.unit }, amount)
+  const changeTotal = (text) => {
+    setTotalText(text)
+    const amount = Math.round(parseNumber(text) * 100) / 100
+    if (amount >= 0) onEdit({ total: amount })
+  }
+
+  // A new unit keeps the line total (the price is now for this unit).
+  const changeUnit = (unit) => {
+    onEdit(total === null ? { unit } : { unit, total })
+    const patch = total === null ? { unit } : { unit, price: total, price_qty: Number(item.quantity) || 1, price_unit: unit }
+    updatePricing(item, patch, total)
+  }
+
+  const saveToEntry = () => {
+    setQuantityText(null)
+    setTotalText(null)
+    updatePricing(item, { quantity: item.quantity, unit: item.unit, price: item.price ?? 0, price_qty: item.price_qty ?? null, price_unit: item.price_unit ?? null }, total)
   }
 
   const unitPrice = formatUnitPrice(item)
@@ -207,30 +241,39 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, updatePrici
         <div className="flex items-center gap-1">
           <Input
             inputMode="decimal"
-            value={quantityDraft ?? String(item.quantity)}
-            onChange={(e) => setQuantityDraft(e.target.value)}
-            onBlur={saveQuantity}
+            value={quantityText ?? String(item.quantity)}
+            onChange={(e) => changeQuantity(e.target.value)}
+            onBlur={saveToEntry}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             aria-label={`Quantity of ${item.name}`}
             className="w-20 text-sm p-2 text-right"
           />
-          <span className="text-xs text-[var(--color-text-muted)]">{item.unit}</span>
+          <Select value={item.unit} onChange={(e) => changeUnit(e.target.value)} aria-label={`Unit of ${item.name}`} className="w-auto text-xs p-2">
+            <UnitOptions />
+          </Select>
         </div>
         <div className="flex items-center gap-1">
           <span className="text-xs text-[var(--color-text-muted)]">€</span>
           <Input
             inputMode="decimal"
-            value={totalDraft ?? (total === null ? '' : total.toFixed(2))}
+            value={totalText ?? (total === null ? '' : total.toFixed(2))}
             placeholder={total === null ? '?' : '0.00'}
-            onChange={(e) => setTotalDraft(e.target.value)}
-            onBlur={saveTotal}
+            onChange={(e) => changeTotal(e.target.value)}
+            onBlur={saveToEntry}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             aria-label={`Total for ${item.name}`}
             className="w-24 text-sm p-2 text-right font-mono"
           />
         </div>
         <div className="ml-auto">
-          <PayerPicker value={item.payer || 'shared'} onChange={(value) => updatePayer(item, value)} size="sm" />
+          <PayerPicker
+            value={item.payer || 'shared'}
+            onChange={(value) => {
+              onEdit({ payer: value })
+              updatePayer(item, value)
+            }}
+            size="sm"
+          />
         </div>
       </div>
       {total === null && <p className="text-[10px] text-amber-300">The total can't be worked out from the price's unit — type the total paid.</p>}
