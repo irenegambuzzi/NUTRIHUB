@@ -1,4 +1,27 @@
-import { Wheat, Drumstick, Microwave, Soup, CupSoda, Cookie, SprayCan, WashingMachine, Bath, Sparkles, Pill, Baby, PawPrint, House, Car, Snowflake, Tag } from 'lucide-react'
+import {
+  Apple,
+  Baby,
+  Bath,
+  Car,
+  Cookie,
+  Croissant,
+  CupSoda,
+  Drumstick,
+  Ham,
+  House,
+  IceCreamCone,
+  Microwave,
+  Milk,
+  PawPrint,
+  Pill,
+  Snowflake,
+  Soup,
+  Sparkles,
+  SprayCan,
+  Tag,
+  WashingMachine,
+  Wheat,
+} from 'lucide-react'
 
 // Keyed by parent inventory category id.
 const ICONS = {
@@ -18,6 +41,11 @@ const ICONS = {
   appliances: Microwave,
   automotive: Car,
   misc: Snowflake,
+  produce: Apple,
+  dairy: Milk,
+  bakery: Croissant,
+  deli: Ham,
+  frozen: IceCreamCone,
 }
 
 export function CategoryIcon({ category, size = 16, className }) {

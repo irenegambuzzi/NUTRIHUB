@@ -58,6 +58,11 @@ export const INVENTORY_CATEGORY_COLORS = {
   appliances: 'sky',
   automotive: 'violet',
   misc: 'emerald',
+  produce: 'emerald',
+  dairy: 'sky',
+  bakery: 'amber',
+  deli: 'pink',
+  frozen: 'teal',
 }
 
 export function inventoryCategoryColor(categoryId) {

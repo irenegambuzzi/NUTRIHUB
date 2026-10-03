@@ -97,6 +97,11 @@ export const SUGGESTED_UNITS = {
   household: ['pcs', 'pack', 'roll'],
   misc: ['pcs', 'pack'],
   appliances: ['pcs', 'set', 'box', 'pack'],
+  produce: ['gr', 'kg', 'pcs', 'pack'],
+  dairy: ['pcs', 'pack', 'btl', 'L', 'ml', 'gr', 'kg', 'jar'],
+  bakery: ['pcs', 'pack', 'gr', 'kg'],
+  deli: ['gr', 'kg', 'pack', 'pcs'],
+  frozen: ['pack', 'box', 'pcs', 'gr', 'kg'],
 }
 
 // Durable one-off purchases (oven, vacuum, laptop…): they can go on the
