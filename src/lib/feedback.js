@@ -74,20 +74,63 @@ export function toastLoadError(error, retry, source) {
   })
 }
 
-// In-app confirmation; resolves to true (confirmed) or false.
-export function confirmDialog({ title, message, confirmLabel = 'Confirm' }) {
+// In-app dialog that asks for values. fields: [{ name, type, label, ... }]
+//   choice – options: [{ value, label, hint }], value: the default
+//   date   – optional unless required: true
+//   number – min (exclusive lower bound), unit shown after the input
+// Resolves to { name: value } when confirmed, or null when cancelled.
+export function askDialog({ title, message, fields = [], confirmLabel = 'Save' }) {
   return new Promise((resolve) => {
-    dialog?.resolve(false)
-    dialog = { title, message, confirmLabel, resolve }
+    dialog?.resolve(null)
+    dialog = { id: nextId++, title, message, fields, confirmLabel, resolve }
     emit()
   })
 }
 
-export function closeDialog(confirmed) {
+// In-app confirmation; resolves to true (confirmed) or false.
+export async function confirmDialog({ title, message, confirmLabel = 'Confirm' }) {
+  return (await askDialog({ title, message, confirmLabel })) !== null
+}
+
+export function initialDialogValues(fields) {
+  return Object.fromEntries(fields.map((f) => [f.name, f.value ?? '']))
+}
+
+// What's wrong with the entered values, by field name (empty when fine).
+export function dialogErrors(fields, values) {
+  const errors = {}
+  for (const f of fields) {
+    const raw = String(values[f.name] ?? '').trim()
+    if (f.type === 'number' && (raw || f.required)) {
+      const n = parseNumber(raw)
+      if (!(n > (f.min ?? -Infinity))) errors[f.name] = f.min === 0 ? 'Enter a number above 0.' : 'Enter a valid number.'
+    }
+    if (f.type === 'date' && f.required && !raw) errors[f.name] = 'Pick a date.'
+    if (f.type === 'choice' && !f.options.some((o) => o.value === values[f.name])) errors[f.name] = 'Pick one.'
+  }
+  return errors
+}
+
+// "1,5" or "1.5" → 1.5; anything else → NaN.
+export function parseNumber(text) {
+  const s = String(text ?? '').trim().replace(',', '.')
+  return s && /^-?\d*\.?\d+$/.test(s) ? Number(s) : NaN
+}
+
+// The dialog's answer: values (numbers parsed, empty dates as null), or
+// null to cancel.
+export function closeDialog(values) {
   const current = dialog
   dialog = null
   emit()
-  current?.resolve(confirmed)
+  if (!current) return
+  if (values === null || values === false) return current.resolve(null)
+  const out = {}
+  for (const f of current.fields) {
+    const v = values?.[f.name]
+    out[f.name] = f.type === 'number' ? (String(v ?? '').trim() ? parseNumber(v) : null) : f.type === 'date' ? v || null : v
+  }
+  current.resolve(out)
 }
 
 export const getDialog = () => dialog

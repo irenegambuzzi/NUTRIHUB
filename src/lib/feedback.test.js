@@ -1,5 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { closeDialog, confirmDialog, dismissToast, getDialog, getToasts, runToastAction, showToast, toastLoadError } from './feedback'
+import {
+  askDialog,
+  closeDialog,
+  confirmDialog,
+  dialogErrors,
+  dismissToast,
+  getDialog,
+  getToasts,
+  parseNumber,
+  runToastAction,
+  showToast,
+  toastLoadError,
+} from './feedback'
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => {
@@ -52,5 +64,40 @@ describe('confirmDialog', () => {
     await expect(first).resolves.toBe(false)
     closeDialog(false)
     await expect(second).resolves.toBe(false)
+  })
+})
+
+describe('askDialog', () => {
+  const fields = [
+    { name: 'packSize', type: 'number', min: 0, required: true },
+    { name: 'expiryDate', type: 'date' },
+    { name: 'stock', type: 'choice', value: 'discard', options: [{ value: 'discard' }, { value: 'keep' }] },
+  ]
+
+  it('resolves with parsed values', async () => {
+    const answer = askDialog({ title: 'Check off', fields })
+    closeDialog({ packSize: '1,5', expiryDate: '', stock: 'keep' })
+    await expect(answer).resolves.toEqual({ packSize: 1.5, expiryDate: null, stock: 'keep' })
+  })
+
+  it('resolves null when cancelled', async () => {
+    const answer = askDialog({ title: 'Check off', fields })
+    closeDialog(null)
+    await expect(answer).resolves.toBeNull()
+  })
+
+  it('checks the values before closing', () => {
+    expect(dialogErrors(fields, { packSize: '', expiryDate: '', stock: 'discard' })).toEqual({ packSize: 'Enter a number above 0.' })
+    expect(dialogErrors(fields, { packSize: '0', stock: 'discard' })).toHaveProperty('packSize')
+    expect(dialogErrors(fields, { packSize: 'abc', stock: 'discard' })).toHaveProperty('packSize')
+    expect(dialogErrors(fields, { packSize: '500', stock: 'maybe' })).toEqual({ stock: 'Pick one.' })
+    expect(dialogErrors(fields, { packSize: '500', expiryDate: '', stock: 'discard' })).toEqual({})
+  })
+
+  it('reads decimal commas and rejects text', () => {
+    expect(parseNumber('2,5')).toBe(2.5)
+    expect(parseNumber(' 12 ')).toBe(12)
+    expect(parseNumber('12abc')).toBeNaN()
+    expect(parseNumber('')).toBeNaN()
   })
 })

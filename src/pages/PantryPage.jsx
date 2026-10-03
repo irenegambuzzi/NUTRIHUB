@@ -72,7 +72,7 @@ function matchesStatus(item, filter) {
 }
 
 export function PantryPage() {
-  const { items, logs, addItem, updateItem, adjustStock, deleteItem, importItems } = usePantryItems()
+  const { items, logs, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
   const { items: groceryItems, addItem: addGroceryItem } = useGroceryItems()
   const { categories, pantryParents: parents, subsByParent, byId, categoryName, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
@@ -328,6 +328,7 @@ export function PantryPage() {
                   item={item}
                   subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
                   onAdjust={adjustStock}
+                  onDiscard={discardExpired}
                   onEdit={(i) => setEditor({ item: i })}
                   onDelete={deleteItem}
                   onSendToGrocery={sendToGrocery}
@@ -381,7 +382,7 @@ function StatTile({ icon: Icon, label, value, tone = 'default', active, onClick 
   )
 }
 
-const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone' }
+const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded' }
 
 // Filters combine: item + reason + date range.
 function HistoryView({ logs }) {

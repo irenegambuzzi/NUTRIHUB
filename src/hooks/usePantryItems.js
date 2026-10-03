@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { toastLoadError } from '../lib/feedback'
+import { showToast, toastLoadError } from '../lib/feedback'
 
 export const ITEM_FIELDS = [
   'name',
@@ -110,6 +110,45 @@ export function usePantryItems() {
     [fetchItems]
   )
 
+  // Throws away an expired item's stock (logged as "discarded") and
+  // clears its expiry date, which described the stock that's gone. Undo
+  // puts both back.
+  const discardExpired = useCallback(
+    async (item) => {
+      const amount = Number(item.current_stock) || 0
+      const setExpiry = async (expiry_date) => must(await updateRows('pantry_items', item.id, { expiry_date }))
+      const { data, error } = await attempt(
+        () =>
+          inSteps(async (onFail) => {
+            await setExpiry(null)
+            onFail(() => setExpiry(item.expiry_date))
+            return changeStock({ ...item, expiry_date: null }, -amount, 'discarded')
+          }),
+        { onFail: fetchItems }
+      )
+      if (error) return { error }
+      setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
+
+      const undo = () =>
+        attempt(
+          async () =>
+            inSteps(async (onFail) => {
+              await setExpiry(item.expiry_date)
+              onFail(() => setExpiry(null))
+              const restored = await changeStock({ ...data, expiry_date: item.expiry_date }, amount, 'edited')
+              setItems((prev) => prev.map((i) => (i.id === item.id ? restored : i)))
+            }),
+          { onFail: fetchItems }
+        )
+      showToast({
+        message: amount ? `Discarded ${amount} ${item.unit} of "${item.name}"` : `Cleared the expiry date of "${item.name}"`,
+        action: { label: 'Undo', onClick: undo },
+      })
+      return { error: null }
+    },
+    [fetchItems]
+  )
+
   // Deletes right away; Undo puts the item back exactly, including the
   // grocery entries and history rows that pointed to it (the database
   // unlinks them on delete).
@@ -163,5 +202,5 @@ export function usePantryItems() {
     [fetchItems]
   )
 
-  return { items, logs, addItem, updateItem, adjustStock, deleteItem, importItems }
+  return { items, logs, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems }
 }

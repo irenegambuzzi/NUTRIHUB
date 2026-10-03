@@ -1,9 +1,40 @@
 import { describe, expect, it, vi } from 'vitest'
 
-// inventory.js imports the Supabase client, which needs env variables.
-vi.mock('./supabaseClient', () => ({ supabase: {} }))
+// inventory.js imports the Supabase client, which needs env variables;
+// tests that touch the database swap in a fake (see fakeDb below).
+const client = vi.hoisted(() => ({ supabase: {} }))
+vi.mock('./supabaseClient', () => client)
 
-const { pickDurableCategory, quantityStep, roundQuantity, suggestedPurchase, toBaseQuantity } = await import('./inventory')
+const {
+  pickDurableCategory,
+  quantityStep,
+  roundQuantity,
+  stepQuantity,
+  stockLogEntries,
+  suggestedPurchase,
+  syncShoppingForItem,
+  tapStep,
+  toBaseQuantity,
+} = await import('./inventory')
+
+// A stand-in for the Supabase client: reads return `openRows`, writes are
+// recorded in `writes`.
+function fakeDb(openRows) {
+  const writes = []
+  const query = (result) => {
+    const q = { eq: () => q, in: () => q, select: () => q, then: (resolve, reject) => Promise.resolve(result).then(resolve, reject) }
+    return q
+  }
+  client.supabase = {
+    from: (table) => ({
+      select: () => query({ data: openRows, error: null }),
+      insert: (rows) => (writes.push({ op: 'insert', table, rows }), query({ data: rows, error: null })),
+      update: (patch) => (writes.push({ op: 'update', table, patch }), query({ data: [], error: null })),
+      delete: () => (writes.push({ op: 'delete', table }), query({ data: [], error: null })),
+    }),
+  }
+  return writes
+}
 
 describe('roundQuantity', () => {
   it('keeps kg and L in steps of 0.05', () => {
@@ -91,5 +122,84 @@ describe('pickDurableCategory', () => {
 
   it("never creates the category; it says to run the migration", () => {
     expect(() => pickDurableCategory([], null)).toThrow(/008_durable_category\.sql/)
+  })
+})
+
+describe('stockLogEntries', () => {
+  it('logs throwing away expired stock and the purchase separately', () => {
+    // 2 expired yogurts thrown away, 4 bought: stock 2 → 4
+    expect(
+      stockLogEntries(2, 4, [
+        { change: -2, reason: 'discarded' },
+        { change: 4, reason: 'purchased' },
+      ])
+    ).toEqual([
+      { change: -2, newStock: 0, reason: 'discarded' },
+      { change: 4, newStock: 4, reason: 'purchased' },
+    ])
+  })
+
+  it('logs only what really left when stock hits 0', () => {
+    expect(stockLogEntries(1, 0, [{ change: -3, reason: 'used' }])).toEqual([{ change: -1, newStock: 0, reason: 'used' }])
+  })
+
+  it('skips parts that change nothing', () => {
+    expect(
+      stockLogEntries(3, 7, [
+        { change: 0, reason: 'discarded' },
+        { change: 4, reason: 'purchased' },
+      ])
+    ).toEqual([{ change: 4, newStock: 7, reason: 'purchased' }])
+  })
+
+  it("lines the stock up with what was saved, including someone else's change", () => {
+    // Someone used 1 at the same moment: saved stock is 3, not 4.
+    expect(
+      stockLogEntries(2, 3, [
+        { change: -2, reason: 'discarded' },
+        { change: 4, reason: 'purchased' },
+      ]).map((e) => e.newStock)
+    ).toEqual([0, 3])
+  })
+})
+
+describe('tapStep and stepQuantity', () => {
+  it('change a quantity by a sensible amount for the unit', () => {
+    expect(tapStep('pack')).toBe(1)
+    expect(tapStep('kg')).toBe(0.5)
+    expect(tapStep('gr')).toBe(100)
+    expect(stepQuantity(3, 'pack', -1)).toBe(2)
+    expect(stepQuantity(3, 'pack', 1)).toBe(4)
+    expect(stepQuantity(1.5, 'kg', 1)).toBe(2)
+    expect(stepQuantity(250, 'gr', -1)).toBe(150)
+  })
+
+  it("can't go to 0 or below", () => {
+    expect(stepQuantity(1, 'pack', -1)).toBeNull()
+    expect(stepQuantity(0.5, 'kg', -1)).toBeNull()
+    expect(stepQuantity(1.5, 'pcs', -1)).toBe(0.5)
+  })
+})
+
+describe('syncShoppingForItem', () => {
+  const expired = { id: 'p1', name: 'TEST3', unit: 'pack', current_stock: 3, min_stock: 0, expiry_date: '2020-01-01', category_id: 'misc' }
+
+  it("never changes a quantity already on the list (e.g. 3 pack lowered to 1 by hand)", async () => {
+    const writes = fakeDb([{ id: 'g1', auto_generated: true }])
+    await syncShoppingForItem(expired)
+    expect(writes).toEqual([])
+  })
+
+  it('adds the suggested quantity only when the item is not on the list yet', async () => {
+    const writes = fakeDb([])
+    await syncShoppingForItem(expired)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ op: 'insert', table: 'grocery_items', rows: [{ quantity: 3, unit: 'pack', auto_generated: true }] })
+  })
+
+  it('removes the automatic entry once the item is fine again', async () => {
+    const writes = fakeDb([{ id: 'g1', auto_generated: true }])
+    await syncShoppingForItem({ ...expired, expiry_date: null })
+    expect(writes).toEqual([{ op: 'delete', table: 'grocery_items' }])
   })
 })

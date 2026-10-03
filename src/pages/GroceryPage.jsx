@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Plus, Check, Trash2, X, Pencil, Receipt, Sparkles, Wallet, AlertTriangle, Wand2, Users, Microwave } from 'lucide-react'
+import { Plus, Minus, Check, Trash2, X, Pencil, Receipt, Sparkles, Wallet, AlertTriangle, Wand2, Users, Microwave } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
@@ -12,11 +12,12 @@ import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { useBudget } from '../hooks/useBudget'
 import { DEFAULT_UNIT, PACKAGING_UNITS, PAID_BY_OPTIONS, SUGGESTED_UNITS, UNIT_GROUPS, UNIT_VALUES } from '../data/constants'
 import { inventoryCategoryColor } from '../lib/categoryColors'
-import { isDurable, quantityStep, restockReason, roundQuantity, syncShoppingForItem } from '../lib/inventory'
+import { isDurable, quantityStep, restockReason, roundQuantity, stepQuantity, syncShoppingForItem } from '../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../lib/inventoryStyles'
 import { guessCategory } from '../lib/categoryGuess'
 import { attempt } from '../lib/db'
-import { showToast } from '../lib/feedback'
+import { askDialog, showToast } from '../lib/feedback'
+import { expiredChoice, expiredDialog, packSizeDialog } from '../lib/purchaseDialogs'
 import { parseLocalDate } from '../lib/week'
 import { formatUnitPrice, lineTotal, money, priceUnitOptions } from '../lib/pricing'
 import { PriceFields } from '../components/inventory/PriceFields'
@@ -270,20 +271,27 @@ export function GroceryPage() {
 
 
 
-  // When the list unit can't be converted to the pantry unit (e.g. 2 pack
-  // of rice counted in gr), ask for the pack size instead of guessing.
+  // Checking off may need answers first: the pack size when the list unit
+  // can't be converted to the pantry unit (e.g. 2 pack of rice counted in
+  // gr), and what to do with stock that has expired. Each is asked in a
+  // dialog, then the check-off is tried again with the answers.
   const handleToggle = async (item) => {
-    const result = await toggleComplete(item, totalOf(item))
-    if (!result?.needsPackSize) return
-    const { name: itemName, unit: listUnit, baseUnit } = result.needsPackSize
-    const answer = window.prompt(
-      `"${itemName}" is counted in ${baseUnit} in the pantry, but is on the list in ${listUnit}. How many ${baseUnit} are in 1 ${listUnit}?`
-    )
-    const packSize = parseFloat(String(answer ?? '').replace(',', '.'))
-    if (!(packSize > 0)) {
-      return showToast({ message: `"${itemName}" wasn't ${item.completed ? 'unchecked' : 'checked off'}: it needs the number of ${baseUnit} in 1 ${listUnit}.` })
+    const options = {}
+    for (;;) {
+      // The total follows a quantity changed in the expiry dialog.
+      const total = totalOf(options.quantity ? { ...item, quantity: options.quantity } : item)
+      const result = await toggleComplete(item, total, options)
+      if (result?.needsPackSize) {
+        const answer = await askDialog(packSizeDialog(result.needsPackSize))
+        if (!answer) return showToast({ message: `"${item.name}" wasn't ${item.completed ? 'unchecked' : 'checked off'}.` })
+        options.packSize = answer.packSize
+      } else if (result?.needsExpiryChoice) {
+        const answer = await askDialog(expiredDialog({ ...result.needsExpiryChoice, quantity: item.quantity, listUnit: item.unit }))
+        if (!answer) return showToast({ message: `"${item.name}" wasn't checked off.` })
+        options.expired = expiredChoice(answer)
+        options.quantity = roundQuantity(answer.quantity, item.unit) || item.quantity
+      } else return
     }
-    await toggleComplete(item, totalOf(item), packSize)
   }
 
   return (
@@ -729,6 +737,7 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
   const c = inventoryCategoryColor(item.category_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
+  const [savingQuantity, setSavingQuantity] = useState(false)
   const label = RESTOCK_LABELS[reason]
   const unitPrice = formatUnitPrice(item)
   const priceUnits = priceUnitOptions(item, pack)
@@ -743,10 +752,22 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
     setEditing(true)
   }
 
+  // − / + on the tile: saves right away, with the line total (and the
+  // budget) following. One change at a time, so quick taps never use a
+  // stale quantity.
+  const changeQuantity = async (direction) => {
+    const quantity = stepQuantity(item.quantity, item.unit, direction)
+    if (quantity === null || savingQuantity) return
+    setSavingQuantity(true)
+    await onUpdatePricing(item, { quantity }, lineTotal({ ...item, quantity }, pack))
+    setSavingQuantity(false)
+  }
+
   const save = async () => {
     const price = parseFloat(draft.price) || 0
     const patch = {
-      quantity: roundQuantity(draft.quantity, item.unit) || 1,
+      // Stock was already added for a checked-off item, so its quantity stays.
+      quantity: item.completed ? item.quantity : roundQuantity(draft.quantity, item.unit) || 1,
       price,
       price_qty: price > 0 ? parseFloat(draft.price_qty) || 1 : null,
       price_unit: price > 0 ? draft.price_unit : null,
@@ -789,9 +810,38 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
           {item.name}
         </p>
         <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-          {item.quantity} {item.unit} · {categoryName(item.category_id)}
+          {item.completed && `${item.quantity} ${item.unit} · `}
+          {categoryName(item.category_id)}
         </p>
       </button>
+
+      {!item.completed && (
+        <div className="flex items-center gap-1 mt-1.5">
+          <button
+            onClick={() => changeQuantity(-1)}
+            disabled={savingQuantity || stepQuantity(item.quantity, item.unit, -1) === null}
+            aria-label={`Buy less ${item.name}`}
+            className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
+          >
+            <Minus size={12} />
+          </button>
+          <button
+            onClick={startEditing}
+            title="Type the quantity"
+            className={cn('min-w-12 px-1.5 text-center text-xs font-bold text-[var(--color-text)]', savingQuantity && 'opacity-50')}
+          >
+            {item.quantity} {item.unit}
+          </button>
+          <button
+            onClick={() => changeQuantity(1)}
+            disabled={savingQuantity}
+            aria-label={`Buy more ${item.name}`}
+            className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+      )}
 
       {!item.completed && (label || budgetMark) && (
         <div className="flex flex-wrap gap-1 mt-1">
@@ -813,11 +863,16 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
               step={quantityStep(item.unit)}
               value={draft.quantity}
               onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
+              disabled={item.completed}
+              autoFocus={!item.completed}
               className="text-xs p-2"
               aria-label="Quantity"
             />
             <span className="text-[10px] text-[var(--color-text-muted)]">{item.unit}</span>
           </div>
+          {item.completed && (
+            <p className="text-[10px] text-[var(--color-text-muted)]">Uncheck it to change the quantity — its stock was already added.</p>
+          )}
           <PriceFields
             compact
             value={draft}

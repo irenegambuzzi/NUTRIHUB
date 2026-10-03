@@ -59,6 +59,23 @@ export function quantityStep(unit) {
   return 0.5
 }
 
+// How much one tap of − / + changes a quantity: 100 gr/ml, 0.5 kg/L,
+// 1 of anything counted.
+export function tapStep(unit) {
+  const u = normalizeUnit(unit)
+  if (u === 'gr' || u === 'ml') return 100
+  if (u === 'kg' || u === 'L') return 0.5
+  return 1
+}
+
+// One tap of − (direction -1) or + (1) from `quantity`, never below one
+// step's worth of the unit's rounding; null when − can't go lower.
+export function stepQuantity(quantity, unit, direction) {
+  const current = Number(quantity) || 0
+  const next = roundQuantity(current + direction * tapStep(unit), unit)
+  return next > 0 ? next : null
+}
+
 // Rounds a quantity to its unit's step (0.3 kg stays 0.3, 0.3 pcs → 0.5).
 // Negative or invalid values are 0.
 export function roundQuantity(value, unit) {
@@ -177,15 +194,39 @@ export async function afterStockChange(item, change, newStock, reason) {
 // 0), so two people changing it at once can't overwrite each other.
 // Throws if the stock wasn't changed; then logs the change and re-syncs
 // the shopping list. Returns the updated row.
-export async function changeStock(item, delta, reason) {
+export function changeStock(item, delta, reason) {
+  return changeStockParts(item, [{ change: delta, reason }])
+}
+
+// Several changes saved as one stock update, each with its own history
+// entry — e.g. throw away 2 expired and add 4 bought: one +2 update,
+// logged as -2 discarded and +4 purchased.
+export async function changeStockParts(item, parts) {
+  const delta = round(parts.reduce((sum, p) => sum + p.change, 0))
   const data = must(await supabase.rpc('increment_stock', { item_id: item.id, delta }))
   if (!data?.id) throw new Error(`"${item.name}" is no longer in the pantry.`)
   const updated = normalizeItem(data)
-  const newStock = Number(updated.current_stock)
-  // Stock that hit 0 may have dropped by less than asked.
-  const change = newStock === 0 && delta < 0 ? Math.max(delta, -(Number(item.current_stock) || 0)) : delta
-  await afterStockChange(updated, change, newStock, reason)
+  for (const entry of stockLogEntries(Number(item.current_stock) || 0, Number(updated.current_stock), parts)) {
+    await followUp('the stock history', () => logStockChange(updated, entry.change, entry.newStock, entry.reason))
+  }
+  await followUp('the shopping list', () => syncShoppingForItem(updated))
   return updated
+}
+
+// History entries for `parts` applied in order to `before`, as far as
+// stock can't go below 0 (a "use 3" from 1 logs -1). The stock after
+// each entry is shifted so the last one matches `after`, the saved
+// value, which may include someone else's change made at the same time.
+export function stockLogEntries(before, after, parts) {
+  let stock = before
+  const entries = []
+  for (const { change, reason } of parts) {
+    const next = round(Math.max(0, stock + change))
+    if (next !== stock) entries.push({ change: round(next - stock), stock: next, reason })
+    stock = next
+  }
+  const offset = round(after - stock)
+  return entries.map(({ change, stock: s, reason }) => ({ change, newStock: round(Math.max(0, s + offset)), reason }))
 }
 
 // Columns added by supabase/006_backfill_inventory_data.sql and

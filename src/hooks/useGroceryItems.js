@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
 import {
   changeStock,
+  changeStockParts,
   expiryState,
   getDurableExpenseCategoryId,
   getGroceriesCategoryId,
@@ -77,6 +78,13 @@ async function restoreFields(before, patch, table = 'pantry_items') {
 // converted: the page asks for the pack size and calls again with it.
 const needsPackSize = (item, pantry) => ({ needsPackSize: { name: item.name, unit: item.unit, baseUnit: pantry.unit } })
 
+// Returned instead of changing anything when the pantry item has expired:
+// the page asks whether to throw the expired stock away and for the new
+// expiry date, and calls again with the answer.
+const needsExpiryChoice = (pantry) => ({
+  needsExpiryChoice: { name: pantry.name, stock: Number(pantry.current_stock) || 0, unit: pantry.unit, expiryDate: pantry.expiry_date },
+})
+
 export function useGroceryItems() {
   const [items, setItems] = useState([])
 
@@ -145,14 +153,21 @@ export function useGroceryItems() {
   // same quantity back out of stock. If the entry's unit can't be
   // converted to the pantry item's (a pack of something counted in gr),
   // nothing changes and { needsPackSize } is returned; call again with
-  // `packSize` (base units in one entry unit).
+  // options.packSize (base units in one entry unit). If the pantry item
+  // has expired, { needsExpiryChoice } is returned; call again with
+  // options.expired = { discard, expiryDate }: discard throws the expired
+  // stock away (logged as "discarded"), and the item takes expiryDate
+  // (or none) — it now describes what was just bought. options.quantity
+  // replaces the entry's quantity (what was really bought); it's saved
+  // with the check mark and `total` must already be for that quantity.
   //
   // The expense, the check mark and the stock change are saved together:
   // if one fails, the others are undone and the toast offers Retry. The
   // stock history, shopping list and leftover expense clean-up are
   // follow-ups with their own Retry.
   const toggleComplete = useCallback(
-    async (item, total, packSize = null) => {
+    async (original, total, { packSize = null, expired = null, quantity = null } = {}) => {
+      const item = quantity > 0 && !original.completed ? { ...original, quantity } : original
       let pending = null
       const { data, error } = await attempt(
         () =>
@@ -182,6 +197,8 @@ export function useGroceryItems() {
             const existing = isDurable(item) ? null : await findPantryItem(item)
             const added = existing && purchasedQuantity(existing, item, packSize)
             if (existing && added === null) return needsPackSize(item, existing)
+            const isExpired = existing && expiryState(existing) === 'expired'
+            if (isExpired && !expired) return needsExpiryChoice(existing)
 
             let expenseId = item.expense_id ?? null
             if (total > 0) {
@@ -189,21 +206,29 @@ export function useGroceryItems() {
               onFail(() => deleteExpense(expenseId))
             }
             const pantryItemId = existing?.id ?? item.pantry_item_id ?? null
-            await setGroceryFields(item.id, { completed: true, expense_id: expenseId, pantry_item_id: pantryItemId })
+            await setGroceryFields(item.id, { completed: true, expense_id: expenseId, pantry_item_id: pantryItemId, quantity: item.quantity })
             onFail(() =>
-              setGroceryFields(item.id, { completed: false, expense_id: item.expense_id ?? null, pantry_item_id: item.pantry_item_id ?? null })
+              setGroceryFields(item.id, {
+                completed: false,
+                expense_id: original.expense_id ?? null,
+                pantry_item_id: original.pantry_item_id ?? null,
+                quantity: original.quantity,
+              })
             )
 
             if (!isDurable(item)) {
               const purchase = { payer: item.payer || 'shared', last_purchased_at: new Date().toISOString() }
               if (Number(item.price) > 0) Object.assign(purchase, priceFields(item))
               if (existing) {
-                // A fresh purchase replaces an expired batch.
-                if (expiryState(existing) === 'expired') purchase.expiry_date = null
+                if (isExpired) purchase.expiry_date = expired.expiryDate || null
                 const patch = { ...purchase, ...packSizePatch(existing, item.unit, packSize) }
                 must(await updateRows('pantry_items', existing.id, patch))
                 onFail(() => restoreFields(existing, patch))
-                await changeStock(existing, added, 'purchased')
+                const expiredStock = isExpired && expired.discard ? Number(existing.current_stock) || 0 : 0
+                await changeStockParts(existing, [
+                  { change: -expiredStock, reason: 'discarded' },
+                  { change: added, reason: 'purchased' },
+                ])
               } else {
                 const created = must(
                   await insertRows('pantry_items', [
@@ -228,7 +253,7 @@ export function useGroceryItems() {
                 }
               }
             }
-            patchLocal(item.id, { completed: true, expense_id: expenseId, pantry_item_id: pantryItemId })
+            patchLocal(item.id, { completed: true, expense_id: expenseId, pantry_item_id: pantryItemId, quantity: item.quantity })
             return {}
           }),
         { onFail: fetchItems }

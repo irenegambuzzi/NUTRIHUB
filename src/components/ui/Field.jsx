@@ -3,8 +3,12 @@ import { cn } from '../../lib/cn'
 const fieldClasses =
   'w-full bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-2xl p-2.5 text-sm text-[var(--color-text)] transition-colors duration-200 focus:outline-none focus:border-[var(--color-primary)]'
 
-export function Label({ className, children }) {
-  return <label className={cn('text-xs text-[var(--color-text-soft)] block mb-1', className)}>{children}</label>
+export function Label({ className, children, ...props }) {
+  return (
+    <label className={cn('text-xs text-[var(--color-text-soft)] block mb-1', className)} {...props}>
+      {children}
+    </label>
+  )
 }
 
 export function Input({ className, ...props }) {

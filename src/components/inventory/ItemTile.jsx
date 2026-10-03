@@ -1,26 +1,19 @@
-import { Minus, Plus, Pencil, Trash2, ShoppingCart, CalendarClock } from 'lucide-react'
+import { Minus, Plus, Pencil, Trash, Trash2, ShoppingCart, CalendarClock } from 'lucide-react'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { STOCK_STATUS_LABELS, expiryLabel, expiryState, formatStock, restockReason, stockFill, stockStatus } from '../../lib/inventory'
+import { STOCK_STATUS_LABELS, expiryLabel, expiryState, formatStock, restockReason, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, STATUS_STYLES } from '../../lib/inventoryStyles'
 
-// One tap changes stock by a sensible amount for the unit.
-function stepFor(unit) {
-  if (unit === 'gr' || unit === 'ml') return 100
-  if (unit === 'kg' || unit === 'L') return 0.5
-  return 1
-}
-
-export function ItemTile({ item, subcategoryName, onAdjust, onEdit, onDelete, onSendToGrocery }) {
+export function ItemTile({ item, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
   // Tile colour: red Out, purple Expired, yellow Low, green OK.
   const tone = restockReason(item) || 'ok'
   const unitPrice = formatUnitPrice(item)
   const expiry = expiryState(item)
-  const step = stepFor(item.unit)
+  const step = tapStep(item.unit)
   const perPack = Number(item.quantity_per_pack)
   const hasPack = item.packaging_unit && perPack > 0
 
@@ -70,6 +63,15 @@ export function ItemTile({ item, subcategoryName, onAdjust, onEdit, onDelete, on
       </p>
 
       <div className="flex flex-wrap items-center gap-1 mt-auto pt-2">
+        {expiry === 'expired' && (
+          <button
+            onClick={() => onDiscard(item)}
+            title={Number(item.current_stock) > 0 ? `Throw away the expired ${formatStock(item)}` : 'Clear the expiry date'}
+            className={cn('px-2 py-1.5 rounded-xl text-[10px] font-bold flex items-center gap-1', EXPIRY_STYLES.expired)}
+          >
+            <Trash size={12} /> Discard
+          </button>
+        )}
         <button
           onClick={() => onAdjust(item, -step)}
           disabled={Number(item.current_stock) <= 0}

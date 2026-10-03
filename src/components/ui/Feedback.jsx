@@ -1,15 +1,16 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import { Button } from './Button'
+import { Input, Label } from './Field'
 import { cn } from '../../lib/cn'
-import { closeDialog, dismissToast, runToastAction, useDialog, useToasts } from '../../lib/feedback'
+import { closeDialog, dialogErrors, dismissToast, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
 // Toasts sit above the mobile tab bar; the dialog covers everything.
 export function Feedback() {
   return (
     <>
       <Toasts />
-      <ConfirmDialog />
+      <Dialog />
     </>
   )
 }
@@ -50,41 +51,108 @@ function Toasts() {
   )
 }
 
-function ConfirmDialog() {
+function Dialog() {
   const dialog = useDialog()
 
   useEffect(() => {
     if (!dialog) return
-    const onKey = (e) => e.key === 'Escape' && closeDialog(false)
+    const onKey = (e) => e.key === 'Escape' && closeDialog(null)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [dialog])
 
   if (!dialog) return null
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(false)}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-        onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-5 space-y-4"
-      >
-        <div className="space-y-1.5">
-          <p id="confirm-title" className="text-sm font-extrabold text-[var(--color-primary)]">
-            {dialog.title}
-          </p>
-          <p className="text-xs text-[var(--color-text-soft)]">{dialog.message}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" className="flex-1" onClick={() => closeDialog(false)}>
-            Cancel
-          </Button>
-          <Button className="flex-1" autoFocus onClick={() => closeDialog(true)}>
-            {dialog.confirmLabel}
-          </Button>
-        </div>
-      </div>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(null)}>
+      {/* Keyed by dialog, so each one starts with its own default values. */}
+      <DialogForm key={dialog.id} dialog={dialog} />
     </div>
+  )
+}
+
+function DialogForm({ dialog }) {
+  const [values, setValues] = useState(() => initialDialogValues(dialog.fields))
+  const [showErrors, setShowErrors] = useState(false)
+  const errors = dialogErrors(dialog.fields, values)
+  const set = (name, value) => setValues((v) => ({ ...v, [name]: value }))
+
+  const submit = (e) => {
+    e.preventDefault()
+    if (Object.keys(errors).length) return setShowErrors(true)
+    closeDialog(values)
+  }
+
+  return (
+    <form
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dialog-title"
+      onSubmit={submit}
+      onClick={(e) => e.stopPropagation()}
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-5 space-y-4"
+    >
+      <div className="space-y-1.5">
+        <p id="dialog-title" className="text-sm font-extrabold text-[var(--color-primary)]">
+          {dialog.title}
+        </p>
+        {dialog.message && <p className="text-xs text-[var(--color-text-soft)]">{dialog.message}</p>}
+      </div>
+
+      {dialog.fields.map((f, i) => (
+        <div key={f.name} className="space-y-1.5">
+          {f.label && <Label htmlFor={`dialog-${f.name}`}>{f.label}</Label>}
+          {f.type === 'choice' ? (
+            <div className="space-y-1.5" role="radiogroup">
+              {f.options.map((o) => (
+                <label
+                  key={o.value}
+                  className={cn(
+                    'flex items-start gap-2.5 rounded-2xl border px-3 py-2 cursor-pointer',
+                    values[f.name] === o.value ? 'border-[var(--color-primary)] bg-[var(--color-surface-soft)]' : 'border-[var(--color-border)]'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`dialog-${f.name}`}
+                    checked={values[f.name] === o.value}
+                    onChange={() => set(f.name, o.value)}
+                    className="mt-0.5 accent-[var(--color-primary)]"
+                  />
+                  <span>
+                    <span className="block text-xs font-semibold text-[var(--color-text)]">{o.label}</span>
+                    {o.hint && <span className="block text-[10px] text-[var(--color-text-muted)]">{o.hint}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Input
+                id={`dialog-${f.name}`}
+                type={f.type === 'number' ? 'text' : 'date'}
+                inputMode={f.type === 'number' ? 'decimal' : undefined}
+                autoFocus={i === 0}
+                placeholder={f.placeholder}
+                value={values[f.name]}
+                onChange={(e) => set(f.name, e.target.value)}
+                className="flex-1"
+              />
+              {f.unit && <span className="text-xs text-[var(--color-text-muted)] shrink-0">{f.unit}</span>}
+            </div>
+          )}
+          {f.help && <p className="text-[10px] text-[var(--color-text-muted)]">{f.help}</p>}
+          {showErrors && errors[f.name] && <p className="text-[11px] text-rose-400">{errors[f.name]}</p>}
+        </div>
+      ))}
+
+      <div className="flex gap-2">
+        <Button type="button" variant="ghost" className="flex-1" onClick={() => closeDialog(null)}>
+          Cancel
+        </Button>
+        <Button type="submit" className="flex-1" autoFocus={dialog.fields.length === 0}>
+          {dialog.confirmLabel}
+        </Button>
+      </div>
+    </form>
   )
 }
