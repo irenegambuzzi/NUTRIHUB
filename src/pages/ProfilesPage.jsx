@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Label, Input } from '../components/ui/Field'
@@ -12,15 +12,6 @@ function ProfileCard({ profile, onSave }) {
     fatG: profile.fat_g,
   })
   const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    setForm({
-      dailyCalories: profile.daily_calories,
-      proteinG: profile.protein_g,
-      carbsG: profile.carbs_g,
-      fatG: profile.fat_g,
-    })
-  }, [profile])
 
   const handleSave = async () => {
     setSaving(true)
@@ -86,7 +77,9 @@ export function ProfilesPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {profiles.map((profile) => (
-            <ProfileCard key={profile.id} profile={profile} onSave={saveProfile} />
+            // Keyed by the saved version, so the form restarts from new values
+            // (e.g. saved on the other phone).
+            <ProfileCard key={`${profile.id}-${profile.updated_at}`} profile={profile} onSave={saveProfile} />
           ))}
         </div>
       )}

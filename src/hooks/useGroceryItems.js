@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
 import {
@@ -16,7 +16,7 @@ import {
 } from '../lib/inventory'
 import { priceFields } from '../lib/pricing'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { toastLoadError } from '../lib/feedback'
+import { groceryStore } from '../lib/stores'
 import { localDateString } from '../lib/week'
 
 async function createExpense(item, amount) {
@@ -86,24 +86,9 @@ const needsExpiryChoice = (pantry) => ({
 })
 
 export function useGroceryItems() {
-  const [items, setItems] = useState([])
-
-  const fetchItems = useCallback(async function fetchItems() {
-    const { data, error } = await supabase.from('grocery_items').select('*').order('created_at', { ascending: false })
-    if (error) return toastLoadError(error, fetchItems, 'grocery_items')
-    setItems(data.map(normalizeItem))
-  }, [])
-
-  useEffect(() => {
-    fetchItems()
-    const channel = supabase
-      .channel(`grocery_items-${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'grocery_items' }, fetchItems)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [fetchItems])
-
-  const patchLocal = (id, fields) => setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...fields } : i)))
+  const { rows: items } = groceryStore.useRows()
+  const fetchItems = groceryStore.refresh
+  const patchLocal = (id, fields) => groceryStore.patchLocal([id], fields)
 
   const addItem = useCallback(
     async ({
@@ -137,7 +122,7 @@ export function useGroceryItems() {
               },
             ])
           )
-          setItems((prev) => [normalizeItem(rows[0]), ...prev])
+          groceryStore.upsertLocal(rows)
         },
         { retry: false }
       ),
@@ -307,7 +292,7 @@ export function useGroceryItems() {
       const result = await attempt(
         async () => {
           must(await updateRows('grocery_items', ids, { payer }))
-          setItems((prev) => prev.map((i) => (ids.includes(i.id) ? { ...i, payer } : i)))
+          groceryStore.patchLocal(ids, { payer })
         },
         { onFail: fetchItems }
       )
@@ -328,7 +313,7 @@ export function useGroceryItems() {
         remove: async () => {
           const rows = must(await query(supabase.from('grocery_items').delete()).select())
           const ids = rows.map((r) => r.id)
-          setItems((prev) => prev.filter((i) => !ids.includes(i.id)))
+          groceryStore.removeLocal(ids)
           return rows
         },
         restore: async (rows) => {

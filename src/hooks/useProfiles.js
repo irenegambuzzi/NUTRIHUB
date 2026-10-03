@@ -1,27 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, must } from '../lib/db'
-import { toastLoadError } from '../lib/feedback'
+import { profileStore } from '../lib/stores'
 
 export function useProfiles() {
-  const [profiles, setProfiles] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  const fetchProfiles = useCallback(async function fetchProfiles() {
-    const { data, error } = await supabase.from('profiles').select('*').order('id')
-    setLoading(false)
-    if (error) return toastLoadError(error, fetchProfiles, 'profiles')
-    setProfiles(data)
-  }, [])
-
-  useEffect(() => {
-    fetchProfiles()
-    const channel = supabase
-      .channel(`profiles-${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchProfiles)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [fetchProfiles])
+  const { rows: profiles, loaded } = profileStore.useRows()
+  const loading = !loaded
 
   const saveProfile = useCallback(async (id, updates) => {
     const { data, error } = await attempt(
@@ -36,7 +20,7 @@ export function useProfiles() {
         ),
       { retry: false }
     )
-    if (!error) setProfiles((prev) => prev.map((p) => (p.id === id ? data : p)))
+    if (!error) profileStore.upsertLocal([data])
     return { error }
   }, [])
 

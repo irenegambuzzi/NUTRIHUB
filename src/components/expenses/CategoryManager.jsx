@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { X, Trash2, Plus, CornerDownRight } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input, Label, Select } from '../ui/Field'
+import { expenseUsageStore } from '../../lib/stores'
 
 // Used by the grocery list (Groceries) and as the fallback for deleted
 // categories (Other), so neither can be removed here.
 const PROTECTED = ['Other', 'Groceries']
 
-export function CategoryManager({ categories, expenses, onAdd, onDelete, onClose }) {
+export function CategoryManager({ categories, onAdd, onDelete, onClose }) {
   const [name, setName] = useState('')
   const [parentId, setParentId] = useState('')
   const [error, setError] = useState('')
@@ -15,6 +16,8 @@ export function CategoryManager({ categories, expenses, onAdd, onDelete, onClose
 
   const parents = categories.filter((c) => !c.parent_id)
   const subsOf = (id) => categories.filter((c) => c.parent_id === id)
+  // Counts every expense ever, not just the period on screen.
+  const { rows: expenses } = expenseUsageStore.useRows()
   const usage = (c) => expenses.filter((e) => e.category_id === c.id || subsOf(c.id).some((s) => s.id === e.category_id)).length
 
   const handleAdd = async (e) => {

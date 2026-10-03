@@ -1,78 +1,24 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, Upload, History, X } from 'lucide-react'
+import { Plus, Search, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History, X } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
 import { ItemEditor } from '../components/inventory/ItemEditor'
 import { ItemTile } from '../components/inventory/ItemTile'
-import { EXPIRY_STYLES, STATUS_STYLES } from '../lib/inventoryStyles'
+import { StatTile } from '../components/inventory/StatTile'
+import { HistoryView } from '../components/inventory/HistoryView'
+import { DataView } from '../components/inventory/DataView'
+import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
-import { localDateString } from '../lib/expensePeriods'
-import { attempt } from '../lib/db'
-import { confirmDialog, toastLoadError } from '../lib/feedback'
+import { SORTS, matchesExpiry, matchesStatus, searchRank } from '../lib/pantryFilters'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
-import { daysUntil, expiryLabel, expiryState, restockReason, stockFill, stockStatus, suggestedPurchase } from '../lib/inventory'
-import {
-  buildBackup,
-  csvRowsToItems,
-  downloadFile,
-  itemsToCsv,
-  itemsToXlsx,
-  parseCsv,
-  parseXlsx,
-  restoreCategories,
-  restoreLogs,
-} from '../lib/inventoryBackup'
-
-const STATUS_ORDER = { out: 0, low: 1, ok: 2 }
-
-const byName = (a, b) => a.name.trim().localeCompare(b.name.trim(), undefined, { sensitivity: 'base' })
-
-// Sorting works the same for one category or for "All" (every item
-// together, regardless of category).
-const SORTS = {
-  az: { label: 'A–Z', fn: byName },
-  za: { label: 'Z–A', fn: (a, b) => byName(b, a) },
-  stockDesc: { label: 'Stock: highest first', fn: (a, b) => Number(b.current_stock) - Number(a.current_stock) || byName(a, b) },
-  stockAsc: { label: 'Stock: lowest first', fn: (a, b) => Number(a.current_stock) - Number(b.current_stock) || byName(a, b) },
-  restock: {
-    label: 'Needs restock first',
-    fn: (a, b) => STATUS_ORDER[stockStatus(a)] - STATUS_ORDER[stockStatus(b)] || stockFill(a) - stockFill(b),
-  },
-  expiry: { label: 'Expiry date', fn: (a, b) => (a.expiry_date ?? '9999').localeCompare(b.expiry_date ?? '9999') },
-  recent: { label: 'Newest', fn: (a, b) => b.created_at.localeCompare(a.created_at) },
-}
-
-// 0 = exact name, 1 = name starts with, 2 = name contains, 3 = other
-// fields contain, -1 = no match.
-function searchRank(item, q, categoryName) {
-  const name = item.name.trim().toLowerCase()
-  if (name === q) return 0
-  if (name.startsWith(q)) return 1
-  if (name.includes(q)) return 2
-  const other = [item.notes, item.batch_lot, categoryName(item.category_id), item.subcategory_id && categoryName(item.subcategory_id)]
-  return other.some((s) => s && s.toLowerCase().includes(q)) ? 3 : -1
-}
-
-function matchesExpiry(item, filter) {
-  const state = expiryState(item)
-  if (filter === 'all') return true
-  if (filter === 'month') return state === 'week' || state === 'month'
-  return state === filter
-}
-
-function matchesStatus(item, filter) {
-  const status = stockStatus(item)
-  if (filter === 'all') return true
-  if (filter === 'attention') return status !== 'ok'
-  return status === filter
-}
+import { daysUntil, expiryLabel, expiryState, restockReason, stockStatus, suggestedPurchase } from '../lib/inventory'
 
 export function PantryPage() {
-  const { items, logs, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
+  const { items, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
   const { items: groceryItems, addItem: addGroceryItem } = useGroceryItems()
   const { categories, pantryParents: parents, subsByParent, byId, categoryName, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
@@ -339,7 +285,7 @@ export function PantryPage() {
         </>
       )}
 
-      {view === 'history' && <HistoryView logs={logs} />}
+      {view === 'history' && <HistoryView />}
 
       {view === 'data' && <DataView items={items} categories={categories} categoryName={categoryName} importItems={importItems} />}
 
@@ -353,248 +299,6 @@ export function PantryPage() {
           onClose={() => setEditor(null)}
         />
       )}
-    </div>
-  )
-}
-
-const TONES = {
-  default: 'text-[var(--color-primary)]',
-  amber: STATUS_STYLES.low.text,
-  rose: STATUS_STYLES.out.text,
-  sky: 'text-sky-300',
-  purple: STATUS_STYLES.expired.text,
-}
-
-function StatTile({ icon: Icon, label, value, tone = 'default', active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'bg-[var(--color-surface)] border rounded-3xl p-3 text-left shadow-sm transition-colors',
-        active ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'
-      )}
-    >
-      <Icon size={16} className={TONES[tone]} />
-      <p className={cn('text-xl font-extrabold mt-1', TONES[tone])}>{value}</p>
-      <p className="text-[10px] text-[var(--color-text-muted)]">{label}</p>
-    </button>
-  )
-}
-
-const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded' }
-
-// Filters combine: item + reason + date range.
-function HistoryView({ logs }) {
-  const [itemFilter, setItemFilter] = useState('all')
-  const [reasonFilter, setReasonFilter] = useState('all')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-
-  const itemNames = useMemo(() => [...new Set(logs.map((l) => l.item_name))].sort((a, b) => a.localeCompare(b)), [logs])
-
-  const filtered = logs.filter((log) => {
-    if (itemFilter !== 'all' && log.item_name !== itemFilter) return false
-    if (reasonFilter !== 'all' && log.reason !== reasonFilter) return false
-    const day = new Date(log.created_at).toLocaleDateString('sv-SE')
-    if (from && day < from) return false
-    if (to && day > to) return false
-    return true
-  })
-
-  const anyFilter = itemFilter !== 'all' || reasonFilter !== 'all' || from || to
-
-  return (
-    <div className="space-y-3">
-      <Card className="space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-          <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className="text-xs" aria-label="Item">
-            <option value="all">All items</option>
-            {itemNames.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </Select>
-          <Select value={reasonFilter} onChange={(e) => setReasonFilter(e.target.value)} className="text-xs" aria-label="Reason">
-            <option value="all">All reasons</option>
-            {Object.entries(REASON_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
-          <label className="text-[10px] text-[var(--color-text-muted)]">
-            From
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="text-xs mt-0.5" />
-          </label>
-          <label className="text-[10px] text-[var(--color-text-muted)]">
-            To
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="text-xs mt-0.5" />
-          </label>
-        </div>
-        {anyFilter && (
-          <button
-            onClick={() => {
-              setItemFilter('all')
-              setReasonFilter('all')
-              setFrom('')
-              setTo('')
-            }}
-            className="text-[11px] font-bold text-[var(--color-accent)]"
-          >
-            Show all ({logs.length})
-          </button>
-        )}
-      </Card>
-
-      {filtered.length === 0 ? (
-        <Card className="text-center">
-          <p className="text-xs text-[var(--color-text-muted)]">{logs.length === 0 ? 'No stock changes recorded yet.' : 'No changes match these filters.'}</p>
-        </Card>
-      ) : (
-        <Card className="divide-y divide-[var(--color-border)]">
-          {filtered.map((log) => {
-            const change = Number(log.change)
-            return (
-              <div key={log.id} className="flex items-center gap-3 py-2 text-xs">
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-[var(--color-text)] truncate">{log.item_name}</p>
-                  <p className="text-[10px] text-[var(--color-text-muted)]">
-                    {REASON_LABELS[log.reason] || log.reason} ·{' '}
-                    {new Date(log.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                </div>
-                <span className={cn('font-mono font-bold', change >= 0 ? STATUS_STYLES.ok.text : STATUS_STYLES.out.text)}>
-                  {change >= 0 ? '+' : ''}
-                  {change} {log.unit}
-                </span>
-                <span className="font-mono text-[var(--color-text-muted)] w-20 text-right">
-                  → {Number(log.new_stock)} {log.unit}
-                </span>
-              </div>
-            )
-          })}
-        </Card>
-      )}
-    </div>
-  )
-}
-
-function DataView({ items, categories, categoryName, importItems }) {
-  const csvInput = useRef(null)
-  const jsonInput = useRef(null)
-  const [message, setMessage] = useState('')
-  const today = localDateString()
-
-  const exportCsv = () => {
-    downloadFile(`nutrihub-inventory-${today}.csv`, itemsToCsv(items, categoryName), 'text/csv;charset=utf-8')
-  }
-
-  const exportExcel = async () => {
-    const data = await itemsToXlsx(items, categoryName)
-    downloadFile(`nutrihub-export-${today}.xlsx`, data, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  }
-
-  const exportJson = async () => {
-    let backup
-    try {
-      backup = await buildBackup()
-    } catch (error) {
-      return toastLoadError(error, exportJson, 'backup')
-    }
-    downloadFile(`nutrihub-backup-${today}.json`, JSON.stringify(backup, null, 2), 'application/json')
-  }
-
-  const handleCsv = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    const isExcel = /\.xlsx?$/i.test(file.name)
-    let parsed
-    try {
-      parsed = isExcel ? await parseXlsx(await file.arrayBuffer()) : parseCsv(await file.text())
-    } catch {
-      return setMessage('Could not read that file.')
-    }
-    const rows = csvRowsToItems(parsed, categories)
-    if (rows.length === 0) return setMessage('No items found in that file. The first row must be a header with at least a "name" column.')
-    const confirmed = await confirmDialog({
-      title: `Import ${rows.length} item${rows.length === 1 ? '' : 's'}?`,
-      message: 'Rows with an existing id overwrite that item; the others are added as new items.',
-      confirmLabel: 'Import',
-    })
-    if (!confirmed) return
-    const { error } = await importItems(rows)
-    // A failure shows a toast.
-    setMessage(error ? '' : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.`)
-  }
-
-  const handleJson = async (e) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    let backup
-    try {
-      backup = JSON.parse(await file.text())
-    } catch {
-      return setMessage('That file is not valid JSON.')
-    }
-    if (backup.app !== 'nutrihub-inventory' || !Array.isArray(backup.items)) {
-      return setMessage('That file is not a NutriHub inventory backup.')
-    }
-    const confirmed = await confirmDialog({
-      title: `Restore ${backup.items.length} items?`,
-      message: `From the backup of ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'an unknown date'}. Items in the backup overwrite current ones with the same id; other items are kept.`,
-      confirmLabel: 'Restore',
-    })
-    if (!confirmed) return
-    setMessage('')
-    // Each step shows a toast if it fails; the restore stops there.
-    if ((await attempt(() => restoreCategories(backup), { retry: false })).error) return
-    if ((await importItems(backup.items)).error) return
-    if ((await attempt(() => restoreLogs(backup), { retry: false })).error) return
-    setMessage(`Restored ${backup.items.length} items.`)
-  }
-
-  return (
-    <div className="space-y-3">
-      <Card className="space-y-3">
-        <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Export</p>
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          CSV and Excel include every item field plus category and subcategory names. The JSON backup holds everything (categories, items, history) and can be
-          restored here.
-        </p>
-        <div className="grid grid-cols-3 gap-2">
-          <Button variant="ghost" onClick={exportCsv} className="px-2">
-            <Download size={14} /> Export CSV
-          </Button>
-          <Button variant="ghost" onClick={exportExcel} className="px-2">
-            <Download size={14} /> Export Excel
-          </Button>
-          <Button variant="ghost" onClick={exportJson} className="px-2">
-            <Download size={14} /> Export JSON
-          </Button>
-        </div>
-      </Card>
-      <Card className="space-y-3">
-        <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Import</p>
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          CSV or Excel columns: name, category, subcategory, unit, packaging_unit, quantity_per_pack, current_stock, min_stock, expiry_date (YYYY-MM-DD), batch_lot,
-          notes, price, payer. Only name is required.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          <Button variant="ghost" onClick={() => csvInput.current?.click()}>
-            <Upload size={14} /> Import CSV / Excel
-          </Button>
-          <Button variant="ghost" onClick={() => jsonInput.current?.click()}>
-            <Upload size={14} /> Restore backup
-          </Button>
-        </div>
-        <input ref={csvInput} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={handleCsv} />
-        <input ref={jsonInput} type="file" accept=".json,application/json" hidden onChange={handleJson} />
-      </Card>
-      {message && <p className="text-xs text-[var(--color-text-soft)]">{message}</p>}
     </div>
   )
 }

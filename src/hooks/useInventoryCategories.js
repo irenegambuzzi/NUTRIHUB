@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, must } from '../lib/db'
-import { toastLoadError } from '../lib/feedback'
+import { inventoryCategoryStore } from '../lib/stores'
 import { CATEGORY_NAME_OVERRIDES, DURABLE_CATEGORY_IDS, HIDDEN_CATEGORY_IDS } from '../data/constants'
 
 // Same list (and names) everywhere the app offers categories.
@@ -13,22 +13,8 @@ function visibleCategories(rows) {
 }
 
 export function useInventoryCategories() {
-  const [categories, setCategories] = useState([])
-
-  const fetchCategories = useCallback(async function fetchCategories() {
-    const { data, error } = await supabase.from('inventory_categories').select('*').order('sort_order').order('name')
-    if (error) return toastLoadError(error, fetchCategories, 'inventory_categories')
-    setCategories(visibleCategories(data))
-  }, [])
-
-  useEffect(() => {
-    fetchCategories()
-    const channel = supabase
-      .channel(`inventory_categories-${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_categories' }, fetchCategories)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [fetchCategories])
+  const { rows } = inventoryCategoryStore.useRows()
+  const categories = useMemo(() => visibleCategories(rows), [rows])
 
   const { parents, pantryParents, subsByParent, byId } = useMemo(() => {
     const byId = new Map(categories.map((c) => [c.id, c]))
@@ -55,7 +41,7 @@ export function useInventoryCategories() {
         ),
       { retry: false }
     )
-    if (!error) setCategories((prev) => [...prev, data])
+    if (!error) inventoryCategoryStore.upsertLocal([data])
     return { data, error }
   }, [subsByParent])
 

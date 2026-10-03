@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { showToast, toastLoadError } from '../lib/feedback'
+import { showToast } from '../lib/feedback'
+import { pantryStore, stockLogStore } from '../lib/stores'
 
 export const ITEM_FIELDS = [
   'name',
@@ -30,36 +31,13 @@ function pickFields(source) {
 }
 
 export function usePantryItems() {
-  const [items, setItems] = useState([])
-  const [logs, setLogs] = useState([])
-
-  const fetchItems = useCallback(async function fetchItems() {
-    const { data, error } = await supabase.from('pantry_items').select('*').order('created_at', { ascending: false })
-    if (error) return toastLoadError(error, fetchItems, 'pantry_items')
-    setItems(data.map(normalizeItem))
-  }, [])
-
-  const fetchLogs = useCallback(async function fetchLogs() {
-    const { data, error } = await supabase.from('stock_logs').select('*').order('created_at', { ascending: false }).limit(1000)
-    if (error) return toastLoadError(error, fetchLogs, 'stock_logs')
-    setLogs(data)
-  }, [])
-
-  useEffect(() => {
-    fetchItems()
-    fetchLogs()
-    const channel = supabase
-      .channel(`pantry_items-${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pantry_items' }, fetchItems)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_logs' }, fetchLogs)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [fetchItems, fetchLogs])
+  const { rows: items } = pantryStore.useRows()
+  const fetchItems = pantryStore.refresh
 
   const addItem = useCallback(async (fields) => {
     const { data, error } = await attempt(async () => must(await insertRows('pantry_items', [pickFields(fields)]))[0], { retry: false })
     if (error) return { error }
-    setItems((prev) => [data, ...prev])
+    pantryStore.upsertLocal([data])
     const stock = Number(data.current_stock)
     await afterStockChange(data, stock, stock, 'added')
     return { data }
@@ -87,7 +65,7 @@ export function usePantryItems() {
         { retry: false, onFail: fetchItems }
       )
       if (error) return { error }
-      setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
+      pantryStore.upsertLocal([data])
       if (!delta) await followUp('the shopping list', () => syncShoppingForItem(data))
       // A rename carries over to the item's open grocery entries.
       if (data.name !== item.name) {
@@ -104,7 +82,7 @@ export function usePantryItems() {
     async (item, delta, reason = delta > 0 ? 'restocked' : 'used') => {
       const { data, error } = await attempt(() => changeStock(item, Math.round(delta * 100) / 100, reason), { onFail: fetchItems })
       if (error) return { error }
-      setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
+      pantryStore.upsertLocal([data])
       return { error: null }
     },
     [fetchItems]
@@ -127,7 +105,7 @@ export function usePantryItems() {
         { onFail: fetchItems }
       )
       if (error) return { error }
-      setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
+      pantryStore.upsertLocal([data])
 
       const undo = () =>
         attempt(
@@ -136,7 +114,7 @@ export function usePantryItems() {
               await setExpiry(item.expiry_date)
               onFail(() => setExpiry(null))
               const restored = await changeStock({ ...data, expiry_date: item.expiry_date }, amount, 'edited')
-              setItems((prev) => prev.map((i) => (i.id === item.id ? restored : i)))
+              pantryStore.upsertLocal([restored])
             }),
           { onFail: fetchItems }
         )
@@ -160,7 +138,7 @@ export function usePantryItems() {
           const grocery = must(await supabase.from('grocery_items').select('id').eq('pantry_item_id', item.id))
           const history = must(await supabase.from('stock_logs').select('id').eq('item_id', item.id))
           const [row] = must(await supabase.from('pantry_items').delete().eq('id', item.id).select())
-          setItems((prev) => prev.filter((i) => i.id !== item.id))
+          pantryStore.removeLocal([item.id])
           return { row, groceryIds: grocery.map((g) => g.id), logIds: history.map((l) => l.id) }
         },
         restore: async ({ row, groceryIds, logIds }) => {
@@ -188,19 +166,20 @@ export function usePantryItems() {
         { retry: false, onFail: fetchItems }
       )
       if (error) return { error }
-      const { data, error: loadError } = await supabase.from('pantry_items').select('*').order('created_at', { ascending: false })
-      if (loadError) {
-        toastLoadError(loadError, fetchItems, 'pantry_items')
-      } else {
-        setItems(data.map(normalizeItem))
-        await followUp('the shopping list', async () => {
-          for (const item of data) await syncShoppingForItem(item)
-        })
-      }
+      await pantryStore.refresh()
+      await followUp('the shopping list', async () => {
+        for (const item of pantryStore.getSnapshot().rows) await syncShoppingForItem(item)
+      })
       return { error: null, count: rows.length }
     },
     [fetchItems]
   )
 
-  return { items, logs, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems }
+  return { items, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems }
+}
+
+// The latest stock changes (the pantry's History view); loaded only where
+// it's shown.
+export function useStockLogs() {
+  return stockLogStore.useRows().rows
 }

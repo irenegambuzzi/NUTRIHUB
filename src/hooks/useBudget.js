@@ -1,28 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, must } from '../lib/db'
-import { toastLoadError } from '../lib/feedback'
+import { budgetStore } from '../lib/stores'
 
 // One shared budget row for the household (no per-user accounts).
 // grocery_budget = null means "No budget limit". Changes made on another
-// phone arrive through realtime.
+// phone arrive through realtime (budgetStore).
 export function useBudget() {
-  const [settings, setSettings] = useState(null)
-
-  const fetchSettings = useCallback(async function fetchSettings() {
-    const { data, error } = await supabase.from('budget_settings').select('*').order('created_at').limit(1)
-    if (error) return toastLoadError(error, fetchSettings, 'budget_settings')
-    setSettings(data[0] ?? null)
-  }, [])
-
-  useEffect(() => {
-    fetchSettings()
-    const channel = supabase
-      .channel(`budget_settings-${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'budget_settings' }, fetchSettings)
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [fetchSettings])
+  const { rows } = budgetStore.useRows()
+  const settings = rows[0] ?? null
+  const fetchSettings = budgetStore.refresh
 
   const saveGroceryBudget = useCallback(
     async (amount) => {
@@ -36,7 +23,7 @@ export function useBudget() {
         },
         { retry: false, onFail: fetchSettings }
       )
-      if (!error) setSettings(data)
+      if (!error) budgetStore.upsertLocal([data])
       return { error }
     },
     [settings, fetchSettings]
