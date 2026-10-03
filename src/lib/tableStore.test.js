@@ -115,3 +115,20 @@ describe('createTableStore', () => {
     expect(loads).toHaveLength(1)
   })
 })
+
+describe('the copy kept on the phone', () => {
+  it('is read only when the list is first used (after login), not when the app loads', async () => {
+    const reads = []
+    const saved = globalThis.localStorage
+    globalThis.localStorage = { getItem: (k) => (reads.push(k), '[{"id":"a"}]'), setItem: () => {} }
+    const { loads } = fakeClient()
+    const store = createTableStore({ name: 't', table: 't', persist: 'secret' })
+    expect(reads).toEqual([])
+    expect(store.getSnapshot()).toEqual({ rows: [], loaded: false })
+    store.subscribe(() => {})
+    expect(reads).toEqual(['nutrihub-cache:secret'])
+    expect(store.getSnapshot().rows).toEqual([{ id: 'a' }])
+    loads[0]({ data: [], error: null })
+    globalThis.localStorage = saved
+  })
+})

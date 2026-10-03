@@ -6,4 +6,8 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// The login session is kept on the device and refreshed automatically, and
+// every request (tables, realtime, Storage, RPC) carries it.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+})

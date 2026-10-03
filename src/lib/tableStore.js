@@ -44,7 +44,7 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
   const pick = keep ? (row) => Object.fromEntries(keep.map((c) => [c, row[c]])) : (row) => row
   const normalize = options.normalize ?? ((r) => r)
   const opts = { ...options, normalize: (row) => normalize(pick(row)) }
-  let state = readCache(options.persist) ?? { rows: [], loaded: false }
+  let state = { rows: [], loaded: false }
   let started = false
   let buffered = null // realtime changes that arrive while loading
   let disconnected = false
@@ -80,6 +80,10 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
   function start() {
     if (started) return
     started = true
+    // The copy kept on the phone is read only now — once the list is used,
+    // which is only after login.
+    const cached = readCache(options.persist)
+    if (cached && !state.loaded) state = cached
     supabase
       .channel(`${name}-${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table }, onChange)

@@ -21,9 +21,15 @@ beforeAll(async () => {
     create table storage.buckets (id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);
     create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
     alter table storage.objects enable row level security;
+    create schema auth;
+    create table auth.users (id uuid primary key);
+    create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    insert into auth.users values ('2d8a40ba-d751-4c22-9662-df3b758a4749'), ('99999999-9999-9999-9999-999999999999');
+    grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f)).sort()
+  // 015 (the login lock) is tested on its own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -170,6 +176,78 @@ describe('a purchase edited on the confirm screen', () => {
     expect(await one(`select current_stock::float, price::float, price_qty::float, payer from pantry_items where id = $1`, [juice])).toEqual({ current_stock: 1, price: 1, price_qty: 1, payer: 'shared' })
     // Back in the cart as edited, ready to confirm again.
     expect(await one(`select quantity::float, price::float, payer, completed, in_cart from grocery_items where id = $1`, [entry])).toEqual({ quantity: 2, price: 2, payer: 'akbar', completed: false, in_cart: true })
+  })
+})
+
+describe('015: only the logged-in household can use the data', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  const run = (file) => db.exec(fs.readFileSync(path.join(dir, file), 'utf8'))
+  // Runs fn as the app's anon key, or logged in as a user.
+  async function as(role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const tryQuery = async (sql, params) => {
+    try {
+      return { rows: (await db.query(sql, params)).rows }
+    } catch (error) {
+      return { error: error.message }
+    }
+  }
+
+  beforeAll(async () => {
+    await run('015_lock_to_household.sql')
+    await run('015_lock_to_household.sql') // safe to re-run
+  })
+
+  it('leaves nothing open to anon (the check at the end of the file)', async () => {
+    const result = await db.query(fs.readFileSync(path.join(dir, '015_lock_to_household.sql'), 'utf8').split('-- ── 5. Check')[1].replace(/^[^\n]*\n/, ''))
+    expect(result.rows[0]).toEqual({ tables_open_to_anon: 'none', functions_open_to_anon: 'none', policies_for_anon: 'none', tables_without_rls: 'none', members: 1 })
+  })
+
+  it('refuses the anon key: no reading, writing or functions', async () => {
+    expect((await as('anon', null, () => tryQuery('select * from grocery_items'))).error).toMatch(/permission denied/)
+    expect((await as('anon', null, () => tryQuery(`insert into pantry_items (name) values ('x')`))).error).toMatch(/permission denied/)
+    expect((await as('anon', null, () => tryQuery(`select reopen_shopping_trip(gen_random_uuid())`))).error).toMatch(/permission denied/)
+    expect((await as('anon', null, () => tryQuery(`select * from increment_stock(gen_random_uuid(), 1)`))).error).toMatch(/permission denied/)
+  })
+
+  it('lets the household account do everything', async () => {
+    await as('authenticated', MEMBER, async () => {
+      const item = (await db.query(`insert into pantry_items (name, unit, current_stock) values ('Lock test', 'pcs', 1) returning id`)).rows[0].id
+      expect((await db.query(`select name from pantry_items where id = $1`, [item])).rows).toEqual([{ name: 'Lock test' }])
+      expect(Number((await db.query(`select current_stock from increment_stock($1, 2)`, [item])).rows[0].current_stock)).toBe(3)
+      await db.query(`update pantry_items set notes = 'ok' where id = $1`, [item])
+      await db.query(`delete from pantry_items where id = $1`, [item])
+      expect((await db.query(`select count(*)::int as n from pantry_items where id = $1`, [item])).rows[0].n).toBe(0)
+    })
+  })
+
+  it('keeps out a logged-in user who is not in the household', async () => {
+    await as('authenticated', STRANGER, async () => {
+      expect((await db.query(`select count(*)::int as n from expense_categories`)).rows[0].n).toBe(0)
+      expect((await tryQuery(`insert into pantry_items (name) values ('x')`)).error).toMatch(/row-level security/)
+      expect((await tryQuery(`select reopen_shopping_trip(gen_random_uuid())`)).error).toMatch(/Not allowed/)
+      expect((await tryQuery(`select * from apply_stock_change(gen_random_uuid(), gen_random_uuid(), 1, 'x')`)).error).toMatch(/Not allowed/)
+    })
+  })
+
+  it('the rollback opens everything to anon again, as before 015', async () => {
+    await run('015_ROLLBACK.sql')
+    await run('015_ROLLBACK.sql') // safe to re-run
+    const rows = (await as('anon', null, () => tryQuery('select count(*)::int as n from expense_categories'))).rows
+    expect(rows[0].n).toBeGreaterThan(0)
+    const item = (await as('anon', null, () => tryQuery(`insert into pantry_items (name, unit, current_stock) values ('After rollback', 'pcs', 1) returning id`))).rows[0].id
+    expect(Number((await as('anon', null, () => tryQuery(`select current_stock from increment_stock($1, 1)`, [item]))).rows[0].current_stock)).toBe(2)
+    // And 015 can be run again afterwards.
+    await run('015_lock_to_household.sql')
+    expect((await as('anon', null, () => tryQuery('select * from pantry_items'))).error).toMatch(/permission denied/)
   })
 })
 

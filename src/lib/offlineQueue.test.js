@@ -70,3 +70,23 @@ describe('offline queue', () => {
     expect(getToasts().at(-1).message).toContain('the stock of "Milk"')
   })
 })
+
+describe('sending offline changes needs a login', async () => {
+  const { setFlushGate } = await import('./offlineQueue')
+  it('keeps them until a session starts', async () => {
+    const sent = []
+    registerHandler('stock', async (p) => sent.push(p.n))
+    setOnlineForTest(false)
+    enqueue('stock', { n: 1 })
+    let signedIn = false
+    setFlushGate(() => signedIn)
+    setOnlineForTest(true)
+    await flush()
+    expect(sent).toEqual([])
+    expect(getQueue()).toHaveLength(1)
+    signedIn = true
+    await flush()
+    expect(sent).toEqual([1])
+    setFlushGate(() => true)
+  })
+})

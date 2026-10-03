@@ -5,8 +5,14 @@ import './index.css'
 import App from './App.jsx'
 import { startOfflineSync } from './lib/offlineActions'
 import { startAppUpdates } from './pwa'
+import { isSignedIn, startAuth, whenSignedIn } from './lib/auth'
+import { flush, setFlushGate } from './lib/offlineQueue'
 
-// Sends changes made offline last time, if any.
+// Login first: offline changes are sent only with a session, as soon as
+// one starts (and changes made offline last time, if any).
+setFlushGate(isSignedIn)
+whenSignedIn(() => flush())
+startAuth()
 startOfflineSync()
 // Watches for new versions of the app.
 startAppUpdates()

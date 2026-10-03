@@ -3,6 +3,7 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Label, Input } from '../components/ui/Field'
 import { useProfiles } from '../hooks/useProfiles'
+import { AccountSettings } from '../components/auth/AccountSettings'
 
 function ProfileCard({ profile, onSave }) {
   const [form, setForm] = useState({
@@ -83,6 +84,8 @@ export function ProfilesPage() {
           ))}
         </div>
       )}
+
+      <AccountSettings />
     </div>
   )
 }

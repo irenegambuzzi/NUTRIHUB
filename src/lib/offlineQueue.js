@@ -12,6 +12,7 @@ const listeners = new Set()
 let queue = load()
 let syncing = false
 let afterSync = () => {}
+let canFlush = () => true
 
 function load() {
   try {
@@ -62,8 +63,13 @@ export const isSyncing = () => syncing
 // Sends the queued changes in order. Stops at a network failure (tried
 // again when back online); a change Supabase refuses is dropped with a
 // toast saying which one.
+// Changes are only sent while logged in (see auth.js).
+export function setFlushGate(fn) {
+  canFlush = fn
+}
+
 export async function flush() {
-  if (syncing || isOffline()) return
+  if (syncing || isOffline() || !canFlush()) return
   if (queue.length === 0) return afterSync()
   syncing = true
   update()
