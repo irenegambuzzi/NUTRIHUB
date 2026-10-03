@@ -146,11 +146,28 @@ export async function logStockChange(item, change, newStock, reason) {
   ])
 }
 
-// Columns added by supabase/006_backfill_inventory_data.sql. Until that
-// migration has run, writes retry without them instead of failing.
+// Adds `delta` to an item's stock in one database statement (never below
+// 0), so two people changing it at once can't overwrite each other.
+// Logs the change and re-syncs the shopping list; returns the updated row.
+export async function changeStock(item, delta, reason) {
+  const { data, error } = await supabase.rpc('increment_stock', { item_id: item.id, delta })
+  if (error) return { error }
+  if (!data?.id) return { error: { message: 'Item not found.' } }
+  const updated = normalizeItem(data)
+  const newStock = Number(updated.current_stock)
+  // Stock that hit 0 may have dropped by less than asked.
+  const change = newStock === 0 && delta < 0 ? Math.max(delta, -(Number(item.current_stock) || 0)) : delta
+  await logStockChange(updated, change, newStock, reason)
+  await syncShoppingForItem(updated)
+  return { data: updated, error: null }
+}
+
+// Columns added by supabase/006_backfill_inventory_data.sql and
+// 007_schema_sync.sql. Until those migrations have run, writes retry
+// without them instead of failing.
 const OPTIONAL_COLUMNS = {
   grocery_items: ['payer', 'subcategory_id', 'price_qty', 'price_unit'],
-  pantry_items: ['price_qty', 'price_unit'],
+  pantry_items: ['price', 'price_qty', 'price_unit', 'payer', 'last_purchased_at'],
 }
 
 const missingOptional = (table, error) => Boolean(error) && OPTIONAL_COLUMNS[table].some((c) => error.message?.includes(c))

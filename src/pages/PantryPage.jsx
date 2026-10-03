@@ -379,7 +379,7 @@ function StatTile({ icon: Icon, label, value, tone = 'default', active, onClick 
   )
 }
 
-const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought' }
+const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone' }
 
 // Filters combine: item + reason + date range.
 function HistoryView({ logs }) {

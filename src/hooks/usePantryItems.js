@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { insertRows, logStockChange, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
+import { changeStock, insertRows, logStockChange, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
 
 export const ITEM_FIELDS = [
   'name',
@@ -63,29 +63,35 @@ export function usePantryItems() {
   }, [])
 
   const updateItem = useCallback(async (item, fields) => {
-    const patch = pickFields(fields)
-    const { data: rows, error } = await updateRows('pantry_items', item.id, patch)
-    const data = rows?.[0] && normalizeItem(rows[0])
-    if (error || !data) return { error }
+    const { current_stock: stock, ...patch } = pickFields(fields)
+    let data = item
+    if (Object.keys(patch).length) {
+      const { data: rows, error } = await updateRows('pantry_items', item.id, patch)
+      data = rows?.[0] && normalizeItem(rows[0])
+      if (error || !data) return { error }
+    }
+    // The edited stock is applied as a change from what the form started
+    // with, so a concurrent change by someone else isn't overwritten.
+    const delta = stock == null ? 0 : Math.round((Number(stock) - Number(item.current_stock)) * 100) / 100
+    if (delta) {
+      const result = await changeStock(data, delta, 'edited')
+      if (result.error) return { error: result.error }
+      data = result.data
+    } else {
+      await syncShoppingForItem(data)
+    }
     setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
-    const change = Number(data.current_stock) - Number(item.current_stock)
-    await logStockChange(data, change, Number(data.current_stock), 'edited')
     // A rename carries over to the item's open grocery entries.
     if (data.name !== item.name) {
       await supabase.from('grocery_items').update({ name: data.name }).eq('pantry_item_id', item.id).eq('completed', false)
     }
-    await syncShoppingForItem(data)
     return { data }
   }, [])
 
   const adjustStock = useCallback(async (item, delta, reason = delta > 0 ? 'restocked' : 'used') => {
-    const newStock = Math.max(0, Math.round((Number(item.current_stock) + delta) * 100) / 100)
-    const { error } = await supabase.from('pantry_items').update({ current_stock: newStock }).eq('id', item.id)
+    const { data, error } = await changeStock(item, Math.round(delta * 100) / 100, reason)
     if (error) return { error }
-    const updated = { ...item, current_stock: newStock }
-    setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)))
-    await logStockChange(updated, newStock - Number(item.current_stock), newStock, reason)
-    await syncShoppingForItem(updated)
+    setItems((prev) => prev.map((i) => (i.id === item.id ? data : i)))
     return { error: null }
   }, [])
 
