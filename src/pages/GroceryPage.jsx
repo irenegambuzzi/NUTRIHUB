@@ -9,6 +9,7 @@ import { GroceryItemTile } from '../components/grocery/GroceryItemTile'
 import { ReceiptsView } from '../components/grocery/ReceiptsView'
 import { QuickAdd } from '../components/grocery/QuickAdd'
 import { ShoppingMode } from '../components/grocery/ShoppingMode'
+import { ConfirmPurchase } from '../components/grocery/ConfirmPurchase'
 import { cn } from '../lib/cn'
 import { useGroceryList } from '../hooks/useGroceryList'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
@@ -52,7 +53,7 @@ export function GroceryPage() {
     updatePricing,
     updatePayer,
     deleteItem,
-    clearCompleted,
+    cartItems,
     pantryItems,
     pantryByName,
     pantryFor,
@@ -78,6 +79,7 @@ export function GroceryPage() {
 
   const [view, setViewState] = useState(readView)
   const [fullForm, setFullForm] = useState(null) // null | name to start the full form with
+  const [confirming, setConfirming] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [sortMode, setSortMode] = useState('priority')
   const [bulkScope, setBulkScope] = useState('restock')
@@ -85,19 +87,19 @@ export function GroceryPage() {
 
   const inCategory = (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   const filteredItems = budgetPlan
-    ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.completed), 'recent')].filter(inCategory)
+    ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
     : sortItems(groceryItems.filter(inCategory), sortMode)
   const filteredDurables = sortItems(durableItems.filter(inCategory), budgetPlan ? 'recent' : sortMode)
-  const durableTotal = durableItems.filter((i) => !i.completed).reduce((sum, i) => sum + costOf(i), 0)
+  const durableTotal = durableItems.filter((i) => !i.in_cart).reduce((sum, i) => sum + costOf(i), 0)
   // Only show chips for categories that actually have items on the list.
   const listCategories = parents.filter((p) => items.some((i) => i.category_id === p.id))
   const needsBuying = pantryItems.filter((p) => restockReason(p))
   const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + costOf(item), 0)
-  const completedCount = items.filter((i) => i.completed).length
+  const cartCount = cartItems.length
 
   // Targets for "Paid by for all …".
   const bulkTargets = items.filter(
-    (i) => !i.completed && (bulkScope === 'all' || (bulkScope === 'new' ? reasonOf(i) === 'new' : ['out', 'low', 'expired'].includes(reasonOf(i))))
+    (i) => !i.in_cart && (bulkScope === 'all' || (bulkScope === 'new' ? reasonOf(i) === 'new' : ['out', 'low', 'expired'].includes(reasonOf(i))))
   )
 
   const setView = (next) => {
@@ -256,18 +258,18 @@ export function GroceryPage() {
                   <Sparkles size={13} /> {syncing ? 'Adding…' : `Add all ${needsBuying.length} low / out / expired pantry items`}
                 </button>
               )}
-              {completedCount > 0 && (
+              {cartCount > 0 && (
                 <button
-                  onClick={clearCompleted}
-                  className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-red-400 transition"
+                  onClick={() => setConfirming(true)}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--color-primary)] text-white"
                 >
-                  <X size={13} /> Clear {completedCount} checked item{completedCount === 1 ? '' : 's'}
+                  <ShoppingCart size={13} /> Confirm purchase ({cartCount} in the cart)
                 </button>
               )}
             </div>
           </div>
 
-          {items.some((i) => !i.completed) && (
+          {items.some((i) => !i.in_cart) && (
             <div className="flex flex-wrap items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl px-3 py-2">
               <Users size={13} className="text-[var(--color-text-muted)]" />
               <span className="text-[11px] text-[var(--color-text-muted)]">Paid by for</span>
@@ -357,10 +359,23 @@ export function GroceryPage() {
             costOf={costOf}
             budget={groceryBudget}
             onCheck={checkOff}
+            onConfirm={() => setConfirming(true)}
           />
         </>
       ) : (
         <ReceiptsView />
+      )}
+      {confirming && (
+        <ConfirmPurchase
+          cartItems={cartItems}
+          pantryItems={pantryItems}
+          categoryName={categoryName}
+          totalOf={totalOf}
+          updatePricing={updatePricing}
+          updatePayer={updatePayer}
+          toggleCart={checkOff}
+          onClose={() => setConfirming(false)}
+        />
       )}
     </div>
   )

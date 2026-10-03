@@ -1,43 +1,58 @@
 import { useMemo, useState } from 'react'
-import { ListChecks, Trash2 } from 'lucide-react'
+import { ListChecks, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { PhotoPicker, PhotoThumb, PhotoViewer } from './ReceiptPhoto'
 import { PriceCheck } from './PriceCheck'
 import { deleteExpenses, setReceiptLineAmount, useCategoryExpenses, useExpenseCategories } from '../../hooks/useExpenses'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
-import { askDialog } from '../../lib/feedback'
+import { reopenTrip } from '../../hooks/usePurchase'
+import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
+import { money } from '../../lib/pricing'
 import { localDateString, parseLocalDate } from '../../lib/week'
-import { groceryStore, pantryStore } from '../../lib/stores'
+import { groceryStore, pantryStore, tripExpenseStore, tripItemStore, tripStore } from '../../lib/stores'
 
 const longDate = (date) => parseLocalDate(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 
-// Every checked-off grocery item logs a "Groceries" expense; a receipt is
-// one day's worth, with any photos of the paper receipt taken that day.
-// Loaded only when this view is open.
+// Receipts: every confirmed purchase (shopping trip) with its items,
+// expenses and receipt photos — which can be reopened as a whole — and,
+// from before purchases were confirmed in one go, each day's Groceries
+// expenses. Loaded only when this view is open.
 export function ReceiptsView() {
   const { categories } = useExpenseCategories()
   const groceriesId = categories.find((c) => c.name === 'Groceries' && !c.parent_id)?.id
   const { expenses, loaded } = useCategoryExpenses(groceriesId)
+  const { rows: trips } = tripStore.useRows()
+  const { rows: tripItems } = tripItemStore.useRows()
+  const { rows: tripExpenses } = tripExpenseStore.useRows()
   const { photos, addPhoto, replacePhoto, movePhoto, deletePhoto } = useReceiptPhotos()
   const { rows: groceryItems } = groceryStore.useRows()
   const { rows: pantryItems } = pantryStore.useRows()
   const [viewing, setViewing] = useState(null) // a photo
-  const [checking, setChecking] = useState(null) // a date
+  const [checking, setChecking] = useState(null) // a receipt key
   const [busy, setBusy] = useState(false)
 
-  // Days with expenses or photos, newest first.
+  // Confirmed purchases and (older) days, newest first.
   const receipts = useMemo(() => {
-    const byDate = new Map(groupByDate(expenses).map((r) => [r.date, { ...r, photos: [] }]))
-    for (const photo of photos) {
-      if (!byDate.has(photo.receipt_date)) byDate.set(photo.receipt_date, { date: photo.receipt_date, list: [], total: 0, photos: [] })
-      byDate.get(photo.receipt_date).photos.push(photo)
+    const cards = trips.map((trip) => ({
+      key: `trip:${trip.id}`,
+      trip,
+      date: trip.trip_date,
+      items: tripItems.filter((i) => i.trip_id === trip.id),
+      list: tripExpenses.filter((e) => e.trip_id === trip.id),
+      photos: photos.filter((p) => p.trip_id === trip.id),
+    }))
+    const days = new Map(groupByDate(expenses.filter((e) => !e.trip_id)).map((r) => [r.date, { ...r, key: `day:${r.date}`, photos: [] }]))
+    for (const photo of photos.filter((p) => !p.trip_id)) {
+      if (!days.has(photo.receipt_date)) days.set(photo.receipt_date, { key: `day:${photo.receipt_date}`, date: photo.receipt_date, list: [], total: 0, photos: [] })
+      days.get(photo.receipt_date).photos.push(photo)
     }
-    return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date))
-  }, [expenses, photos])
+    for (const card of cards) card.total = card.list.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+    return [...cards, ...days.values()].sort((a, b) => b.date.localeCompare(a.date))
+  }, [trips, tripItems, tripExpenses, expenses, photos])
 
-  // The grocery entry a receipt line came from (if still on the list), and
-  // its pantry item for unit conversions.
+  // The grocery entry a receipt line came from (if still there), and its
+  // pantry item for unit conversions.
   const linkFor = (expense) => groceryItems.find((g) => g.expense_id === expense.id) ?? null
   const packFor = (item) => pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => normName(p.name) === normName(item.name)) ?? null
 
@@ -49,11 +64,11 @@ export function ReceiptsView() {
       confirmLabel: 'Save',
     })
 
-  const add = async (file, date) => {
+  const add = async (file, date, tripId) => {
     const day = date ?? (await askDate('Add a receipt photo', receipts[0]?.date ?? localDateString()))?.date
     if (!day) return
     setBusy(true)
-    await addPhoto(file, day)
+    await addPhoto(file, day, tripId)
     setBusy(false)
   }
 
@@ -65,7 +80,16 @@ export function ReceiptsView() {
     }
   }
 
-  const checked = receipts.find((r) => r.date === checking)
+  const reopen = async ({ trip, items, total }) => {
+    const ok = await confirmDialog({
+      title: 'Reopen this purchase?',
+      message: `The ${items.length} item${items.length === 1 ? '' : 's'} (${money(total)}) go back to the cart, and the stock, history and expenses from this purchase are undone.`,
+      confirmLabel: 'Reopen',
+    })
+    if (ok) await reopenTrip(trip.id)
+  }
+
+  const checked = receipts.find((r) => r.key === checking)
 
   return (
     <div className="space-y-3">
@@ -79,53 +103,78 @@ export function ReceiptsView() {
         <p className="text-xs text-[var(--color-text-muted)] text-center py-6">Loading receipts…</p>
       ) : receipts.length === 0 ? (
         <Card className="text-center rounded-3xl">
-          <p className="text-xs text-[var(--color-text-muted)]">No receipts yet — they appear here as you check off priced items.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">No receipts yet — they appear here when you confirm a purchase.</p>
         </Card>
       ) : (
-        receipts.map(({ date, list, total, photos: dayPhotos }) => (
-          <Card key={date} className="rounded-3xl">
-            <div className="flex justify-between items-center gap-2 border-b border-[var(--color-border)] pb-2 mb-2">
-              <span className="text-xs font-bold text-[var(--color-text)]">{longDate(date)}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
-                {list.length > 0 && (
+        receipts.map((receipt) => {
+          const { key, trip, date, list, total, photos: cardPhotos } = receipt
+          return (
+            <Card key={key} className="rounded-3xl">
+              <div className="flex justify-between items-center gap-2 border-b border-[var(--color-border)] pb-2 mb-2">
+                <span className="text-xs font-bold text-[var(--color-text)] flex items-center gap-1.5">
+                  {trip && <ShoppingCart size={13} className="text-[var(--color-primary)]" />}
+                  {longDate(date)}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+                  {!trip && list.length > 0 && (
+                    <button
+                      onClick={() => deleteExpenses(list.map((e) => e.id), `Receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} deleted`)}
+                      aria-label="Delete this receipt's expenses"
+                      className="text-[var(--color-icon-muted)] hover:text-red-400 transition"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 mb-2 overflow-x-auto">
+                {cardPhotos.map((photo) => (
+                  <PhotoThumb key={photo.id} photo={photo} onOpen={setViewing} />
+                ))}
+                <PhotoPicker compact onFile={(file) => add(file, date, trip?.id ?? null)} disabled={busy} />
+                {cardPhotos.length > 0 && list.length > 0 && (
                   <button
-                    onClick={() => deleteExpenses(list.map((e) => e.id), `Receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} deleted`)}
-                    aria-label="Delete this receipt's expenses"
-                    className="text-[var(--color-icon-muted)] hover:text-red-400 transition"
+                    onClick={() => setChecking(key)}
+                    className="ml-auto shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-2xl bg-[var(--color-primary)] text-white"
                   >
-                    <Trash2 size={13} />
+                    <ListChecks size={14} /> Check prices
                   </button>
                 )}
               </div>
-            </div>
 
-            <div className="flex items-center gap-2 mb-2 overflow-x-auto">
-              {dayPhotos.map((photo) => (
-                <PhotoThumb key={photo.id} photo={photo} onOpen={setViewing} />
-              ))}
-              <PhotoPicker compact onFile={(file) => add(file, date)} disabled={busy} />
-              {dayPhotos.length > 0 && list.length > 0 && (
+              <div className="space-y-1">
+                {trip
+                  ? receipt.items.map((i) => {
+                      const expense = list.find((e) => e.id === i.expense_id)
+                      return (
+                        <div key={i.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
+                          <span>{i.name}</span>
+                          <span className="font-mono">€{Number(expense?.amount ?? i.line_total ?? 0).toFixed(2)}</span>
+                        </div>
+                      )
+                    })
+                  : list.map((e) => (
+                      <div key={e.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
+                        <span>{e.description || 'Item'}</span>
+                        <span className="font-mono">€{Number(e.amount).toFixed(2)}</span>
+                      </div>
+                    ))}
+                {!trip && list.length === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">No checked-off items on this day.</p>}
+              </div>
+
+              {trip && (
                 <button
-                  onClick={() => setChecking(date)}
-                  className="ml-auto shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-2xl bg-[var(--color-primary)] text-white"
+                  onClick={() => reopen(receipt)}
+                  className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
                 >
-                  <ListChecks size={14} /> Check prices
+                  <RotateCcw size={12} /> Reopen purchase
                 </button>
               )}
-            </div>
-
-            <div className="space-y-1">
-              {list.map((e) => (
-                <div key={e.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
-                  <span>{e.description || 'Item'}</span>
-                  <span className="font-mono">€{Number(e.amount).toFixed(2)}</span>
-                </div>
-              ))}
-              {list.length === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">No checked-off items on this day.</p>}
-            </div>
-          </Card>
-        ))
+            </Card>
+          )
+        })
       )}
 
       {viewing && (
@@ -143,7 +192,7 @@ export function ReceiptsView() {
           }}
           onCheckPrices={(photo) => {
             setViewing(null)
-            setChecking(photo.receipt_date)
+            setChecking(photo.trip_id ? `trip:${photo.trip_id}` : `day:${photo.receipt_date}`)
           }}
         />
       )}

@@ -67,6 +67,29 @@ export const receiptPhotoStore = createTableStore({
   compare: newestFirst('receipt_date'),
 })
 
+// Confirmed purchases (supabase/014), newest first, with what each did
+// per item and their expenses; loaded with Receipts.
+export const tripStore = createTableStore({
+  name: 'shopping_trips',
+  table: 'shopping_trips',
+  query: (q) => q.order('trip_date', { ascending: false }),
+  compare: newestFirst('trip_date'),
+})
+
+export const tripItemStore = createTableStore({
+  name: 'shopping_trip_items',
+  table: 'shopping_trip_items',
+  query: (q) => q.order('position'),
+  compare: (a, b) => (a.position ?? 0) - (b.position ?? 0),
+})
+
+export const tripExpenseStore = createTableStore({
+  name: 'trip_expenses',
+  table: 'expenses',
+  query: (q) => q.not('trip_id', 'is', null),
+  accept: (row) => row.trip_id != null,
+})
+
 export const expenseCategoryStore = createTableStore({
   name: 'expense_categories',
   table: 'expense_categories',
@@ -114,7 +137,7 @@ export const expenseUsageStore = createTableStore({
 
 // Every expense store in use, so a write can update all of them.
 export const allExpenseStores = () =>
-  [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore].filter((s) => s.isStarted())
+  [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore, tripExpenseStore].filter((s) => s.isStarted())
 
 export const recipeStore = createTableStore({
   name: 'recipes',

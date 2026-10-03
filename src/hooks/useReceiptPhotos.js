@@ -11,10 +11,11 @@ const KEEP_FOR_UNDO = 7000
 export function useReceiptPhotos() {
   const { rows: photos, loaded } = receiptPhotoStore.useRows()
 
-  // Uploads the file, then records it for that shopping day. If recording
-  // fails, the uploaded file is removed again.
+  // Uploads the file, then records it for that shopping day (and confirmed
+  // purchase, if given). If recording fails, the uploaded file is removed
+  // again.
   const addPhoto = useCallback(
-    (file, date) =>
+    (file, date, tripId = null) =>
       attempt(
         () =>
           inSteps(async (onFail) => {
@@ -25,7 +26,7 @@ export function useReceiptPhotos() {
             const row = must(
               await supabase
                 .from('receipt_photos')
-                .insert([{ receipt_date: date, path, content_type: ready.type || null, file_name: file.name || null }])
+                .insert([{ receipt_date: date, trip_id: tripId, path, content_type: ready.type || null, file_name: file.name || null }])
                 .select()
                 .single()
             )

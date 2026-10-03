@@ -44,8 +44,7 @@ export function GroceryItemTile({ item, reason, pack, total, budgetMark, categor
   const save = async () => {
     const price = parseFloat(draft.price) || 0
     const patch = {
-      // Stock was already added for a checked-off item, so its quantity stays.
-      quantity: item.completed ? item.quantity : roundQuantity(draft.quantity, item.unit) || 1,
+      quantity: roundQuantity(draft.quantity, item.unit) || 1,
       price,
       price_qty: price > 0 ? parseFloat(draft.price_qty) || 1 : null,
       price_unit: price > 0 ? draft.price_unit : null,
@@ -63,7 +62,7 @@ export function GroceryItemTile({ item, reason, pack, total, budgetMark, categor
     <div
       className={cn(
         'relative rounded-3xl border p-3.5 shadow-sm transition-all duration-200',
-        item.completed ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : tone,
+        item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : tone,
         budgetMark === 'over' && 'opacity-60'
       )}
     >
@@ -78,50 +77,48 @@ export function GroceryItemTile({ item, reason, pack, total, budgetMark, categor
         <div
           className={cn(
             'w-9 h-9 rounded-2xl flex items-center justify-center mb-2 transition-all duration-200',
-            item.completed ? 'bg-[var(--color-primary)] text-white' : cn(c.solid, 'text-white')
+            item.in_cart ? 'bg-[var(--color-primary)] text-white' : cn(c.solid, 'text-white')
           )}
         >
-          {item.completed ? <Check size={18} /> : <CategoryIcon category={item.category_id} size={18} />}
+          {item.in_cart ? <Check size={18} /> : <CategoryIcon category={item.category_id} size={18} />}
         </div>
 
-        <p className={cn('text-sm font-bold leading-tight pr-4', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
+        <p className={cn('text-sm font-bold leading-tight pr-4', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
           {item.name}
         </p>
         <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-          {item.completed && `${item.quantity} ${item.unit} · `}
+          {item.in_cart && 'In the cart · '}
           {categoryName(item.category_id)}
         </p>
       </button>
 
-      {!item.completed && (
-        <div className="flex items-center gap-1 mt-1.5">
-          <button
-            onClick={() => changeQuantity(-1)}
-            disabled={savingQuantity || stepQuantity(item.quantity, item.unit, -1) === null}
-            aria-label={`Buy less ${item.name}`}
-            className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
-          >
-            <Minus size={12} />
-          </button>
-          <button
-            onClick={startEditing}
-            title="Type the quantity"
-            className={cn('min-w-12 px-1.5 text-center text-xs font-bold text-[var(--color-text)]', savingQuantity && 'opacity-50')}
-          >
-            {item.quantity} {item.unit}
-          </button>
-          <button
-            onClick={() => changeQuantity(1)}
-            disabled={savingQuantity}
-            aria-label={`Buy more ${item.name}`}
-            className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
-          >
-            <Plus size={12} />
-          </button>
-        </div>
-      )}
+      <div className="flex items-center gap-1 mt-1.5">
+        <button
+          onClick={() => changeQuantity(-1)}
+          disabled={savingQuantity || stepQuantity(item.quantity, item.unit, -1) === null}
+          aria-label={`Buy less ${item.name}`}
+          className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
+        >
+          <Minus size={12} />
+        </button>
+        <button
+          onClick={startEditing}
+          title="Type the quantity"
+          className={cn('min-w-12 px-1.5 text-center text-xs font-bold text-[var(--color-text)]', savingQuantity && 'opacity-50')}
+        >
+          {item.quantity} {item.unit}
+        </button>
+        <button
+          onClick={() => changeQuantity(1)}
+          disabled={savingQuantity}
+          aria-label={`Buy more ${item.name}`}
+          className="bg-[var(--color-surface-soft)] p-1 rounded-lg text-[var(--color-text)] disabled:opacity-40"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
 
-      {!item.completed && (label || budgetMark) && (
+      {!item.in_cart && (label || budgetMark) && (
         <div className="flex flex-wrap gap-1 mt-1">
           {label && <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full', label.className)}>{label.label}</span>}
           {budgetMark === 'fits' && <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full', STATUS_STYLES.ok.badge)}>Buy first</span>}
@@ -141,16 +138,12 @@ export function GroceryItemTile({ item, reason, pack, total, budgetMark, categor
               step={quantityStep(item.unit)}
               value={draft.quantity}
               onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
-              disabled={item.completed}
-              autoFocus={!item.completed}
+              autoFocus
               className="text-xs p-2"
               aria-label="Quantity"
             />
             <span className="text-[10px] text-[var(--color-text-muted)]">{item.unit}</span>
           </div>
-          {item.completed && (
-            <p className="text-[10px] text-[var(--color-text-muted)]">Uncheck it to change the quantity — its stock was already added.</p>
-          )}
           <PriceFields
             compact
             value={draft}

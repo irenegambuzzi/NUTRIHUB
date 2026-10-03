@@ -31,14 +31,14 @@ function rememberSort(sort) {
 // by category (categories in aisle order) or as "my route", where each
 // item can be put anywhere, whatever its category. Items not arranged
 // yet go where their category is.
-export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, onCheck }) {
+export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, onCheck, onConfirm }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   const { positions, savePositions } = useShopOrder()
   const defaultOrder = parents.map((p) => p.id)
 
-  const open = items.filter((i) => !i.completed)
-  const inCart = items.filter((i) => i.completed)
+  const open = items.filter((i) => !i.in_cart)
+  const inCart = items.filter((i) => i.in_cart)
   const groups = groupByCategory(open, positions, defaultOrder)
   const route = routeOrder(open, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
@@ -163,9 +163,15 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 
       {inCart.length > 0 && !arranging && (
         <section className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <h3 className="text-sm font-extrabold text-[var(--color-text-muted)] flex items-center gap-1.5">
-            <Check size={15} /> In the cart ({inCart.length})
-          </h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-extrabold text-[var(--color-text-muted)] flex items-center gap-1.5">
+              <Check size={15} /> In the cart ({inCart.length})
+            </h3>
+            <button onClick={onConfirm} className="text-xs font-bold px-3 py-2 rounded-2xl bg-[var(--color-primary)] text-white">
+              Confirm purchase
+            </button>
+          </div>
+          <p className="text-[10px] text-[var(--color-text-muted)]">Tap an item to take it out again. Nothing is added to the pantry or expenses until you confirm.</p>
           {inCart.map((item) => (
             <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} />
           ))}
@@ -179,6 +185,11 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
             <p className="text-[11px] text-[var(--color-text-muted)]">In the cart</p>
             <p className="text-lg font-mono font-extrabold text-[var(--color-accent)] leading-tight">{money(cartTotal)}</p>
           </div>
+          {inCart.length > 0 && (
+            <button onClick={onConfirm} className="shrink-0 text-xs font-bold px-3 py-2 rounded-xl bg-[var(--color-primary)] text-white">
+              Confirm
+            </button>
+          )}
           <div className="text-right text-[11px] text-[var(--color-text-muted)] leading-snug">
             <p>
               Still to get <b className="font-mono text-[var(--color-text-soft)]">{money(leftTotal)}</b>
@@ -196,26 +207,27 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
   )
 }
 
-// One big tile: tap to put it in the cart (or take it out again).
+// One big tile: tap to put it in the cart (or take it out again) — only
+// the cart changes; the purchase is confirmed separately.
 function ShopTile({ item, total, onCheck, showCategory = false }) {
   return (
     <button
       onClick={() => onCheck(item)}
       className={cn(
         'w-full flex items-center gap-3 rounded-2xl border px-4 py-3.5 text-left min-h-16 active:scale-[0.99] transition',
-        item.completed ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]'
+        item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]'
       )}
     >
       <span
         className={cn(
           'w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0',
-          item.completed ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-checkbox-border)]'
+          item.in_cart ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-checkbox-border)]'
         )}
       >
-        {item.completed && <Check size={16} />}
+        {item.in_cart && <Check size={16} />}
       </span>
       <span className="flex-1 min-w-0">
-        <span className={cn('block text-base font-bold truncate', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
+        <span className={cn('block text-base font-bold truncate', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
           {item.name}
         </span>
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">

@@ -7,6 +7,7 @@ const { QuickAdd } = await import('./QuickAdd')
 const { AddItemForm } = await import('./AddItemForm')
 const { ReceiptsView } = await import('./ReceiptsView')
 const { PriceCheck } = await import('./PriceCheck')
+const { ConfirmPurchase } = await import('./ConfirmPurchase')
 
 const parents = [
   { id: 'beverages', name: 'Beverages' },
@@ -15,7 +16,7 @@ const parents = [
 const categoryName = (id) => parents.find((p) => p.id === id)?.name ?? 'Uncategorized'
 const items = [
   { id: 'g1', name: 'Milk', category_id: 'beverages', quantity: 2, unit: 'btl', price: 1.2, completed: false, created_at: '1' },
-  { id: 'g2', name: 'Chips', category_id: 'snacks', quantity: 1, unit: 'pack', price: 0, completed: true, created_at: '2' },
+  { id: 'g2', name: 'Chips', category_id: 'snacks', quantity: 1, unit: 'pack', price: 0, completed: false, in_cart: true, created_at: '2' },
 ]
 const totalOf = (i) => (i.price ? i.price * i.quantity : 0)
 
@@ -31,6 +32,36 @@ describe('grocery components render', () => {
     expect(html).toContain('€10.00 left in budget')
     expect(html).toContain('By category')
     expect(html).toContain('My route')
+    expect(html).toContain('Confirm purchase')
+  })
+
+  it('confirm screen: every cart item, its questions, and Confirm locked until they are answered', () => {
+    const cart = [
+      { id: 'c1', name: 'Rice', category_id: 'snacks', quantity: 2, unit: 'pack', price: 1.5, price_qty: 1, price_unit: 'pack', in_cart: true },
+      { id: 'c2', name: 'Milk', category_id: 'beverages', quantity: 1, unit: 'btl', price: 1.2, price_qty: 1, price_unit: 'btl', in_cart: true },
+    ]
+    const pantry = [
+      { id: 'p1', name: 'Rice', unit: 'gr', current_stock: 100, min_stock: 0 },
+      { id: 'p2', name: 'Milk', unit: 'btl', current_stock: 2, min_stock: 0, expiry_date: '2020-01-01' },
+    ]
+    const html = renderToStaticMarkup(
+      <ConfirmPurchase
+        cartItems={cart}
+        pantryItems={pantry}
+        categoryName={categoryName}
+        totalOf={(i) => i.price * i.quantity}
+        updatePricing={async () => ({})}
+        updatePayer={async () => ({})}
+        toggleCart={async () => ({})}
+        onClose={() => {}}
+      />
+    )
+    expect(html).toContain('Shopping day')
+    expect(html).toContain('How many gr are in 1 pack?')
+    expect(html).toContain('have expired')
+    expect(html).toContain('Throw them away')
+    expect(html).toContain('Answer the 2 questions above to confirm.')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Confirm purchase · €4\.20/)
   })
 
   it('quick add', () => {

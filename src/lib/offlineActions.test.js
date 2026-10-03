@@ -39,22 +39,23 @@ describe('offline changes', () => {
     expect(ops[0].payload.opId).not.toBe(ops[1].payload.opId)
   })
 
-  it('checking off then unchecking offline leaves one "unchecked" change and the stock as it was', () => {
-    offline.queueToggle(entry)
-    expect(listed().completed).toBe(true)
-    expect(stock()).toBe(5)
-    offline.queueToggle(listed())
-    expect(listed().completed).toBe(false)
-    expect(stock()).toBe(2)
-    const toggles = getQueue().filter((op) => op.type === 'toggle' && op.key === 'g1')
-    expect(toggles).toHaveLength(1)
-    expect(toggles[0].payload.completed).toBe(false)
+  it('a tap in the shop only puts the item in the cart — no stock change', () => {
+    const before = stock()
+    offline.queueCart(entry, true)
+    expect(listed().in_cart).toBe(true)
+    expect(stock()).toBe(before)
+    const ops = getQueue().filter((op) => op.type === 'cart' && op.key === 'g1')
+    expect(ops).toHaveLength(1)
+    expect(ops[0].payload).toEqual({ id: 'g1', inCart: true })
   })
 
-  it('asks the same questions as online, from the copy on the phone', () => {
-    expect(offline.queueToggle({ ...entry, unit: 'pack' })).toHaveProperty('needsPackSize')
-    pantryStore.patchLocal(['p1'], { expiry_date: '2020-01-01' })
-    expect(offline.queueToggle(entry)).toHaveProperty('needsExpiryChoice')
+  it('putting it in and taking it out again offline leaves one "out of the cart" change', () => {
+    offline.queueCart(entry, true)
+    offline.queueCart(listed(), false)
+    expect(listed().in_cart).toBe(false)
+    const ops = getQueue().filter((op) => op.type === 'cart' && op.key === 'g1')
+    expect(ops).toHaveLength(1)
+    expect(ops[0].payload.inCart).toBe(false)
   })
 
   it('sends a stock tap with apply_stock_change, so a resend never counts twice', async () => {
@@ -71,5 +72,25 @@ describe('offline changes', () => {
     await vi.waitFor(() => expect(getQueue()).toHaveLength(0))
     expect(rpc).toHaveBeenCalledWith('apply_stock_change', { op_id: opId, item_id: 'p1', delta: 1, reason: 'restocked' })
     await flush()
+  })
+
+  it('sends a cart change as just in_cart, and an old queued check-off as a cart change', async () => {
+    resetQueueForTest({ keepHandlers: true })
+    const updates = []
+    const query = () => {
+      const q = { eq: () => q, then: (r) => Promise.resolve({ data: null, error: null }).then(r) }
+      return q
+    }
+    client.supabase = { from: (table) => ({ update: (patch) => (updates.push({ table, patch }), query()) }) }
+    setOnlineForTest(false)
+    offline.queueCart(entry, true)
+    const { enqueue } = await import('./offlineQueue')
+    enqueue('toggle', { id: 'g2', completed: true, options: {} })
+    setOnlineForTest(true)
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(0))
+    expect(updates).toEqual([
+      { table: 'grocery_items', patch: { in_cart: true } },
+      { table: 'grocery_items', patch: { in_cart: true } },
+    ])
   })
 })

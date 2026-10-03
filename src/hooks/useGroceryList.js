@@ -1,9 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { normName } from '../lib/grocery'
-import { isDurable, restockReason, roundQuantity } from '../lib/inventory'
-import { askDialog, showToast } from '../lib/feedback'
-import { expiredChoice, expiredDialog, packSizeDialog } from '../lib/purchaseDialogs'
+import { isDurable, restockReason } from '../lib/inventory'
 import { lineTotal } from '../lib/pricing'
 import { useGroceryItems } from './useGroceryItems'
 import { usePantryItems } from './usePantryItems'
@@ -19,11 +17,13 @@ const REASON_ORDERS = {
 }
 
 // The grocery list as the page shows it: each entry's reason and line
-// total, the totals and budget plan, and checking off with the questions
-// it may need.
+// total, the totals and budget plan, and the cart. Tapping an item only
+// puts it in the cart; the purchase itself is confirmed separately
+// (ConfirmPurchase).
 export function useGroceryList() {
   const grocery = useGroceryItems()
-  const { items, toggleComplete } = grocery
+  const { items, toggleCart } = grocery
+  const cartItems = useMemo(() => items.filter((i) => i.in_cart), [items])
   const { items: pantryItems } = usePantryItems()
   const { groceryBudget, saveGroceryBudget } = useBudget()
 
@@ -57,7 +57,7 @@ export function useGroceryList() {
           price: (a, b) => costOf(b) - costOf(a),
         }[mode] || ((a, b) => b.created_at.localeCompare(a.created_at))
       // Checked-off items always sink to the bottom.
-      return [...list].sort((a, b) => Number(a.completed) - Number(b.completed) || rank(a) - rank(b) || tie(a, b))
+      return [...list].sort((a, b) => Number(a.in_cart) - Number(b.in_cart) || rank(a) - rank(b) || tie(a, b))
     },
     [reasonOf, costOf]
   )
@@ -68,12 +68,13 @@ export function useGroceryList() {
   const durableItems = useMemo(() => items.filter(isDurable), [items])
 
   const listTotal = groceryItems.reduce((sum, i) => sum + costOf(i), 0)
-  const boughtTotal = groceryItems.filter((i) => i.completed).reduce((sum, i) => sum + costOf(i), 0)
+  // What's in the cart counts as bought for the budget.
+  const boughtTotal = groceryItems.filter((i) => i.in_cart).reduce((sum, i) => sum + costOf(i), 0)
   const payerTotals = PAID_BY_OPTIONS.map((o) => ({
     ...o,
     total: groceryItems.filter((i) => (i.payer || 'shared') === o.value).reduce((sum, i) => sum + costOf(i), 0),
   }))
-  const unpricedCount = groceryItems.filter((i) => !i.completed && !(Number(i.price) > 0)).length
+  const unpricedCount = groceryItems.filter((i) => !i.in_cart && !(Number(i.price) > 0)).length
   const unknownTotalCount = groceryItems.filter((i) => totalOf(i) === null).length
 
   // Budget planning ignores the chosen sort: open items are taken by need
@@ -85,7 +86,7 @@ export function useGroceryList() {
   const budgetPlan = useMemo(() => {
     if (!budgetActive) return null
     const open = groceryItems
-      .filter((i) => !i.completed)
+      .filter((i) => !i.in_cart)
       .sort((a, b) => PRIORITY.indexOf(reasonOf(a)) - PRIORITY.indexOf(reasonOf(b)) || costOf(a) - costOf(b))
     let remaining = groceryBudget - boughtTotal
     const marks = new Map()
@@ -102,29 +103,6 @@ export function useGroceryList() {
     const order = ['fits', 'unknown', 'over'].flatMap((mark) => open.filter((g) => marks.get(g.id) === mark))
     return { marks, order, remaining }
   }, [budgetActive, groceryBudget, boughtTotal, groceryItems, reasonOf, totalOf, costOf])
-
-  // Checking off may need answers first: the pack size when the list unit
-  // can't be converted to the pantry unit (e.g. 2 pack of rice counted in
-  // gr), and what to do with stock that has expired. Each is asked in a
-  // dialog, then the check-off is tried again with the answers.
-  const handleToggle = async (item) => {
-    const options = {}
-    for (;;) {
-      // The total follows a quantity changed in the expiry dialog.
-      const total = totalOf(options.quantity ? { ...item, quantity: options.quantity } : item)
-      const result = await toggleComplete(item, total, options)
-      if (result?.needsPackSize) {
-        const answer = await askDialog(packSizeDialog(result.needsPackSize))
-        if (!answer) return showToast({ message: `"${item.name}" wasn't ${item.completed ? 'unchecked' : 'checked off'}.` })
-        options.packSize = answer.packSize
-      } else if (result?.needsExpiryChoice) {
-        const answer = await askDialog(expiredDialog({ ...result.needsExpiryChoice, quantity: item.quantity, listUnit: item.unit }))
-        if (!answer) return showToast({ message: `"${item.name}" wasn't checked off.` })
-        options.expired = expiredChoice(answer)
-        options.quantity = roundQuantity(answer.quantity, item.unit) || item.quantity
-      } else return
-    }
-  }
 
   return {
     ...grocery,
@@ -147,6 +125,8 @@ export function useGroceryList() {
     budgetActive,
     overBudget,
     budgetPlan,
-    checkOff: handleToggle,
+    cartItems,
+    cartTotal: boughtTotal,
+    checkOff: toggleCart,
   }
 }
