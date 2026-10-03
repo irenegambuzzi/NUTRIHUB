@@ -52,6 +52,13 @@ export const categoryMemoryStore = createTableStore({
   compare: (a, b) => a.id.localeCompare(b.id),
 })
 
+// The order of the shop for shopping mode (supabase/012).
+export const shopOrderStore = createTableStore({
+  name: 'shop_order',
+  table: 'shop_order',
+  persist: 'shop_order',
+})
+
 export const expenseCategoryStore = createTableStore({
   name: 'expense_categories',
   table: 'expense_categories',

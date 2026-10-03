@@ -5,25 +5,51 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { isDurable } from '../../lib/inventory'
 import { money } from '../../lib/pricing'
-import { groupByCategory, mergeOrder, moveCategory, readCategoryOrder, saveCategoryOrder } from '../../lib/shopMode'
+import { groupByCategory, moveCategoryWrites, moveItemWrites, routeOrder } from '../../lib/shopMode'
+import { useShopOrder } from '../../hooks/useShopOrder'
+import { SortableList } from '../ui/SortableList'
 
-// In the shop: big tiles to tap, what's left on top grouped by category in
-// the order of the aisles (arranged once, remembered on this phone), what's
-// in the cart below, and a running total at the bottom of the screen.
+const SORT_KEY = 'nutrihub-shop-sort'
+function readSort() {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'route' ? 'route' : 'category'
+  } catch {
+    return 'category'
+  }
+}
+function rememberSort(sort) {
+  try {
+    localStorage.setItem(SORT_KEY, sort)
+  } catch {
+    // Not remembered; nothing else changes.
+  }
+}
+
+// In the shop: big tiles to tap, what's left on top and what's in the
+// cart below, with a running total at the bottom of the screen. What's
+// left is shown in the order of the shop, shared by both phones: either
+// by category (categories in aisle order) or as "my route", where each
+// item can be put anywhere, whatever its category. Items not arranged
+// yet go where their category is.
 export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, onCheck }) {
-  const [order, setOrder] = useState(readCategoryOrder)
+  const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
+  const { positions, savePositions } = useShopOrder()
+  const defaultOrder = parents.map((p) => p.id)
 
   const open = items.filter((i) => !i.completed)
   const inCart = items.filter((i) => i.completed)
-  const groups = groupByCategory(open, order, parents.map((p) => p.id))
+  const groups = groupByCategory(open, positions, defaultOrder)
+  const route = routeOrder(open, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
 
-  const move = (id, direction) => {
-    const next = mergeOrder(moveCategory(shownIds, id, direction), order)
-    setOrder(next)
-    saveCategoryOrder(next)
+  const setSort = (next) => {
+    setSortState(next)
+    rememberSort(next)
   }
+
+  const moveCategory = (id, direction) => savePositions(moveCategoryWrites(shownIds, id, direction, positions, defaultOrder))
+  const moveItem = (from, to) => savePositions(moveItemWrites(route, from, to, positions, defaultOrder))
 
   const sum = (list) => list.reduce((total, i) => total + costOf(i), 0)
   const cartTotal = sum(inCart)
@@ -34,57 +60,106 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 
   return (
     <div className="space-y-4 pb-24">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-bold text-[var(--color-text-soft)]">
           {open.length === 0 ? 'Everything is in the cart.' : `${open.length} to get`}
         </p>
-        {shownIds.length > 1 && (
-          <button
-            onClick={() => setArranging((a) => !a)}
-            className={cn(
-              'flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border',
-              arranging ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
-            )}
-          >
-            <ListOrdered size={14} /> {arranging ? 'Done' : 'Arrange aisles'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-0.5 text-xs font-bold" role="group" aria-label="Order">
+            {[
+              ['category', 'By category'],
+              ['route', 'My route'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setSort(value)}
+                aria-pressed={sort === value}
+                className={cn('px-3 py-1.5 rounded-full', sort === value ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {open.length > 1 && (
+            <button
+              onClick={() => setArranging((a) => !a)}
+              className={cn(
+                'flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border',
+                arranging ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+              )}
+            >
+              <ListOrdered size={14} /> {arranging ? 'Done' : 'Arrange'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {groups.map(({ categoryId, items: list }, index) => {
-        const c = inventoryCategoryColor(categoryId)
-        return (
-          <section key={categoryId ?? 'none'} className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className={cn('w-7 h-7 rounded-xl flex items-center justify-center text-white', c.solid)}>
-                <CategoryIcon category={categoryId} size={15} />
+      {arranging && (
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          {sort === 'route'
+            ? 'Drag the handle to put each item where you find it in the shop. Both phones get the same order.'
+            : 'Move categories up or down into the order of the aisles. Both phones get the same order.'}
+        </p>
+      )}
+
+      {sort === 'route' ? (
+        arranging ? (
+          <SortableList
+            items={route}
+            getKey={(item) => item.id}
+            itemLabel={(item) => item.name}
+            onMove={moveItem}
+            renderItem={(item) => (
+              <span className="flex items-center gap-2">
+                <CategoryIcon category={item.category_id} size={15} />
+                <span className="flex-1 min-w-0 text-sm font-semibold text-[var(--color-text)] truncate">{item.name}</span>
+                <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{item.category_id ? categoryName(item.category_id) : ''}</span>
               </span>
-              <h3 className="flex-1 text-sm font-extrabold text-[var(--color-text)]">{categoryId ? categoryName(categoryId) : 'Other'}</h3>
-              {arranging && categoryId && (
-                <span className="flex gap-1">
-                  <button
-                    onClick={() => move(categoryId, -1)}
-                    disabled={index === 0}
-                    aria-label={`Move ${categoryName(categoryId)} up`}
-                    className="p-2 rounded-xl bg-[var(--color-surface-soft)] text-[var(--color-text)] disabled:opacity-30"
-                  >
-                    <ArrowUp size={16} />
-                  </button>
-                  <button
-                    onClick={() => move(categoryId, 1)}
-                    disabled={index >= shownIds.length - 1}
-                    aria-label={`Move ${categoryName(categoryId)} down`}
-                    className="p-2 rounded-xl bg-[var(--color-surface-soft)] text-[var(--color-text)] disabled:opacity-30"
-                  >
-                    <ArrowDown size={16} />
-                  </button>
-                </span>
-              )}
-            </div>
-            {!arranging && list.map((item) => <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} />)}
-          </section>
+            )}
+          />
+        ) : (
+          <div className="space-y-2">
+            {route.map((item) => (
+              <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} showCategory />
+            ))}
+          </div>
         )
-      })}
+      ) : (
+        groups.map(({ categoryId, items: list }, index) => {
+          const c = inventoryCategoryColor(categoryId)
+          return (
+            <section key={categoryId ?? 'none'} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className={cn('w-7 h-7 rounded-xl flex items-center justify-center text-white', c.solid)}>
+                  <CategoryIcon category={categoryId} size={15} />
+                </span>
+                <h3 className="flex-1 text-sm font-extrabold text-[var(--color-text)]">{categoryId ? categoryName(categoryId) : 'Other'}</h3>
+                {arranging && categoryId && (
+                  <span className="flex gap-1">
+                    <button
+                      onClick={() => moveCategory(categoryId, -1)}
+                      disabled={index === 0}
+                      aria-label={`Move ${categoryName(categoryId)} up`}
+                      className="p-2.5 rounded-xl bg-[var(--color-surface-soft)] text-[var(--color-text)] disabled:opacity-30"
+                    >
+                      <ArrowUp size={18} />
+                    </button>
+                    <button
+                      onClick={() => moveCategory(categoryId, 1)}
+                      disabled={index >= shownIds.length - 1}
+                      aria-label={`Move ${categoryName(categoryId)} down`}
+                      className="p-2.5 rounded-xl bg-[var(--color-surface-soft)] text-[var(--color-text)] disabled:opacity-30"
+                    >
+                      <ArrowDown size={18} />
+                    </button>
+                  </span>
+                )}
+              </div>
+              {!arranging && list.map((item) => <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} />)}
+            </section>
+          )
+        })
+      )}
 
       {inCart.length > 0 && !arranging && (
         <section className="space-y-2 pt-2 border-t border-[var(--color-border)]">
@@ -122,7 +197,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 }
 
 // One big tile: tap to put it in the cart (or take it out again).
-function ShopTile({ item, total, onCheck }) {
+function ShopTile({ item, total, onCheck, showCategory = false }) {
   return (
     <button
       onClick={() => onCheck(item)}
@@ -143,7 +218,8 @@ function ShopTile({ item, total, onCheck }) {
         <span className={cn('block text-base font-bold truncate', item.completed ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
           {item.name}
         </span>
-        <span className="block text-xs text-[var(--color-text-muted)]">
+        <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+          {showCategory && <CategoryIcon category={item.category_id} size={12} />}
           {item.quantity} {item.unit}
         </span>
       </span>

@@ -27,6 +27,8 @@ describe('grocery components render', () => {
     expect(html).toContain('In the cart (1)')
     expect(html).toContain('€2.40')
     expect(html).toContain('€10.00 left in budget')
+    expect(html).toContain('By category')
+    expect(html).toContain('My route')
   })
 
   it('quick add', () => {
