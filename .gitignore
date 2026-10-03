@@ -26,3 +26,6 @@ dist-ssr
 
 # Claude Code local settings
 .claude/
+
+# One-off SQL with personal data, run by hand in Supabase
+supabase/oneoff/

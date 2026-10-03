@@ -22,7 +22,7 @@ export const CATEGORY_RULES = [
   [
     'produce',
     'produce:vegetables',
-    'vegetable|verdura|verdure|sayur|sayuran|eggplant|aubergine|melanzana|melanzane|terong|tomato|pomodor*|tomat|zucchina|zucchine|zucchini|courgette|carrot|carota|carote|wortel|bell pepper|peperone|peperoni|paprika merah|cucumber|cetriolo|cetrioli|timun|mentimun|broccoli|brokoli|cauliflower|cavolfiore|cavolfiori|cabbage|cavolo|cavoli|cavolo nero|cavolo cappuccio|verza|kubis|kol|spinach|spinaci|bayam|kangkung|green bean|fagiolini|buncis|mushroom|funghi|fungo|champignon|champignons|porcini|jamur|asparagus|asparagi|artichoke|carciofo|carciofi|celery|sedano|seledri|leek|porro|porri|pumpkin|zucca|labu|butternut|radish|ravanello|ravanelli|lobak|fennel|finocchio|finocchi|beetroot|barbabietola|barbabietole|bit merah|kale|cime di rapa|friarielli|bok choy|pak choi|pakcoy|sawi|caisim|tauge|bean sprout|okra|labu siam|chayote|corn on the cob|pannocchia|jagung manis|chili pepper|cabai|cabe|cabe rawit|rawit|spring onion|cipollotto|daun bawang|edamame|snow pea|taccole|sweet corn',
+    'vegetable|verdura|verdure|sayur|sayuran|eggplant|aubergine|melanzana|melanzane|terong|tomato|pomodor*|tomat|zucchina|zucchine|zucchini|courgette|carrot|carota|carote|wortel|bell pepper|peperone|peperoni|paprika merah|cucumber|cetriolo|cetrioli|timun|mentimun|broccoli|brokoli|cauliflower|cavolfiore|cavolfiori|cabbage|cavolo|cavoli|cavolo nero|cavolo cappuccio|verza|kubis|kol|spinach|spinaci|bayam|kangkung|green bean|fagiolini|buncis|mushroom|funghi|fungo|champignon|champignons|porcini|jamur|asparagus|asparagi|artichoke|carciofo|carciofi|celery|sedano|seledri|leek|porro|porri|pumpkin|zucca|labu|butternut|radish|ravanello|ravanelli|lobak|fennel|finocchio|finocchi|beetroot|barbabietola|barbabietole|bit merah|kale|cime di rapa|friarielli|bok choy|pak choi|pakcoy|sawi|caisim|tauge|bean sprout|okra|labu siam|chayote|corn on the cob|cavoletti|cavoletti di bruxelles|cavolini di bruxelles|brussels sprout|pannocchia|jagung manis|chili pepper|cabai|cabe|cabe rawit|rawit|spring onion|cipollotto|daun bawang|edamame|snow pea|taccole|sweet corn',
     { kind: 'vegetable|verdura|verdure|sayur|sayuran' },
   ],
   [
@@ -41,12 +41,12 @@ export const CATEGORY_RULES = [
   [
     'meat',
     'meat:poultry',
-    'chicken|pollo|ayam|poultry|turkey|tacchino|duck|anatra|bebek|chicken breast|petto di pollo|dada ayam|paha ayam|chicken thigh|cosce di pollo|chicken wing|ali di pollo|sayap ayam|fesa di tacchino|amadori|aia|whole chicken|pollo intero|ayam utuh|ceker',
+    'chicken|pollo|ayam|poultry|sovracosce|sovracoscia|sovracosce di pollo|fusi di pollo|fusello|cordon bleu|cotoletta di pollo|turkey|tacchino|duck|anatra|bebek|chicken breast|petto di pollo|dada ayam|paha ayam|chicken thigh|cosce di pollo|chicken wing|ali di pollo|sayap ayam|fesa di tacchino|amadori|aia|whole chicken|pollo intero|ayam utuh|ceker',
   ],
   [
     'meat',
     'meat:beef',
-    'beef|manzo|sapi|daging|daging sapi|steak|bistecca|fiorentina|tagliata|meat|carne|pork|maiale|babi|lamb|agnello|kambing|mutton|veal|vitello|vitellone|mince|minced meat|carne macinata|macinato|daging giling|ground beef|sausage|salsiccia|salsicce|burger|hamburger|ribs|costine|costolette|braciola|braciole|filetto|fillet|scaloppine|spezzatino|arrosto|roast beef|roastbeef|rendang|iga|bacon|pancetta|guanciale|lardo|cotechino|zampone|polpette|meatballs|bakso|chorizo',
+    'beef|manzo|sapi|daging|daging sapi|bovino|scottona|vitellone di scottona|costata|costata di scottona|battuta|battuta di fassona|fassona|tartare|fettine|fettine di manzo|pizzaiola|steak|bistecca|fiorentina|tagliata|meat|carne|pork|maiale|babi|lamb|agnello|kambing|mutton|veal|vitello|vitellone|mince|minced meat|carne macinata|macinato|daging giling|ground beef|sausage|salsiccia|salsicce|burger|hamburger|ribs|costine|costolette|braciola|braciole|filetto|fillet|scaloppine|spezzatino|arrosto|roast beef|roastbeef|rendang|iga|bacon|pancetta|guanciale|lardo|cotechino|zampone|polpette|meatballs|bakso|chorizo',
     { kind: 'burger|hamburger' },
   ],
   [
@@ -91,7 +91,7 @@ export const CATEGORY_RULES = [
   [
     'deli',
     'deli:ready',
-    'ready meal|piatto pronto|piatti pronti|hummus|tzatziki|guacamole|sushi|insalata di riso|insalata russa|soup|zuppa|minestra|minestrone|vellutata|sup|lasagna pronta|pesto fresco|olive condite|gastronomia',
+    'ready meal|piatto pronto|piatti pronti|onigiri|crema di funghi|crema di funghi porcini|crema di zucca|crema di verdure|crema di asparagi|crema di piselli|crema di pomodoro|crema di carote|crema di ceci|crema di legumi|vellutata di|hummus|tzatziki|guacamole|sushi|insalata di riso|insalata russa|soup|zuppa|minestra|minestrone|vellutata|sup|lasagna pronta|pesto fresco|olive condite|gastronomia',
     { kind: 'soup|zuppa|minestra|minestrone|vellutata|sup' },
   ],
 
@@ -119,13 +119,13 @@ export const CATEGORY_RULES = [
   [
     'frozen',
     'frozen:vegetables',
-    'frozen vegetable|frozen veg|frozen pea|frozen spinach|frozen broccoli|frozen bean|frozen corn|frozen berry|frozen fruit|verdure surgelate|piselli surgelati|spinaci surgelati|minestrone surgelato|frutti di bosco surgelati|sayur beku|orogel',
+    'frozen vegetable|frozen veg|mirtilli surgelati|fragole surgelate|lamponi surgelati|frutta surgelata|frutti rossi surgelati|frozen pea|frozen spinach|frozen broccoli|frozen bean|frozen corn|frozen berry|frozen fruit|verdure surgelate|piselli surgelati|spinaci surgelati|minestrone surgelato|frutti di bosco surgelati|sayur beku|orogel',
   ],
   [
     'frozen',
     'frozen:meals',
     'frozen|surgelato|surgelati|surgelata|surgelate|beku|frozen food|frozen meal|frozen pizza|pizza surgelata|pizza|pizze|nugget|chicken nugget|naget|sofficini|french fries|patatine fritte|frozen fries|patatine surgelate|kentang goreng beku|frozen dumplings|ravioli cinesi|gyoza|dimsum|spring rolls|involtini primavera|lasagne surgelate|findus|buitoni|cameo pizza|so good|fiesta nugget|champ nugget|bernardi nugget',
-    { kind: 'pizza|nugget|naget' },
+    { kind: 'pizza|nugget|naget|surgelato|surgelati|surgelata|surgelate|frozen' },
   ],
   ['frozen', 'frozen:fish', 'frozen fish|frozen shrimp|frozen prawn|frozen seafood|pesce surgelato|gamberi surgelati|fish finger|fish stick|bastoncini|bastoncini di pesce|capitan findus|fish fillet frozen'],
 
@@ -133,7 +133,7 @@ export const CATEGORY_RULES = [
   [
     'pantry-staples',
     'pantry-staples:grains',
-    'rice|riso|beras|nasi|basmati|jasmine rice|arborio|carnaroli|riso integrale|brown rice|oats|oat|avena|fiocchi di avena|quinoa|couscous|bulgur|farro|orzo perlato|barley|polenta|semolina|semola|millet|miglio|buckwheat|grano saraceno|scotti|gallo riso|beras merah|ketan',
+    'rice|riso|beras|nasi|risotto|risotto alla milanese|risotto pronto|basmati|jasmine rice|arborio|carnaroli|riso integrale|brown rice|oats|oat|avena|fiocchi di avena|quinoa|couscous|bulgur|farro|orzo perlato|barley|polenta|semolina|semola|millet|miglio|buckwheat|grano saraceno|scotti|gallo riso|beras merah|ketan',
   ],
   [
     'pantry-staples',
@@ -190,7 +190,7 @@ export const CATEGORY_RULES = [
   [
     'canned',
     'canned:fish-meat',
-    'tuna|tonno|tonno in scatola|tonno all olio|tonno sott olio|tonno al naturale|tuna in oil|tuna in olive oil|tuna in brine|canned tuna|sardine|sarden|sardines|sgombro in scatola|canned mackerel|kornet|corned beef|carne in scatola|simmenthal|spam|rio mare|nostromo|mareblu|callipo|as do mar|pronas|botan|abc sarden|ayam brand',
+    'tuna|tonno|tonno in scatola|tonno all olio d oliva|tonno all olio di oliva|tonno all olio extra vergine|tonno in olio d oliva|tonno in olio di oliva|tonno all olio|tonno sott olio|tonno al naturale|tuna in oil|tuna in olive oil|tuna in brine|canned tuna|sardine|sarden|sardines|sgombro in scatola|canned mackerel|kornet|corned beef|carne in scatola|simmenthal|spam|rio mare|nostromo|mareblu|callipo|as do mar|pronas|botan|abc sarden|ayam brand',
   ],
   [
     'canned',
@@ -230,7 +230,7 @@ export const CATEGORY_RULES = [
   [
     'beverages',
     'beverages:alcohol',
-    'beer|birra|bir|radler|lager|ipa|wine|vino|vino rosso|vino bianco|red wine|white wine|rose wine|prosecco|spumante|champagne|lambrusco|chianti|barolo|montepulciano|primitivo|nero d avola|spritz|aperol|campari|martini|vermouth|gin|vodka|rum|whisky|whiskey|tequila|grappa|limoncello|amaro|amaretto|sambuca|baileys|liquore|liquor|cider|sidro|sake|soju|peroni|moretti|birra moretti|menabrea|ichnusa|nastro azzurro|heineken|corona|beck|tennent|bintang|anker|guinness',
+    'beer|birra|bir|radler|lager|ipa|wine|vino|vino rosso|vino bianco|red wine|white wine|rose wine|prosecco|spumante|champagne|lambrusco|chianti|barolo|montepulciano|primitivo|nero d avola|vermentino|falanghina|sangiovese|nebbiolo|pinot grigio|pinot nero|chardonnay|merlot|cabernet|sauvignon|negroamaro|aglianico|verdicchio|trebbiano|glera|moscato|lugana|soave|valpolicella|amarone|brunello|franciacorta|gewurztraminer|muller thurgau|spritz|aperol|campari|martini|vermouth|gin|vodka|rum|whisky|whiskey|tequila|grappa|limoncello|amaro|amaretto|sambuca|baileys|liquore|liquor|cider|sidro|sake|soju|peroni|moretti|birra moretti|menabrea|ichnusa|nastro azzurro|heineken|corona|beck|tennent|bintang|anker|guinness',
     { kind: 'beer|birra|bir|wine|vino' },
   ],
 
@@ -244,7 +244,7 @@ export const CATEGORY_RULES = [
   [
     'snacks',
     'snacks:savory',
-    'chips|crisps|patatine|keripik|kripik|potato chips|tortilla chips|nachos|popcorn|pop corn|pretzel|salatini|crackers|cracker|crackers salati|cheese crackers|crackers al formaggio|tuc|ritz|pringles|san carlo|amica chips|lays|doritos|cheetos|fonzies|taralli snack|rustichelle|chitato|qtela|lays indonesia|taro|chiki|kusuka|piattos|jetz|potabee|kerupuk|krupuk|emping|rempeyek|peyek|makaroni pedas|misura|snack|stuzzichini|olive snack',
+    'chips|crisps|patatine|keripik|kripik|chips di verdure|vegetable chips|nuvole di drago|chips di gamberi|prawn crackers|krupuk udang|kerupuk udang|potato chips|tortilla chips|nachos|popcorn|pop corn|pretzel|salatini|crackers|cracker|crackers salati|cheese crackers|crackers al formaggio|tuc|ritz|pringles|san carlo|amica chips|lays|doritos|cheetos|fonzies|taralli snack|rustichelle|chitato|qtela|lays indonesia|taro|chiki|kusuka|piattos|jetz|potabee|kerupuk|krupuk|emping|rempeyek|peyek|makaroni pedas|misura|snack|stuzzichini|olive snack',
     { kind: 'chips|crisps|patatine|keripik|crackers|cracker|kerupuk|krupuk|popcorn|pretzel' },
   ],
   [

@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react'
+import { CheckSquare, Square, Trash2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Input, Select } from '../ui/Field'
 import { cn } from '../../lib/cn'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
-import { useStockLogs } from '../../hooks/usePantryItems'
+import { deleteStockLogs, useStockLogs } from '../../hooks/usePantryItems'
 
 const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded' }
 
-// Filters combine: item + reason + date range.
+// Filters combine: item + reason + date range. Entries can be deleted one
+// by one or several at once (Select), with Undo; that removes only the
+// record, never stock, expenses or items.
 export function HistoryView() {
   const logs = useStockLogs()
   const [itemFilter, setItemFilter] = useState('all')
@@ -27,6 +30,26 @@ export function HistoryView() {
   })
 
   const anyFilter = itemFilter !== 'all' || reasonFilter !== 'all' || from || to
+
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState(() => new Set())
+  // Only entries still shown count (a filter may have hidden some).
+  const chosen = filtered.filter((log) => selected.has(log.id)).map((log) => log.id)
+  const toggle = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const stopSelecting = () => {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+  const deleteChosen = async () => {
+    const { error } = await deleteStockLogs(chosen)
+    if (!error) stopSelecting()
+  }
 
   return (
     <div className="space-y-3">
@@ -72,6 +95,40 @@ export function HistoryView() {
         )}
       </Card>
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] text-[var(--color-text-muted)] flex-1 min-w-48">
+          Deleting history only removes the record — stock, expenses and items stay as they are.
+        </p>
+        {filtered.length > 0 &&
+          (selecting ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelected(chosen.length === filtered.length ? new Set() : new Set(filtered.map((log) => log.id)))}
+                className="text-[11px] font-bold text-[var(--color-text-muted)]"
+              >
+                {chosen.length === filtered.length ? 'Select none' : 'Select all shown'}
+              </button>
+              <button
+                onClick={deleteChosen}
+                disabled={chosen.length === 0}
+                className="flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full bg-rose-500 text-white disabled:opacity-40"
+              >
+                <Trash2 size={12} /> Delete {chosen.length || ''}
+              </button>
+              <button onClick={stopSelecting} aria-label="Stop selecting" className="p-1 text-[var(--color-icon-muted)] hover:text-[var(--color-text)]">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSelecting(true)}
+              className="flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)]"
+            >
+              <CheckSquare size={12} /> Select
+            </button>
+          ))}
+      </div>
+
       {filtered.length === 0 ? (
         <Card className="text-center">
           <p className="text-xs text-[var(--color-text-muted)]">{logs.length === 0 ? 'No stock changes recorded yet.' : 'No changes match these filters.'}</p>
@@ -81,7 +138,16 @@ export function HistoryView() {
           {filtered.map((log) => {
             const change = Number(log.change)
             return (
-              <div key={log.id} className="flex items-center gap-3 py-2 text-xs">
+              <div
+                key={log.id}
+                onClick={selecting ? () => toggle(log.id) : undefined}
+                className={cn('flex items-center gap-3 py-2 text-xs', selecting && 'cursor-pointer')}
+              >
+                {selecting && (
+                  <span role="checkbox" aria-checked={selected.has(log.id)} aria-label={`Select ${log.item_name}`} className="text-[var(--color-primary)] shrink-0">
+                    {selected.has(log.id) ? <CheckSquare size={16} /> : <Square size={16} className="text-[var(--color-icon-muted)]" />}
+                  </span>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-[var(--color-text)] truncate">{log.item_name}</p>
                   <p className="text-[10px] text-[var(--color-text-muted)]">
@@ -96,6 +162,15 @@ export function HistoryView() {
                 <span className="font-mono text-[var(--color-text-muted)] w-20 text-right">
                   → {Number(log.new_stock)} {log.unit}
                 </span>
+                {!selecting && (
+                  <button
+                    onClick={() => deleteStockLogs([log.id])}
+                    aria-label={`Delete this entry for ${log.item_name}`}
+                    className="p-1 text-[var(--color-icon-muted)] hover:text-rose-400 shrink-0"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             )
           })}

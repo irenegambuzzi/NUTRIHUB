@@ -49,4 +49,10 @@ describe('every page renders inside the layout', () => {
     expect(html).toContain('>Week</a>')
     expect(html).toContain('>Profiles</a>')
   })
+
+  it('explains that deleting history keeps stock as it is', async () => {
+    const { HistoryView } = await import('../components/inventory/HistoryView')
+    const html = renderToStaticMarkup(<HistoryView />)
+    expect(html).toContain('Deleting history only removes the record')
+  })
 })

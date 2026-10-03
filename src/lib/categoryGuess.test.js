@@ -64,6 +64,36 @@ describe('guessCategory', () => {
     expect(sub("Tonno all'olio")).toBe('canned:fish-meat')
   })
 
+  it('lets the item win over words that only describe it (after di / al / all\' …)', () => {
+    expect(sub('Chips di verdure al sale marino')).toBe('snacks:savory')
+    expect(sub('Chips di patate al rosmarino')).toBe('snacks:savory')
+    expect(sub('Patatine al sale marino')).toBe('snacks:savory')
+    expect(sub('Crema di funghi porcini')).toBe('deli:ready')
+    expect(sub('Crema di zucca')).toBe('deli:ready')
+    expect(sub('Vellutata di carote')).toBe('deli:ready')
+    expect(sub("Tonno all'olio d'oliva")).toBe('canned:fish-meat')
+    expect(sub("Tonno all'olio di oliva Rio Mare")).toBe('canned:fish-meat')
+    expect(sub('Tonno all olio extra vergine')).toBe('canned:fish-meat')
+    expect(sub('Olio di oliva')).toBe('pantry-staples:oils')
+    expect(sub('Sale marino')).toBe('pantry-staples:spices')
+  })
+
+  it('knows the names from a real Lidl receipt', () => {
+    expect(sub('Costata di scottona')).toBe('meat:beef')
+    expect(sub('Battuta di bovino')).toBe('meat:beef')
+    expect(sub('Fettine alla pizzaiola di scottona')).toBe('meat:beef')
+    expect(sub('Sovracosce di pollo')).toBe('meat:poultry')
+    expect(sub('Cordon bleu XXL')).toBe('meat:poultry')
+    expect(sub('Vermentino di Sardegna')).toBe('beverages:alcohol')
+    expect(sub('Falanghina IGP')).toBe('beverages:alcohol')
+    expect(sub('Onigiri Mowi')).toBe('deli:ready')
+    expect(sub('Nuvole di drago piccanti')).toBe('snacks:savory')
+    expect(sub('Cavoletti di Bruxelles')).toBe('produce:vegetables')
+    expect(sub('Risotto alla milanese')).toBe('pantry-staples:grains')
+    expect(parent('Mirtilli surgelati')).toBe('frozen')
+    expect(parent('Polpette di bovino surgelate')).toBe('meat')
+  })
+
   it('accepts ambiguous short words only as the whole name', () => {
     expect(sub('Air')).toBe('beverages:water')
     expect(sub('Air 1,5 L')).toBe('beverages:water')

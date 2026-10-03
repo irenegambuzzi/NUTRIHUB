@@ -76,9 +76,11 @@ const INDEX = buildIndex(CATEGORY_RULES)
 const MAX_PHRASE = 5
 
 // Words after these describe the item ("torta di mele", "budino al
-// cioccolato", "susu rasa coklat"), so they count a little less than the
-// words before them.
-const LINKS = new Set(['di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', 'al', 'alla', 'allo', 'ai', 'agli', 'alle', 'con', 'with', 'of', 'flavour', 'flavor', 'gusto', 'rasa', 'dengan'])
+// cioccolato", "tonno all'olio d'oliva", "susu rasa coklat"): however
+// long, they count less than one word before them, so the item itself
+// wins ("chips … al sale marino" are chips, not salt).
+const LINKS = new Set(['di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', 'al', 'all', 'alla', 'allo', 'ai', 'agli', 'alle', 'con', 'with', 'of', 'flavour', 'flavor', 'gusto', 'rasa', 'dengan'])
+const DESCRIBING = 0.75
 
 // Every keyword found in the name, as spans of its words. Weak keywords
 // count only when they are the whole name.
@@ -93,14 +95,15 @@ function findMatches(tokens) {
         for (const e of INDEX.phrases.get(key) || []) {
           if (e.weak && len !== tokens.length) continue
           // "pop corn" matching "popcorn" counts as two words.
-          const score = Math.max(e.words, len) + (e.kind ? 0.5 : 0) - (e.weak ? 0.5 : 0) - (describes(start) ? 0.25 : 0)
+          const full = Math.max(e.words, len) + (e.kind ? 0.5 : 0) - (e.weak ? 0.5 : 0)
+          const score = describes(start) ? Math.min(full, DESCRIBING) : full
           matches.push({ rule: e.rule, start, end: start + len, score })
         }
       }
     }
     for (const s of INDEX.stems) {
       if (tokens[start].startsWith(s.stem) && (!s.weak || tokens.length === 1)) {
-        matches.push({ rule: s.rule, start, end: start + 1, score: describes(start) ? 0.75 : 1 })
+        matches.push({ rule: s.rule, start, end: start + 1, score: describes(start) ? DESCRIBING : 1 })
       }
     }
   }

@@ -187,3 +187,22 @@ export function usePantryItems() {
 export function useStockLogs() {
   return stockLogStore.useRows().rows
 }
+
+// Deletes history entries right away, with Undo. Only the record goes:
+// stock, expenses and items stay exactly as they are (nothing else reads
+// the history — unchecking a purchase works from the grocery entry).
+export function deleteStockLogs(ids) {
+  return deleteWithUndo({
+    message: ids.length === 1 ? 'Deleted' : `${ids.length} entries deleted`,
+    remove: async () => {
+      const rows = must(await supabase.from('stock_logs').delete().in('id', ids).select())
+      stockLogStore.removeLocal(ids)
+      return rows
+    },
+    restore: async (rows) => {
+      if (rows.length) must(await supabase.from('stock_logs').upsert(rows))
+      await stockLogStore.refresh()
+    },
+    onFail: stockLogStore.refresh,
+  })
+}
