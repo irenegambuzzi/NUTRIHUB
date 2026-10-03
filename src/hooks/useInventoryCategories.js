@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { attempt, must } from '../lib/db'
+import { toastLoadError } from '../lib/feedback'
 import { CATEGORY_NAME_OVERRIDES, DURABLE_CATEGORY_IDS, HIDDEN_CATEGORY_IDS } from '../data/constants'
 
 // Same list (and names) everywhere the app offers categories.
@@ -13,9 +15,10 @@ function visibleCategories(rows) {
 export function useInventoryCategories() {
   const [categories, setCategories] = useState([])
 
-  const fetchCategories = useCallback(async () => {
-    const { data } = await supabase.from('inventory_categories').select('*').order('sort_order').order('name')
-    if (data) setCategories(visibleCategories(data))
+  const fetchCategories = useCallback(async function fetchCategories() {
+    const { data, error } = await supabase.from('inventory_categories').select('*').order('sort_order').order('name')
+    if (error) return toastLoadError(error, fetchCategories, 'inventory_categories')
+    setCategories(visibleCategories(data))
   }, [])
 
   useEffect(() => {
@@ -41,12 +44,18 @@ export function useInventoryCategories() {
 
   const addSubcategory = useCallback(async (parentId, name) => {
     const sortOrder = (subsByParent.get(parentId)?.length || 0) + 1
-    const { data, error } = await supabase
-      .from('inventory_categories')
-      .insert([{ name: name.trim(), parent_id: parentId, type: 'sub', sort_order: sortOrder }])
-      .select()
-      .single()
-    if (!error && data) setCategories((prev) => [...prev, data])
+    const { data, error } = await attempt(
+      async () =>
+        must(
+          await supabase
+            .from('inventory_categories')
+            .insert([{ name: name.trim(), parent_id: parentId, type: 'sub', sort_order: sortOrder }])
+            .select()
+            .single()
+        ),
+      { retry: false }
+    )
+    if (!error) setCategories((prev) => [...prev, data])
     return { data, error }
   }, [subsByParent])
 

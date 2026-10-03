@@ -20,10 +20,8 @@ export function RecipesPage() {
       calories: parseInt(calories, 10) || 400,
       instructions,
     })
-    if (error) {
-      alert('Could not save the recipe: ' + error.message)
-      return
-    }
+    // On failure the toast explains and the form keeps what was typed.
+    if (error) return
     setTitle('')
     setCalories('')
     setInstructions('')
@@ -74,7 +72,7 @@ function RecipeCard({ recipe, onDelete }) {
         </div>
       )}
       <button
-        onClick={() => window.confirm(`Delete "${recipe.title}"?`) && onDelete(recipe.id)}
+        onClick={() => onDelete(recipe)}
         className="absolute top-3 right-3 text-[var(--color-icon-muted)] hover:text-rose-400 transition"
       >
         <Trash2 size={15} />

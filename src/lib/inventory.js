@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { followUp, must } from './db'
 import { DURABLE_CATEGORY_IDS, DURABLE_EXPENSE_CATEGORY } from '../data/constants'
 import { priceFields } from './pricing'
 import { normalizeUnit, unitFactor } from './units'
@@ -129,50 +130,62 @@ export function toBaseQuantity(item, quantity, rawUnit) {
   return factor === null ? null : qty * factor
 }
 
+// The Groceries expense category's id, or null if it's missing (the
+// expense is then saved without a category).
 export async function getGroceriesCategoryId() {
-  const { data } = await supabase.from('expense_categories').select('id').eq('name', 'Groceries').maybeSingle()
-  return data?.id ?? null
+  return must(await supabase.from('expense_categories').select('id').eq('name', 'Groceries').maybeSingle())?.id ?? null
 }
 
 // Expense category for a durable purchase: the "Home & Appliances"
 // sub-category named like the item's sub-category if there is one, else
-// "Home & Appliances" itself (created if the migration hasn't run yet).
+// "Home & Appliances" itself. The app never creates it (two phones
+// checking off at once could race); supabase/008_durable_category.sql does.
 export async function getDurableExpenseCategoryId(subcategoryId) {
-  const { data: rows } = await supabase.from('expense_categories').select('id, name, parent_id')
-  const parent = rows?.find((c) => c.name === DURABLE_EXPENSE_CATEGORY && !c.parent_id)
-  if (subcategoryId && parent) {
-    const { data: sub } = await supabase.from('inventory_categories').select('name').eq('id', subcategoryId).maybeSingle()
-    const match = rows.find((c) => c.parent_id === parent.id && c.name === sub?.name)
-    if (match) return match.id
+  const subName = subcategoryId
+    ? must(await supabase.from('inventory_categories').select('name').eq('id', subcategoryId).maybeSingle())?.name
+    : null
+  const names = [DURABLE_EXPENSE_CATEGORY, subName].filter(Boolean)
+  const rows = must(await supabase.from('expense_categories').select('id, name, parent_id').in('name', names))
+  return pickDurableCategory(rows, subName)
+}
+
+export function pickDurableCategory(rows, subName) {
+  const parent = rows.find((c) => c.name === DURABLE_EXPENSE_CATEGORY && !c.parent_id)
+  if (!parent) {
+    throw new Error(`The "${DURABLE_EXPENSE_CATEGORY}" expense category is missing — run supabase/008_durable_category.sql in Supabase.`)
   }
-  if (parent) return parent.id
-  const { data: created } = await supabase.from('expense_categories').insert([{ name: DURABLE_EXPENSE_CATEGORY }]).select().single()
-  return created?.id ?? null
+  return rows.find((c) => c.parent_id === parent.id && c.name === subName)?.id ?? parent.id
 }
 
 export const isDurable = (row) => DURABLE_CATEGORY_IDS.includes(row?.category_id)
 
 export async function logStockChange(item, change, newStock, reason) {
   if (!change) return
-  await supabase.from('stock_logs').insert([
-    { item_id: item.id, item_name: item.name, change, new_stock: newStock, unit: item.unit, reason },
-  ])
+  must(
+    await supabase.from('stock_logs').insert([{ item_id: item.id, item_name: item.name, change, new_stock: newStock, unit: item.unit, reason }])
+  )
+}
+
+// The stock history entry and shopping list update after a stock change.
+// They don't undo the change if they fail; the toast offers Retry.
+export async function afterStockChange(item, change, newStock, reason) {
+  await followUp('the stock history', () => logStockChange(item, change, newStock, reason))
+  await followUp('the shopping list', () => syncShoppingForItem(item))
 }
 
 // Adds `delta` to an item's stock in one database statement (never below
 // 0), so two people changing it at once can't overwrite each other.
-// Logs the change and re-syncs the shopping list; returns the updated row.
+// Throws if the stock wasn't changed; then logs the change and re-syncs
+// the shopping list. Returns the updated row.
 export async function changeStock(item, delta, reason) {
-  const { data, error } = await supabase.rpc('increment_stock', { item_id: item.id, delta })
-  if (error) return { error }
-  if (!data?.id) return { error: { message: 'Item not found.' } }
+  const data = must(await supabase.rpc('increment_stock', { item_id: item.id, delta }))
+  if (!data?.id) throw new Error(`"${item.name}" is no longer in the pantry.`)
   const updated = normalizeItem(data)
   const newStock = Number(updated.current_stock)
   // Stock that hit 0 may have dropped by less than asked.
   const change = newStock === 0 && delta < 0 ? Math.max(delta, -(Number(item.current_stock) || 0)) : delta
-  await logStockChange(updated, change, newStock, reason)
-  await syncShoppingForItem(updated)
-  return { data: updated, error: null }
+  await afterStockChange(updated, change, newStock, reason)
+  return updated
 }
 
 // Columns added by supabase/006_backfill_inventory_data.sql and
@@ -213,22 +226,21 @@ export async function updateRows(table, ids, patch) {
 // Keeps the grocery list in step with stock: a Low, Out or Expired item
 // gets one auto-generated entry, and that entry disappears once the item
 // is fine again. Manually added entries are never touched.
+// Throws if the list couldn't be read or changed.
 export async function syncShoppingForItem(item) {
-  const { data: open } = await supabase
-    .from('grocery_items')
-    .select('id, auto_generated')
-    .eq('pantry_item_id', item.id)
-    .eq('completed', false)
+  const open = must(
+    await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', item.id).eq('completed', false)
+  )
 
   if (!restockReason(item)) {
-    const autoIds = (open || []).filter((g) => g.auto_generated).map((g) => g.id)
-    if (autoIds.length) await supabase.from('grocery_items').delete().in('id', autoIds)
+    const autoIds = open.filter((g) => g.auto_generated).map((g) => g.id)
+    if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
   }
 
-  if (open && open.length) return
+  if (open.length) return
   const { quantity, unit } = suggestedPurchase(item)
-  await insertRows('grocery_items', [
+  const result = await insertRows('grocery_items', [
     {
       name: item.name,
       category_id: item.category_id,
@@ -242,4 +254,5 @@ export async function syncShoppingForItem(item) {
       auto_generated: true,
     },
   ])
+  must(result)
 }

@@ -15,6 +15,8 @@ import { inventoryCategoryColor } from '../lib/categoryColors'
 import { isDurable, quantityStep, restockReason, roundQuantity, syncShoppingForItem } from '../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../lib/inventoryStyles'
 import { guessCategory } from '../lib/categoryGuess'
+import { attempt } from '../lib/db'
+import { showToast } from '../lib/feedback'
 import { parseLocalDate } from '../lib/week'
 import { formatUnitPrice, lineTotal, money, priceUnitOptions } from '../lib/pricing'
 import { PriceFields } from '../components/inventory/PriceFields'
@@ -86,7 +88,6 @@ export function GroceryPage() {
   const [payer, setPayer] = useState('shared')
   const [bulkScope, setBulkScope] = useState('restock')
   const [syncing, setSyncing] = useState(false)
-  const [message, setMessage] = useState('')
 
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
   const pantryByName = useMemo(() => new Map(pantryItems.map((p) => [normName(p.name), p])), [pantryItems])
@@ -197,15 +198,12 @@ export function GroceryPage() {
       .map(([date, list]) => ({ date, list, total: list.reduce((sum, e) => sum + Number(e.amount || 0), 0) }))
   }, [groceryExpenses])
 
-  const handleClearCompleted = () => {
-    if (window.confirm(`Remove ${completedCount} checked item${completedCount === 1 ? '' : 's'} from the list?`)) {
-      clearCompleted()
-    }
-  }
-
   const handleAddNeeded = async () => {
     setSyncing(true)
-    for (const item of needsBuying) await syncShoppingForItem(item)
+    // Safe to repeat: items already on the list are skipped.
+    await attempt(async () => {
+      for (const item of needsBuying) await syncShoppingForItem(item)
+    })
     setSyncing(false)
   }
 
@@ -261,11 +259,8 @@ export function GroceryPage() {
       payer,
       pantryItemId: known?.id ?? null,
     })
-    if (error) {
-      setMessage('Could not save the item: ' + error.message)
-      return
-    }
-    setMessage('')
+    // On failure the toast explains and the form keeps what was typed.
+    if (error) return
     setName('')
     setPriceDraft({ price: '', price_qty: '1', price_unit: '' })
     setQuantity('1')
@@ -273,31 +268,22 @@ export function GroceryPage() {
     setSuggested(false)
   }
 
-  const handleSaveBudget = async (amount) => {
-    const { error } = await saveGroceryBudget(amount)
-    setMessage(error ? 'Could not save the budget: ' + error.message : '')
-  }
 
-  const handlePayer = async (targets, value) => {
-    const { error } = await updatePayer(targets, value)
-    if (error) setMessage('Could not save who pays — run supabase/006_backfill_inventory_data.sql in Supabase first. (' + error.message + ')')
-  }
 
   // When the list unit can't be converted to the pantry unit (e.g. 2 pack
   // of rice counted in gr), ask for the pack size instead of guessing.
   const handleToggle = async (item) => {
     const result = await toggleComplete(item, totalOf(item))
-    if (!result?.needsPackSize) return setMessage('')
+    if (!result?.needsPackSize) return
     const { name: itemName, unit: listUnit, baseUnit } = result.needsPackSize
     const answer = window.prompt(
       `"${itemName}" is counted in ${baseUnit} in the pantry, but is on the list in ${listUnit}. How many ${baseUnit} are in 1 ${listUnit}?`
     )
     const packSize = parseFloat(String(answer ?? '').replace(',', '.'))
     if (!(packSize > 0)) {
-      return setMessage(`"${itemName}" wasn't ${item.completed ? 'unchecked' : 'checked off'}: it needs the number of ${baseUnit} in 1 ${listUnit}.`)
+      return showToast({ message: `"${itemName}" wasn't ${item.completed ? 'unchecked' : 'checked off'}: it needs the number of ${baseUnit} in 1 ${listUnit}.` })
     }
     await toggleComplete(item, totalOf(item), packSize)
-    setMessage('')
   }
 
   return (
@@ -337,7 +323,7 @@ export function GroceryPage() {
             overBudget={overBudget}
             unpricedCount={unpricedCount}
             unknownTotalCount={unknownTotalCount}
-            onSave={handleSaveBudget}
+            onSave={saveGroceryBudget}
           />
 
           <div className="flex gap-2 overflow-x-auto pb-1 text-xs">
@@ -450,7 +436,6 @@ export function GroceryPage() {
             </Card>
           </form>
 
-          {message && <p className="text-xs text-red-400">{message}</p>}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             {budgetActive ? (
@@ -478,7 +463,7 @@ export function GroceryPage() {
               )}
               {completedCount > 0 && (
                 <button
-                  onClick={handleClearCompleted}
+                  onClick={clearCompleted}
                   className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-red-400 transition"
                 >
                   <X size={13} /> Clear {completedCount} checked item{completedCount === 1 ? '' : 's'}
@@ -503,7 +488,7 @@ export function GroceryPage() {
                     key={o.value}
                     type="button"
                     disabled={bulkTargets.length === 0}
-                    onClick={() => handlePayer(bulkTargets, o.value)}
+                    onClick={() => updatePayer(bulkTargets, o.value)}
                     className="px-2.5 py-1 rounded-full text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-accent)] hover:text-white hover:border-transparent disabled:opacity-40"
                   >
                     {o.label}
@@ -531,7 +516,7 @@ export function GroceryPage() {
                   onToggle={handleToggle}
                   onDelete={deleteItem}
                   onUpdatePricing={updatePricing}
-                  onUpdatePayer={handlePayer}
+                  onUpdatePayer={updatePayer}
                 />
               ))}
             </div>
@@ -559,7 +544,7 @@ export function GroceryPage() {
                     onToggle={handleToggle}
                     onDelete={deleteItem}
                     onUpdatePricing={updatePricing}
-                    onUpdatePayer={handlePayer}
+                    onUpdatePayer={updatePayer}
                   />
                 ))}
               </div>
@@ -604,9 +589,10 @@ function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBudget, u
   const [draft, setDraft] = useState('')
   const pct = budget ? Math.min(listTotal / budget, 1) : 0
 
-  const save = (amount) => {
-    onSave(amount)
-    setEditing(false)
+  // Stays open if saving fails, so the amount can be saved again.
+  const save = async (amount) => {
+    const { error } = await onSave(amount)
+    if (!error) setEditing(false)
   }
 
   return (
@@ -704,11 +690,11 @@ function ReceiptsView({ receipts, onDeleteReceipt }) {
     )
   }
 
-  const handleDelete = (date, list) => {
-    if (window.confirm(`Delete the receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} (${list.length} item${list.length === 1 ? '' : 's'})?`)) {
-      onDeleteReceipt(list.map((e) => e.id))
-    }
-  }
+  const handleDelete = (date, list) =>
+    onDeleteReceipt(
+      list.map((e) => e.id),
+      `Receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} deleted`
+    )
 
   return (
     <div className="space-y-3">
@@ -765,8 +751,8 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
       price_qty: price > 0 ? parseFloat(draft.price_qty) || 1 : null,
       price_unit: price > 0 ? draft.price_unit : null,
     }
-    setEditing(false)
-    await onUpdatePricing(item, patch, lineTotal({ ...item, ...patch }, pack))
+    const { error } = await onUpdatePricing(item, patch, lineTotal({ ...item, ...patch }, pack))
+    if (!error) setEditing(false)
   }
 
   // Background follows why the item is here: red Out, yellow Low,
@@ -783,7 +769,7 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
       )}
     >
       <button
-        onClick={() => window.confirm(`Remove "${item.name}" from the list?`) && onDelete(item.id)}
+        onClick={() => onDelete(item)}
         className="absolute top-2 right-2 text-[var(--color-icon-muted)] hover:text-red-400 transition p-1 z-10"
       >
         <Trash2 size={13} />

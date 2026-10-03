@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { getCurrentWeekStart, legacyWeekStart } from '../lib/week'
+import { attempt, deleteWithUndo, followUp, must } from '../lib/db'
+import { toastLoadError } from '../lib/feedback'
 import { WEEKDAYS, MEAL_TYPES } from '../data/constants'
 
 function buildEmptyPlan() {
@@ -20,19 +22,14 @@ export function useMealPlan(profileId) {
   const [plan, setPlan] = useState(buildEmptyPlan)
   const [loading, setLoading] = useState(true)
 
-  const fetchPlan = useCallback(async () => {
+  const fetchPlan = useCallback(async function fetchPlan() {
     if (!profileId) return
-    const { data } = await supabase
-      .from('meal_plan_entries')
-      .select('*')
-      .in('week_start', weekKeys)
-      .eq('profile_id', profileId)
+    const { data, error } = await supabase.from('meal_plan_entries').select('*').in('week_start', weekKeys).eq('profile_id', profileId)
+    if (error) return toastLoadError(error, fetchPlan, 'meal_plan_entries')
     const next = buildEmptyPlan()
-    if (data) {
-      const legacyFirst = [...data].sort((a, b) => (a.week_start === weekStart) - (b.week_start === weekStart))
-      for (const entry of legacyFirst) {
-        next[entry.day_of_week][entry.meal_type] = entry
-      }
+    const legacyFirst = [...data].sort((a, b) => (a.week_start === weekStart) - (b.week_start === weekStart))
+    for (const entry of legacyFirst) {
+      next[entry.day_of_week][entry.meal_type] = entry
     }
     setPlan(next)
     setLoading(false)
@@ -49,44 +46,74 @@ export function useMealPlan(profileId) {
 
   const setMeal = useCallback(
     async (day, mealType, { recipeId = null, customText = null }) => {
-      const { data, error } = await supabase
-        .from('meal_plan_entries')
-        .upsert(
-          { week_start: weekStart, day_of_week: day, meal_type: mealType, profile_id: profileId, recipe_id: recipeId, custom_text: customText },
-          { onConflict: 'week_start,day_of_week,meal_type,profile_id' }
-        )
-        .select()
-        .single()
-
-      if (!error && data) {
-        setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: data } }))
+      const result = await attempt(
+        async () => {
+          const data = must(
+            await supabase
+              .from('meal_plan_entries')
+              .upsert(
+                { week_start: weekStart, day_of_week: day, meal_type: mealType, profile_id: profileId, recipe_id: recipeId, custom_text: customText },
+                { onConflict: 'week_start,day_of_week,meal_type,profile_id' }
+              )
+              .select()
+              .single()
+          )
+          setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: data } }))
+        },
+        { onFail: fetchPlan }
+      )
+      if (!result.error) {
         // The old Sunday-keyed copy of this slot is replaced, not kept.
-        await supabase
-          .from('meal_plan_entries')
-          .delete()
-          .match({ week_start: weekKeys[0], day_of_week: day, meal_type: mealType, profile_id: profileId })
+        await followUp('the old copy of this meal', async () =>
+          must(
+            await supabase
+              .from('meal_plan_entries')
+              .delete()
+              .match({ week_start: weekKeys[0], day_of_week: day, meal_type: mealType, profile_id: profileId })
+          )
+        )
       }
-      return { error }
+      return result
     },
-    [weekStart, weekKeys, profileId]
+    [weekStart, weekKeys, profileId, fetchPlan]
   )
 
   const clearMeal = useCallback(
-    async (day, mealType) => {
-      await supabase
-        .from('meal_plan_entries')
-        .delete()
-        .in('week_start', weekKeys)
-        .match({ day_of_week: day, meal_type: mealType, profile_id: profileId })
-      setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: null } }))
-    },
-    [weekKeys, profileId]
+    (day, mealType) =>
+      attempt(
+        async () => {
+          must(
+            await supabase
+              .from('meal_plan_entries')
+              .delete()
+              .in('week_start', weekKeys)
+              .match({ day_of_week: day, meal_type: mealType, profile_id: profileId })
+          )
+          setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: null } }))
+        },
+        { onFail: fetchPlan }
+      ),
+    [weekKeys, profileId, fetchPlan]
   )
 
-  const resetPlan = useCallback(async () => {
-    await supabase.from('meal_plan_entries').delete().in('week_start', weekKeys).eq('profile_id', profileId)
-    setPlan(buildEmptyPlan())
-  }, [weekKeys, profileId])
+  // Clears the week right away; Undo puts every meal back.
+  const resetPlan = useCallback(
+    () =>
+      deleteWithUndo({
+        message: 'Week cleared',
+        remove: async () => {
+          const rows = must(await supabase.from('meal_plan_entries').delete().in('week_start', weekKeys).eq('profile_id', profileId).select())
+          setPlan(buildEmptyPlan())
+          return rows
+        },
+        restore: async (rows) => {
+          if (rows.length) must(await supabase.from('meal_plan_entries').upsert(rows))
+          await fetchPlan()
+        },
+        onFail: fetchPlan,
+      }),
+    [weekKeys, profileId, fetchPlan]
+  )
 
   return { plan, loading, weekStart, setMeal, clearMeal, resetPlan }
 }

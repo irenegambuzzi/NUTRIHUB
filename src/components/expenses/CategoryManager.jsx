@@ -23,7 +23,8 @@ export function CategoryManager({ categories, expenses, onAdd, onDelete, onClose
     if (!trimmed) return
     if (categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) return setError(`"${trimmed}" already exists.`)
     const { error: addError } = await onAdd(trimmed, parentId || null)
-    if (addError) return setError('Could not add: ' + addError.message)
+    // Failures show a toast.
+    if (addError) return
     setName('')
     setError('')
   }
@@ -31,7 +32,8 @@ export function CategoryManager({ categories, expenses, onAdd, onDelete, onClose
   const handleDelete = async (c) => {
     const { error: deleteError } = await onDelete(c.id)
     setConfirming(null)
-    setError(deleteError ? 'Could not delete: ' + deleteError.message : '')
+    // Failures show a toast ("Other" can't be picked: its button is disabled).
+    if (!deleteError) setError('')
   }
 
   const row = (c, isSub) => {

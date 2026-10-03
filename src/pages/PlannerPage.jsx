@@ -16,17 +16,13 @@ export function PlannerPage() {
   const { recipes } = useRecipes()
   const [selectedDay, setSelectedDay] = useState('Monday')
 
-  const handleReset = () => {
-    if (window.confirm('Clear this week’s meal plan?')) resetPlan()
-  }
-
   const dayPlan = plan[selectedDay]
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-extrabold text-[var(--color-primary)]">Weekly Meal Plan</h2>
-        <Button variant="ghost" onClick={handleReset} className="px-2.5 py-1 text-xs">
+        <Button variant="ghost" onClick={resetPlan} className="px-2.5 py-1 text-xs">
           <RefreshCw size={12} /> Reset
         </Button>
       </div>

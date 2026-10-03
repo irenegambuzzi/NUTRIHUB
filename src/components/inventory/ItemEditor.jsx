@@ -87,7 +87,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
       const { data, error: subError } = await onAddSubcategory(form.category_id, newSubName)
       if (subError) {
         setSaving(false)
-        return setError('Could not create the sub-category: ' + subError.message)
+        // The toast explains; the editor stays open.
+        return setError('')
       }
       subcategoryId = data.id
     }
@@ -109,7 +110,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
         : { price: null, price_qty: null, price_unit: null }),
     })
     setSaving(false)
-    if (saveError) return setError('Could not save: ' + saveError.message)
+    // The toast explains; the editor stays open so Save can be pressed again.
+    if (saveError) return
     onClose()
   }
 

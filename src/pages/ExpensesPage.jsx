@@ -106,10 +106,8 @@ export function ExpensesPage() {
       paidBy,
       expenseDate,
     })
-    if (error) {
-      alert('Could not save the expense: ' + error.message)
-      return
-    }
+    // On failure the toast explains and the form keeps what was typed.
+    if (error) return
     setAmount('')
     setDescription('')
   }
@@ -367,7 +365,7 @@ function ExpenseGroup({ group, color, subName, onDelete }) {
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-mono text-[var(--color-text-soft)]">€{Number(e.amount).toFixed(2)}</span>
                     <button
-                      onClick={() => window.confirm('Delete this expense?') && onDelete(e.id)}
+                      onClick={() => onDelete(e.id)}
                       className="text-[var(--color-icon-muted)] hover:text-red-400 transition"
                       title="Delete expense"
                     >

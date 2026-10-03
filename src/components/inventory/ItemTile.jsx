@@ -31,7 +31,7 @@ export function ItemTile({ item, subcategoryName, onAdjust, onEdit, onDelete, on
           <Pencil size={12} />
         </button>
         <button
-          onClick={() => window.confirm(`Remove "${item.name}" from the inventory?`) && onDelete(item.id)}
+          onClick={() => onDelete(item)}
           title="Delete"
           className="text-[var(--color-icon-muted)] hover:text-rose-400 p-1"
         >

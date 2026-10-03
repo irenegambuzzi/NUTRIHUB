@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 // inventory.js imports the Supabase client, which needs env variables.
 vi.mock('./supabaseClient', () => ({ supabase: {} }))
 
-const { quantityStep, roundQuantity, suggestedPurchase, toBaseQuantity } = await import('./inventory')
+const { pickDurableCategory, quantityStep, roundQuantity, suggestedPurchase, toBaseQuantity } = await import('./inventory')
 
 describe('roundQuantity', () => {
   it('keeps kg and L in steps of 0.05', () => {
@@ -70,5 +70,26 @@ describe('suggestedPurchase', () => {
   it('buys whole packs for multipacks', () => {
     const water = { unit: 'btl', packaging_unit: 'case', quantity_per_pack: 12, current_stock: 2, min_stock: 6 }
     expect(suggestedPurchase(water)).toEqual({ quantity: 1, unit: 'case' })
+  })
+})
+
+describe('pickDurableCategory', () => {
+  const rows = [
+    { id: 'p', name: 'Home & Appliances', parent_id: null },
+    { id: 'k', name: 'Kitchen Appliances', parent_id: 'p' },
+    { id: 'x', name: 'Air & Climate', parent_id: 'other-parent' },
+  ]
+
+  it('uses the sub-category named like the item sub-category', () => {
+    expect(pickDurableCategory(rows, 'Kitchen Appliances')).toBe('k')
+  })
+
+  it('falls back to Home & Appliances itself', () => {
+    expect(pickDurableCategory(rows, null)).toBe('p')
+    expect(pickDurableCategory(rows, 'Air & Climate')).toBe('p')
+  })
+
+  it("never creates the category; it says to run the migration", () => {
+    expect(() => pickDurableCategory([], null)).toThrow(/008_durable_category\.sql/)
   })
 })

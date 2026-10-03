@@ -31,7 +31,8 @@ function ProfileCard({ profile, onSave }) {
       fat_g: Number(form.fatG) || 0,
     })
     setSaving(false)
-    if (error) alert('Could not save: ' + error.message)
+    // A failed save shows a toast; the form keeps the values.
+    return { error }
   }
 
   return (

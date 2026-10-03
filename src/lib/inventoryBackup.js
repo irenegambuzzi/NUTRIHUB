@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { must } from './db'
 import { normalizeUnit, stockStatus } from './inventory'
 
 const CSV_COLUMNS = [
@@ -149,8 +150,10 @@ export async function parseXlsx(arrayBuffer) {
   )
 }
 
+// Throws if any table couldn't be read, so a failed read never becomes
+// an empty backup.
 export async function buildBackup() {
-  const [{ data: categories }, { data: items }, { data: logs }] = await Promise.all([
+  const [categories, items, logs] = await Promise.all([
     supabase.from('inventory_categories').select('*'),
     supabase.from('pantry_items').select('*'),
     supabase.from('stock_logs').select('*'),
@@ -159,27 +162,24 @@ export async function buildBackup() {
     app: 'nutrihub-inventory',
     version: 1,
     exported_at: new Date().toISOString(),
-    categories: categories || [],
-    items: items || [],
-    stock_logs: logs || [],
+    categories: must(categories),
+    items: must(items),
+    stock_logs: must(logs),
   }
 }
 
 // Categories and logs are restored here; items go through the pantry
-// hook so the shopping list is re-synced afterwards.
+// hook so the shopping list is re-synced afterwards. Both throw on failure.
 export async function restoreCategories(backup) {
-  if (backup.categories?.length) {
-    // Parents first so sub-categories' parent_id references exist.
-    const sorted = [...backup.categories].sort((a, b) => (a.type === 'parent' ? -1 : 1) - (b.type === 'parent' ? -1 : 1))
-    const { error } = await supabase.from('inventory_categories').upsert(sorted)
-    if (error) return { error }
-  }
-  return { error: null }
+  if (!backup.categories?.length) return
+  // Parents first so sub-categories' parent_id references exist.
+  const sorted = [...backup.categories].sort((a, b) => (a.type === 'parent' ? -1 : 1) - (b.type === 'parent' ? -1 : 1))
+  must(await supabase.from('inventory_categories').upsert(sorted))
 }
 
 export async function restoreLogs(backup) {
-  if (!backup.stock_logs?.length) return { error: null }
-  return supabase.from('stock_logs').upsert(backup.stock_logs)
+  if (!backup.stock_logs?.length) return
+  must(await supabase.from('stock_logs').upsert(backup.stock_logs))
 }
 
 export function downloadFile(filename, content, type) {

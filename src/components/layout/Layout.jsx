@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { Calendar, User, Home, ShoppingBag, BookOpen, Wallet } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { Feedback } from '../ui/Feedback'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Planner', icon: Calendar },
@@ -64,6 +65,8 @@ export function Layout() {
           ))}
         </div>
       </nav>
+
+      <Feedback />
     </div>
   )
 }

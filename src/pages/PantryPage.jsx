@@ -9,6 +9,8 @@ import { ItemTile } from '../components/inventory/ItemTile'
 import { EXPIRY_STYLES, STATUS_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
 import { localDateString } from '../lib/expensePeriods'
+import { attempt } from '../lib/db'
+import { confirmDialog, toastLoadError } from '../lib/feedback'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
@@ -494,7 +496,12 @@ function DataView({ items, categories, categoryName, importItems }) {
   }
 
   const exportJson = async () => {
-    const backup = await buildBackup()
+    let backup
+    try {
+      backup = await buildBackup()
+    } catch (error) {
+      return toastLoadError(error, exportJson, 'backup')
+    }
     downloadFile(`nutrihub-backup-${today}.json`, JSON.stringify(backup, null, 2), 'application/json')
   }
 
@@ -511,9 +518,15 @@ function DataView({ items, categories, categoryName, importItems }) {
     }
     const rows = csvRowsToItems(parsed, categories)
     if (rows.length === 0) return setMessage('No items found in that file. The first row must be a header with at least a "name" column.')
-    if (!window.confirm(`Import ${rows.length} item${rows.length === 1 ? '' : 's'}? Rows with an existing id overwrite that item.`)) return
+    const confirmed = await confirmDialog({
+      title: `Import ${rows.length} item${rows.length === 1 ? '' : 's'}?`,
+      message: 'Rows with an existing id overwrite that item; the others are added as new items.',
+      confirmLabel: 'Import',
+    })
+    if (!confirmed) return
     const { error } = await importItems(rows)
-    setMessage(error ? 'Import failed: ' + error.message : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.`)
+    // A failure shows a toast.
+    setMessage(error ? '' : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.`)
   }
 
   const handleJson = async (e) => {
@@ -529,12 +542,17 @@ function DataView({ items, categories, categoryName, importItems }) {
     if (backup.app !== 'nutrihub-inventory' || !Array.isArray(backup.items)) {
       return setMessage('That file is not a NutriHub inventory backup.')
     }
-    if (!window.confirm(`Restore ${backup.items.length} items from ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'this backup'}? Items in the backup overwrite current ones with the same id; other items are kept.`)) return
-    const steps = [() => restoreCategories(backup), () => importItems(backup.items), () => restoreLogs(backup)]
-    for (const step of steps) {
-      const { error } = await step()
-      if (error) return setMessage('Restore failed: ' + error.message)
-    }
+    const confirmed = await confirmDialog({
+      title: `Restore ${backup.items.length} items?`,
+      message: `From the backup of ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'an unknown date'}. Items in the backup overwrite current ones with the same id; other items are kept.`,
+      confirmLabel: 'Restore',
+    })
+    if (!confirmed) return
+    setMessage('')
+    // Each step shows a toast if it fails; the restore stops there.
+    if ((await attempt(() => restoreCategories(backup), { retry: false })).error) return
+    if ((await importItems(backup.items)).error) return
+    if ((await attempt(() => restoreLogs(backup), { retry: false })).error) return
     setMessage(`Restored ${backup.items.length} items.`)
   }
 
