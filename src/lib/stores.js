@@ -3,11 +3,14 @@ import { normalizeItem } from './inventory'
 import { getPeriodRange } from './expensePeriods'
 import { localDateString } from './week'
 
-// The app's shared, live tables (see tableStore.js).
+// The app's shared, live tables (see tableStore.js). The lists used
+// around the house are also kept on the phone (`persist`), so they open
+// without signal.
 
 export const groceryStore = createTableStore({
   name: 'grocery_items',
   table: 'grocery_items',
+  persist: 'grocery_items',
   query: (q) => q.order('created_at', { ascending: false }),
   normalize: normalizeItem,
   compare: newestFirst(),
@@ -16,6 +19,7 @@ export const groceryStore = createTableStore({
 export const pantryStore = createTableStore({
   name: 'pantry_items',
   table: 'pantry_items',
+  persist: 'pantry_items',
   query: (q) => q.order('created_at', { ascending: false }),
   normalize: normalizeItem,
   compare: newestFirst(),
@@ -34,6 +38,7 @@ export const stockLogStore = createTableStore({
 export const inventoryCategoryStore = createTableStore({
   name: 'inventory_categories',
   table: 'inventory_categories',
+  persist: 'inventory_categories',
   query: (q) => q.order('sort_order').order('name'),
   compare: (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name),
 })
@@ -41,6 +46,7 @@ export const inventoryCategoryStore = createTableStore({
 export const expenseCategoryStore = createTableStore({
   name: 'expense_categories',
   table: 'expense_categories',
+  persist: 'expense_categories',
   query: (q) => q.order('name'),
   compare: (a, b) => a.name.localeCompare(b.name),
 })
@@ -89,6 +95,7 @@ export const allExpenseStores = () =>
 export const recipeStore = createTableStore({
   name: 'recipes',
   table: 'recipes',
+  persist: 'recipes',
   query: (q) => q.order('created_at', { ascending: false }),
   compare: newestFirst(),
 })
@@ -96,6 +103,7 @@ export const recipeStore = createTableStore({
 export const profileStore = createTableStore({
   name: 'profiles',
   table: 'profiles',
+  persist: 'profiles',
   query: (q) => q.order('id'),
   compare: (a, b) => a.id.localeCompare(b.id),
 })
@@ -104,6 +112,7 @@ export const profileStore = createTableStore({
 export const budgetStore = createTableStore({
   name: 'budget_settings',
   table: 'budget_settings',
+  persist: 'budget_settings',
   query: (q) => q.order('created_at'),
   compare: (a, b) => String(a.created_at).localeCompare(String(b.created_at)),
 })
@@ -115,6 +124,7 @@ export const mealPlanWeek = storeFamily((keys) => {
   return createTableStore({
     name: 'meal_plan_entries',
     table: 'meal_plan_entries',
+    persist: `meal_plan_entries:${keys}`,
     query: (q) => q.in('week_start', weekKeys),
     accept: (row) => weekKeys.includes(row.week_start),
   })

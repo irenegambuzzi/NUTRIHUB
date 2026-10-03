@@ -4,6 +4,8 @@ import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingF
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { pantryStore, stockLogStore } from '../lib/stores'
+import { isOffline } from '../lib/connection'
+import { queueStock } from '../lib/offlineActions'
 
 export const ITEM_FIELDS = [
   'name',
@@ -80,6 +82,8 @@ export function usePantryItems() {
 
   const adjustStock = useCallback(
     async (item, delta, reason = delta > 0 ? 'restocked' : 'used') => {
+      // No signal: kept and sent later (see offlineActions.js).
+      if (isOffline()) return queueStock(item, Math.round(delta * 100) / 100, reason)
       const { data, error } = await attempt(() => changeStock(item, Math.round(delta * 100) / 100, reason), { onFail: fetchItems })
       if (error) return { error }
       pantryStore.upsertLocal([data])

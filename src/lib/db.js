@@ -1,10 +1,20 @@
 import { showToast, toastSaveError } from './feedback'
+import { isOffline } from './connection'
 
 // A Supabase result's data, or its error thrown, so a multi-step write
 // stops at the first failure instead of carrying on as if it worked.
 export function must({ data, error }) {
   if (error) throw error
   return data
+}
+
+export const OFFLINE_MESSAGE = "You're offline — this needs a connection."
+
+// Writes that can't wait for the connection are refused while offline
+// (the few that can are queued; see offlineActions.js).
+function refuseOffline() {
+  showToast({ message: OFFLINE_MESSAGE, key: 'offline' })
+  return { data: null, error: { message: OFFLINE_MESSAGE, offline: true } }
 }
 
 const asError = (error) => (error && typeof error === 'object' ? error : new Error(String(error)))
@@ -37,6 +47,7 @@ export async function inSteps(fn) {
 // half-done. Writes started from a form pass retry: false — the form stays
 // open and Save can simply be pressed again. Returns { data, error }.
 export async function attempt(fn, { retry = true, onFail } = {}) {
+  if (isOffline()) return refuseOffline()
   try {
     return { data: await fn(), error: null }
   } catch (error) {
@@ -65,6 +76,7 @@ export async function followUp(what, fn) {
 // `restore(snapshot)` puts it back and must be safe to repeat (upsert).
 // `onFail` runs after any failure (usually a reload).
 export async function deleteWithUndo({ remove, restore, message = 'Deleted', onFail }) {
+  if (isOffline()) return refuseOffline()
   let snapshot
   try {
     snapshot = await remove()
@@ -74,6 +86,7 @@ export async function deleteWithUndo({ remove, restore, message = 'Deleted', onF
     return { error }
   }
   const undo = async () => {
+    if (isOffline()) return refuseOffline()
     try {
       await restore(snapshot)
     } catch (error) {

@@ -19,7 +19,7 @@ function Toasts() {
   const toasts = useToasts()
   if (toasts.length === 0) return null
   return (
-    <div className="fixed inset-x-0 bottom-20 md:bottom-6 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
+    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -89,7 +89,7 @@ function DialogForm({ dialog }) {
       aria-labelledby="dialog-title"
       onSubmit={submit}
       onClick={(e) => e.stopPropagation()}
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-5 space-y-4"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:pb-5 space-y-4"
     >
       <div className="space-y-1.5">
         <p id="dialog-title" className="text-sm font-extrabold text-[var(--color-primary)]">
