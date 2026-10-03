@@ -19,7 +19,8 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
   const setTotal = (text) => {
     setTotalDraft(text)
     const price = unitPriceFromTotal(parseFloat(text) || 0, { ...row, quantity: line.quantity, unit: line.unit }, pack)
-    onChange({ price: price ? String(price) : '' })
+    // Units that can't be converted leave the unit price alone.
+    if (price !== null) onChange({ price: price ? String(price) : '' })
   }
 
   return (
@@ -95,7 +96,14 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
       {line && row.price > 0 && (
         <p className="text-[11px] text-[var(--color-text-muted)]">
           {line.quantity} {line.unit} × {money(row.price)} / {basis.qty === 1 ? '' : `${basis.qty} `}
-          {basis.unit} = <b className="font-mono text-[var(--color-accent)]">{money(total)}</b>
+          {basis.unit} ={' '}
+          {total === null ? (
+            <>
+              <b className="font-mono">?</b> — {line.unit} can't be converted to {basis.unit}; pick another price unit or set a pack size.
+            </>
+          ) : (
+            <b className="font-mono text-[var(--color-accent)]">{money(total)}</b>
+          )}
         </p>
       )}
     </div>

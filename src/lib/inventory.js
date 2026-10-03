@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient'
 import { DURABLE_CATEGORY_IDS, DURABLE_EXPENSE_CATEGORY } from '../data/constants'
 import { priceFields } from './pricing'
 import { normalizeUnit, unitFactor } from './units'
+import { parseLocalDate } from './week'
 
 export { normalizeUnit, unitFactor }
 
@@ -19,8 +20,7 @@ export function stockStatus(item) {
 
 export function daysUntil(date) {
   if (!date) return null
-  const [y, m, d] = date.split('-').map(Number)
-  const target = new Date(y, m - 1, d)
+  const target = parseLocalDate(date)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   return Math.round((target - today) / 86400000)
@@ -42,18 +42,29 @@ export function expiryLabel(item) {
   if (days < 0) return `Expired ${-days}d ago`
   if (days === 0) return 'Expires today'
   if (days <= 30) return `Expires in ${days}d`
-  return `Exp. ${new Date(item.expiry_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  return `Exp. ${parseLocalDate(item.expiry_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
 }
 
 function round(n) {
   return Math.round(n * 100) / 100
 }
 
-// Stock and minimum stock are kept in steps of 0.5 (0.3 → 0.5, 0.2 → 0).
-export function roundHalf(value) {
+// The step quantities are kept in, by unit: whole gr/ml, 0.05 kg/L
+// (50 gr/ml) and half pieces, packs, bottles and other counts.
+export function quantityStep(unit) {
+  const u = normalizeUnit(unit)
+  if (u === 'gr' || u === 'ml') return 1
+  if (u === 'kg' || u === 'L') return 0.05
+  return 0.5
+}
+
+// Rounds a quantity to its unit's step (0.3 kg stays 0.3, 0.3 pcs → 0.5).
+// Negative or invalid values are 0.
+export function roundQuantity(value, unit) {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return 0
-  return Math.round(n * 2) / 2
+  const step = quantityStep(unit)
+  return round(Math.round(n / step) * step)
 }
 
 // Old unit spellings (pc, g, l) in stock or price units → current ones.
@@ -101,11 +112,13 @@ export function suggestedPurchase(item) {
   if (item.packaging_unit && perPack > 0) {
     return { quantity: Math.max(1, Math.ceil(need / perPack)), unit: item.packaging_unit }
   }
-  return { quantity: Math.max(1, Math.ceil(need * 2) / 2), unit: item.unit }
+  const step = quantityStep(item.unit)
+  return { quantity: Math.max(1, round(Math.ceil(round(need / step)) * step)), unit: item.unit }
 }
 
 // Converts a purchased quantity into the pantry item's base unit
-// (e.g. 2 case → 24 btl, 1 kg → 1000 gr).
+// (e.g. 2 case → 24 btl, 1 kg → 1000 gr). Returns null when it can't be
+// converted, e.g. a pack of an item counted in gr with no pack size.
 export function toBaseQuantity(item, quantity, rawUnit) {
   const qty = Number(quantity) || 0
   const unit = normalizeUnit(rawUnit)
@@ -113,7 +126,7 @@ export function toBaseQuantity(item, quantity, rawUnit) {
   const perPack = Number(item.quantity_per_pack)
   if (unit === item.packaging_unit && perPack > 0) return qty * perPack
   const factor = unitFactor(unit, item.unit)
-  return factor === null ? qty : qty * factor
+  return factor === null ? null : qty * factor
 }
 
 export async function getGroceriesCategoryId() {

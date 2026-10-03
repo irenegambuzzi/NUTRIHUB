@@ -1,10 +1,6 @@
-import { getWeekStart } from './week'
+import { getWeekStart, localDateString } from './week'
 
-// Dates as YYYY-MM-DD in local time. toISOString() would give UTC, which
-// in Italy turns local midnight into the previous day.
-export function localDateString(date = new Date()) {
-  return date.toLocaleDateString('sv-SE')
-}
+export { localDateString }
 
 function localMonday(date) {
   const d = new Date(date)

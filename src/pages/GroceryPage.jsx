@@ -12,9 +12,10 @@ import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { useBudget } from '../hooks/useBudget'
 import { DEFAULT_UNIT, PACKAGING_UNITS, PAID_BY_OPTIONS, SUGGESTED_UNITS, UNIT_GROUPS, UNIT_VALUES } from '../data/constants'
 import { inventoryCategoryColor } from '../lib/categoryColors'
-import { isDurable, restockReason, roundHalf, syncShoppingForItem } from '../lib/inventory'
+import { isDurable, quantityStep, restockReason, roundQuantity, syncShoppingForItem } from '../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../lib/inventoryStyles'
 import { guessCategory } from '../lib/categoryGuess'
+import { parseLocalDate } from '../lib/week'
 import { formatUnitPrice, lineTotal, money, priceUnitOptions } from '../lib/pricing'
 import { PriceFields } from '../components/inventory/PriceFields'
 
@@ -102,8 +103,10 @@ export function GroceryPage() {
     return (g) => cache.get(g.id) || 'new'
   }, [items, pantryFor])
 
-  // What each line really costs: unit price × quantity bought.
+  // What each line really costs: unit price × quantity bought. null when
+  // the units can't be converted; sums and the budget leave those out.
   const totalOf = useCallback((g) => lineTotal(g, pantryFor(g)), [pantryFor])
+  const costOf = useCallback((g) => totalOf(g) ?? 0, [totalOf])
 
   const sortItems = useCallback(
     (list, mode) => {
@@ -112,12 +115,12 @@ export function GroceryPage() {
       const tie =
         {
           az: (a, b) => a.name.localeCompare(b.name),
-          price: (a, b) => totalOf(b) - totalOf(a),
+          price: (a, b) => costOf(b) - costOf(a),
         }[mode] || ((a, b) => b.created_at.localeCompare(a.created_at))
       // Checked-off items always sink to the bottom.
       return [...list].sort((a, b) => Number(a.completed) - Number(b.completed) || rank(a) - rank(b) || tie(a, b))
     },
-    [reasonOf, totalOf]
+    [reasonOf, costOf]
   )
 
   // Durable purchases (Home & Appliances) get their own section and stay
@@ -125,13 +128,14 @@ export function GroceryPage() {
   const groceryItems = useMemo(() => items.filter((i) => !isDurable(i)), [items])
   const durableItems = useMemo(() => items.filter(isDurable), [items])
 
-  const listTotal = groceryItems.reduce((sum, i) => sum + totalOf(i), 0)
-  const boughtTotal = groceryItems.filter((i) => i.completed).reduce((sum, i) => sum + totalOf(i), 0)
+  const listTotal = groceryItems.reduce((sum, i) => sum + costOf(i), 0)
+  const boughtTotal = groceryItems.filter((i) => i.completed).reduce((sum, i) => sum + costOf(i), 0)
   const payerTotals = PAID_BY_OPTIONS.map((o) => ({
     ...o,
-    total: groceryItems.filter((i) => (i.payer || 'shared') === o.value).reduce((sum, i) => sum + totalOf(i), 0),
+    total: groceryItems.filter((i) => (i.payer || 'shared') === o.value).reduce((sum, i) => sum + costOf(i), 0),
   }))
   const unpricedCount = groceryItems.filter((i) => !i.completed && !(Number(i.price) > 0)).length
+  const unknownTotalCount = groceryItems.filter((i) => totalOf(i) === null).length
 
   // Budget planning ignores the chosen sort: open items are taken by need
   // (Out → Low → Expired → New; cheaper first within the same need, so
@@ -143,32 +147,33 @@ export function GroceryPage() {
     if (!budgetActive) return null
     const open = groceryItems
       .filter((i) => !i.completed)
-      .sort((a, b) => PRIORITY.indexOf(reasonOf(a)) - PRIORITY.indexOf(reasonOf(b)) || totalOf(a) - totalOf(b))
+      .sort((a, b) => PRIORITY.indexOf(reasonOf(a)) - PRIORITY.indexOf(reasonOf(b)) || costOf(a) - costOf(b))
     let remaining = groceryBudget - boughtTotal
     const marks = new Map()
     for (const g of open) {
       const cost = totalOf(g)
-      if (cost <= remaining) {
+      if (cost === null) marks.set(g.id, 'unknown')
+      else if (cost <= remaining) {
         remaining -= cost
         marks.set(g.id, 'fits')
       } else marks.set(g.id, 'over')
     }
     // Display order while a budget is set: what fits first, then the rest,
     // each in priority order; checked-off items last.
-    const order = [...open.filter((g) => marks.get(g.id) === 'fits'), ...open.filter((g) => marks.get(g.id) === 'over')]
+    const order = ['fits', 'unknown', 'over'].flatMap((mark) => open.filter((g) => marks.get(g.id) === mark))
     return { marks, order, remaining }
-  }, [budgetActive, groceryBudget, boughtTotal, groceryItems, reasonOf, totalOf])
+  }, [budgetActive, groceryBudget, boughtTotal, groceryItems, reasonOf, totalOf, costOf])
 
   const inCategory = (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.completed), 'recent')].filter(inCategory)
     : sortItems(groceryItems.filter(inCategory), sortMode)
   const filteredDurables = sortItems(durableItems.filter(inCategory), budgetPlan ? 'recent' : sortMode)
-  const durableTotal = durableItems.filter((i) => !i.completed).reduce((sum, i) => sum + totalOf(i), 0)
+  const durableTotal = durableItems.filter((i) => !i.completed).reduce((sum, i) => sum + costOf(i), 0)
   // Only show chips for categories that actually have items on the list.
   const listCategories = parents.filter((p) => items.some((i) => i.category_id === p.id))
   const needsBuying = pantryItems.filter((p) => restockReason(p))
-  const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + totalOf(item), 0)
+  const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + costOf(item), 0)
   const completedCount = items.filter((i) => i.completed).length
 
   // Targets for "Paid by for all …".
@@ -224,6 +229,10 @@ export function GroceryPage() {
         }
       }
     } else {
+      // No (or no longer a) match: drop an earlier guess instead of
+      // keeping it, e.g. "Te" → Coffee & Tea, then "Test" → nothing.
+      setCategoryId('')
+      setSubcategoryId('')
       setSuggested(false)
     }
   }
@@ -231,7 +240,7 @@ export function GroceryPage() {
   const formCategory = categoryId || parents[0]?.id || ''
   const formSubs = subsByParent.get(formCategory) || []
   const suggestedUnits = SUGGESTED_UNITS[formCategory] || []
-  const formQuantity = roundHalf(quantity) || 1
+  const formQuantity = roundQuantity(quantity, unit) || 1
   const formPack = pantryByName.get(normName(name))
   const formPriceUnits = priceUnitOptions({ unit }, formPack)
   const formPriceUnit = formPriceUnits.includes(priceDraft.price_unit) ? priceDraft.price_unit : unit
@@ -274,6 +283,23 @@ export function GroceryPage() {
     if (error) setMessage('Could not save who pays — run supabase/006_backfill_inventory_data.sql in Supabase first. (' + error.message + ')')
   }
 
+  // When the list unit can't be converted to the pantry unit (e.g. 2 pack
+  // of rice counted in gr), ask for the pack size instead of guessing.
+  const handleToggle = async (item) => {
+    const result = await toggleComplete(item, totalOf(item))
+    if (!result?.needsPackSize) return setMessage('')
+    const { name: itemName, unit: listUnit, baseUnit } = result.needsPackSize
+    const answer = window.prompt(
+      `"${itemName}" is counted in ${baseUnit} in the pantry, but is on the list in ${listUnit}. How many ${baseUnit} are in 1 ${listUnit}?`
+    )
+    const packSize = parseFloat(String(answer ?? '').replace(',', '.'))
+    if (!(packSize > 0)) {
+      return setMessage(`"${itemName}" wasn't ${item.completed ? 'unchecked' : 'checked off'}: it needs the number of ${baseUnit} in 1 ${listUnit}.`)
+    }
+    await toggleComplete(item, totalOf(item), packSize)
+    setMessage('')
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -310,6 +336,7 @@ export function GroceryPage() {
             payerTotals={payerTotals}
             overBudget={overBudget}
             unpricedCount={unpricedCount}
+            unknownTotalCount={unknownTotalCount}
             onSave={handleSaveBudget}
           />
 
@@ -389,12 +416,12 @@ export function GroceryPage() {
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   type="number"
-                  step="0.5"
+                  step={quantityStep(unit)}
                   min="0"
                   placeholder="Qty to buy"
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
-                  onBlur={() => setQuantity(String(roundHalf(quantity) || 1))}
+                  onBlur={() => setQuantity(String(roundQuantity(quantity, unit) || 1))}
                   aria-label="Quantity"
                 />
                 <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit">
@@ -501,7 +528,7 @@ export function GroceryPage() {
                   total={totalOf(item)}
                   budgetMark={overBudget ? budgetPlan?.marks.get(item.id) : undefined}
                   categoryName={categoryName}
-                  onToggle={(i) => toggleComplete(i, totalOf(i))}
+                  onToggle={handleToggle}
                   onDelete={deleteItem}
                   onUpdatePricing={updatePricing}
                   onUpdatePayer={handlePayer}
@@ -529,7 +556,7 @@ export function GroceryPage() {
                     pack={pantryFor(item)}
                     total={totalOf(item)}
                     categoryName={categoryName}
-                    onToggle={(i) => toggleComplete(i, totalOf(i))}
+                    onToggle={handleToggle}
                     onDelete={deleteItem}
                     onUpdatePricing={updatePricing}
                     onUpdatePayer={handlePayer}
@@ -572,7 +599,7 @@ function PayerPicker({ value, onChange, size = 'md' }) {
 
 // Budget limit for the whole list (stored in budget_settings), with the
 // total split by who pays.
-function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBudget, unpricedCount, onSave }) {
+function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBudget, unpricedCount, unknownTotalCount, onSave }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const pct = budget ? Math.min(listTotal / budget, 1) : 0
@@ -647,6 +674,13 @@ function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBudget, u
               {unpricedCount} item{unpricedCount === 1 ? ' has' : 's have'} no price yet, so the budget can't count {unpricedCount === 1 ? 'it' : 'them'}.
             </p>
           )}
+          {unknownTotalCount > 0 && (
+            <p className={cn('text-[11px] flex items-start gap-1.5', STATUS_STYLES.low.text)}>
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              {unknownTotalCount} item{unknownTotalCount === 1 ? "'s" : "s'"} total can't be worked out (marked "?"): the quantity's unit can't be converted to
+              the price's unit. {unknownTotalCount === 1 ? "It isn't" : "They aren't"} counted in the totals or the budget.
+            </p>
+          )}
         </>
       )}
 
@@ -671,7 +705,7 @@ function ReceiptsView({ receipts, onDeleteReceipt }) {
   }
 
   const handleDelete = (date, list) => {
-    if (window.confirm(`Delete the receipt from ${new Date(date).toLocaleDateString('en-GB')} (${list.length} item${list.length === 1 ? '' : 's'})?`)) {
+    if (window.confirm(`Delete the receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} (${list.length} item${list.length === 1 ? '' : 's'})?`)) {
       onDeleteReceipt(list.map((e) => e.id))
     }
   }
@@ -682,7 +716,7 @@ function ReceiptsView({ receipts, onDeleteReceipt }) {
         <Card key={date} className="rounded-3xl">
           <div className="flex justify-between items-center border-b border-[var(--color-border)] pb-2 mb-2">
             <span className="text-xs font-bold text-[var(--color-text)]">
-              {new Date(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+              {parseLocalDate(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
@@ -726,7 +760,7 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
   const save = async () => {
     const price = parseFloat(draft.price) || 0
     const patch = {
-      quantity: roundHalf(draft.quantity) || 1,
+      quantity: roundQuantity(draft.quantity, item.unit) || 1,
       price,
       price_qty: price > 0 ? parseFloat(draft.price_qty) || 1 : null,
       price_unit: price > 0 ? draft.price_unit : null,
@@ -790,7 +824,7 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
             <Input
               type="number"
               min="0"
-              step="0.5"
+              step={quantityStep(item.unit)}
               value={draft.quantity}
               onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
               className="text-xs p-2"
@@ -803,7 +837,7 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
             value={draft}
             onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
             unitOptions={priceUnits}
-            line={{ quantity: roundHalf(draft.quantity) || 1, unit: item.unit }}
+            line={{ quantity: roundQuantity(draft.quantity, item.unit) || 1, unit: item.unit }}
             pack={pack}
           />
           <div className="flex gap-1.5">
@@ -819,9 +853,18 @@ function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, 
         <button onClick={startEditing} className="flex flex-col items-start mt-1.5 hover:opacity-80 transition text-left" title="Edit quantity and price">
           {unitPrice ? (
             <>
-              <span className="text-sm font-mono font-bold text-[var(--color-accent)] flex items-center gap-1">
-                {money(total)} <Pencil size={10} className="text-[var(--color-icon-muted)]" />
-              </span>
+              {total === null ? (
+                <span
+                  className={cn('text-sm font-mono font-bold flex items-center gap-1', STATUS_STYLES.low.text)}
+                  title={`Can't convert ${item.unit} to the price's unit — set the pack size or change the price unit.`}
+                >
+                  ? <Pencil size={10} className="text-[var(--color-icon-muted)]" />
+                </span>
+              ) : (
+                <span className="text-sm font-mono font-bold text-[var(--color-accent)] flex items-center gap-1">
+                  {money(total)} <Pencil size={10} className="text-[var(--color-icon-muted)]" />
+                </span>
+              )}
               <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{unitPrice}</span>
             </>
           ) : (

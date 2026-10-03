@@ -14,12 +14,14 @@ import {
   updateRows,
 } from '../lib/inventory'
 import { priceFields } from '../lib/pricing'
+import { localDateString } from '../lib/week'
 
 async function createExpense(item, amount) {
   const categoryId = isDurable(item) ? await getDurableExpenseCategoryId(item.subcategory_id) : await getGroceriesCategoryId()
+  // Dated today in local time: the database default (current_date) is UTC.
   const { data } = await supabase
     .from('expenses')
-    .insert([{ category_id: categoryId, amount, description: item.name, paid_by: item.payer || 'shared' }])
+    .insert([{ category_id: categoryId, amount, description: item.name, paid_by: item.payer || 'shared', expense_date: localDateString() }])
     .select()
     .single()
   return data?.id ?? null
@@ -36,8 +38,28 @@ async function findPantryItem(item) {
   return data?.[0] ? normalizeItem(data[0]) : null
 }
 
-// The entry's quantity in the pantry item's base unit.
-const purchasedQuantity = (pantry, item) => Math.round(toBaseQuantity(pantry, item.quantity || 1, item.unit) * 100) / 100
+const MEASURE_UNITS = ['gr', 'kg', 'ml', 'L']
+
+// The entry's quantity in the pantry item's base unit, or null when the
+// units can't be converted and no pack size was given (e.g. 2 pack of an
+// item counted in gr).
+function purchasedQuantity(pantry, item, packSize) {
+  const quantity = Number(item.quantity) || 1
+  const base = toBaseQuantity(pantry, quantity, item.unit) ?? (packSize > 0 ? quantity * packSize : null)
+  return base === null ? null : Math.round(base * 100) / 100
+}
+
+// A pack size the user just gave is kept on the pantry item, unless the
+// item already has a different multipack or the unit is a measure (kg…).
+function packSizePatch(pantry, unit, packSize) {
+  if (!(packSize > 0) || MEASURE_UNITS.includes(unit)) return {}
+  if (pantry.packaging_unit && pantry.packaging_unit !== unit) return {}
+  return { packaging_unit: unit, quantity_per_pack: packSize }
+}
+
+// Returned instead of changing anything when the quantity can't be
+// converted: the page asks for the pack size and calls again with it.
+const needsPackSize = (item, pantry) => ({ needsPackSize: { name: item.name, unit: item.unit, baseUnit: pantry.unit } })
 
 export function useGroceryItems() {
   const [items, setItems] = useState([])
@@ -96,24 +118,36 @@ export function useGroceryItems() {
   // to the linked (or same-named) pantry item, converted to that item's
   // base unit, along with the unit price and payer. The entry keeps the
   // pantry item's id, so unchecking can remove the expense and take the
-  // same quantity back out of stock.
-  const toggleComplete = useCallback(async (item, total) => {
+  // same quantity back out of stock. If the entry's unit can't be
+  // converted to the pantry item's (a pack of something counted in gr),
+  // nothing changes and { needsPackSize } is returned; call again with
+  // `packSize` (base units in one entry unit).
+  const toggleComplete = useCallback(async (item, total, packSize = null) => {
     const completed = !item.completed
 
     if (!completed) {
+      // Appliances and other durables never added stock.
+      const pantry = isDurable(item) ? null : await findPantryItem(item)
+      const removed = pantry && purchasedQuantity(pantry, item, packSize)
+      if (pantry && removed === null) return needsPackSize(item, pantry)
+
       await supabase.from('grocery_items').update({ completed, expense_id: null }).eq('id', item.id)
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, completed, expense_id: null } : i)))
       if (item.expense_id) await supabase.from('expenses').delete().eq('id', item.expense_id)
-      if (!isDurable(item)) {
-        const pantry = await findPantryItem(item)
-        if (pantry) await changeStock(pantry, -purchasedQuantity(pantry, item), 'unpurchased')
+      if (pantry) {
+        const patch = packSizePatch(pantry, item.unit, packSize)
+        if (Object.keys(patch).length) await updateRows('pantry_items', pantry.id, patch)
+        await changeStock(pantry, -removed, 'unpurchased')
       }
-      return
+      return {}
     }
 
-    const expenseId = total > 0 ? await createExpense(item, total) : (item.expense_id ?? null)
     // Appliances and other durables are expenses only — no pantry stock.
     const existing = isDurable(item) ? null : await findPantryItem(item)
+    const added = existing && purchasedQuantity(existing, item, packSize)
+    if (existing && added === null) return needsPackSize(item, existing)
+
+    const expenseId = total > 0 ? await createExpense(item, total) : (item.expense_id ?? null)
     const pantryItemId = existing?.id ?? item.pantry_item_id ?? null
 
     await supabase.from('grocery_items').update({ completed, expense_id: expenseId, pantry_item_id: pantryItemId }).eq('id', item.id)
@@ -121,7 +155,7 @@ export function useGroceryItems() {
       prev.map((i) => (i.id === item.id ? { ...i, completed, expense_id: expenseId, pantry_item_id: pantryItemId } : i))
     )
 
-    if (isDurable(item)) return
+    if (isDurable(item)) return {}
 
     const purchase = { payer: item.payer || 'shared', last_purchased_at: new Date().toISOString() }
     if (Number(item.price) > 0) Object.assign(purchase, priceFields(item))
@@ -129,8 +163,8 @@ export function useGroceryItems() {
     if (existing) {
       // A fresh purchase replaces an expired batch.
       if (expiryState(existing) === 'expired') purchase.expiry_date = null
-      await updateRows('pantry_items', existing.id, purchase)
-      await changeStock(existing, purchasedQuantity(existing, item), 'purchased')
+      await updateRows('pantry_items', existing.id, { ...purchase, ...packSizePatch(existing, item.unit, packSize) })
+      await changeStock(existing, added, 'purchased')
     } else {
       const { data } = await insertRows('pantry_items', [
         {
@@ -149,6 +183,7 @@ export function useGroceryItems() {
         setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, pantry_item_id: created.id } : i)))
       }
     }
+    return {}
   }, [])
 
   // Price (amount + basis) and quantity edits. If the item was already

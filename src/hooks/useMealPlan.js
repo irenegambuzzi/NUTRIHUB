@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { getCurrentWeekStart } from '../lib/week'
+import { getCurrentWeekStart, legacyWeekStart } from '../lib/week'
 import { WEEKDAYS, MEAL_TYPES } from '../data/constants'
 
 function buildEmptyPlan() {
@@ -14,6 +14,9 @@ function buildEmptyPlan() {
 
 export function useMealPlan(profileId) {
   const weekStart = useMemo(() => getCurrentWeekStart(), [])
+  // Weeks saved before the time zone fix are keyed by the Sunday before.
+  // They're still read; anything saved now uses the Monday and wins.
+  const weekKeys = useMemo(() => [legacyWeekStart(weekStart), weekStart], [weekStart])
   const [plan, setPlan] = useState(buildEmptyPlan)
   const [loading, setLoading] = useState(true)
 
@@ -22,17 +25,18 @@ export function useMealPlan(profileId) {
     const { data } = await supabase
       .from('meal_plan_entries')
       .select('*')
-      .eq('week_start', weekStart)
+      .in('week_start', weekKeys)
       .eq('profile_id', profileId)
     const next = buildEmptyPlan()
     if (data) {
-      for (const entry of data) {
+      const legacyFirst = [...data].sort((a, b) => (a.week_start === weekStart) - (b.week_start === weekStart))
+      for (const entry of legacyFirst) {
         next[entry.day_of_week][entry.meal_type] = entry
       }
     }
     setPlan(next)
     setLoading(false)
-  }, [weekStart, profileId])
+  }, [weekStart, weekKeys, profileId])
 
   useEffect(() => {
     fetchPlan()
@@ -56,10 +60,15 @@ export function useMealPlan(profileId) {
 
       if (!error && data) {
         setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: data } }))
+        // The old Sunday-keyed copy of this slot is replaced, not kept.
+        await supabase
+          .from('meal_plan_entries')
+          .delete()
+          .match({ week_start: weekKeys[0], day_of_week: day, meal_type: mealType, profile_id: profileId })
       }
       return { error }
     },
-    [weekStart, profileId]
+    [weekStart, weekKeys, profileId]
   )
 
   const clearMeal = useCallback(
@@ -67,16 +76,17 @@ export function useMealPlan(profileId) {
       await supabase
         .from('meal_plan_entries')
         .delete()
-        .match({ week_start: weekStart, day_of_week: day, meal_type: mealType, profile_id: profileId })
+        .in('week_start', weekKeys)
+        .match({ day_of_week: day, meal_type: mealType, profile_id: profileId })
       setPlan((prev) => ({ ...prev, [day]: { ...prev[day], [mealType]: null } }))
     },
-    [weekStart, profileId]
+    [weekKeys, profileId]
   )
 
   const resetPlan = useCallback(async () => {
-    await supabase.from('meal_plan_entries').delete().eq('week_start', weekStart).eq('profile_id', profileId)
+    await supabase.from('meal_plan_entries').delete().in('week_start', weekKeys).eq('profile_id', profileId)
     setPlan(buildEmptyPlan())
-  }, [weekStart, profileId])
+  }, [weekKeys, profileId])
 
   return { plan, loading, weekStart, setMeal, clearMeal, resetPlan }
 }

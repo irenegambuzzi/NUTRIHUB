@@ -529,7 +529,7 @@ function DataView({ items, categories, categoryName, importItems }) {
     if (backup.app !== 'nutrihub-inventory' || !Array.isArray(backup.items)) {
       return setMessage('That file is not a NutriHub inventory backup.')
     }
-    if (!window.confirm(`Restore ${backup.items.length} items from ${backup.exported_at?.slice(0, 10) || 'this backup'}? Items in the backup overwrite current ones with the same id; other items are kept.`)) return
+    if (!window.confirm(`Restore ${backup.items.length} items from ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'this backup'}? Items in the backup overwrite current ones with the same id; other items are kept.`)) return
     const steps = [() => restoreCategories(backup), () => importItems(backup.items), () => restoreLogs(backup)]
     for (const step of steps) {
       const { error } = await step()

@@ -26,18 +26,22 @@ export function formatUnitPrice(row) {
 // What a grocery line costs: quantity converted into the price basis,
 // e.g. 10 can × €1/can = €10, or 1 kg at €2.50/500 gr = €5. `pack` is
 // the linked pantry item, for multipack conversions (pack ↔ btl).
+// null when the quantity can't be converted into the price basis (e.g.
+// 2 pack at €/gr with no pack size): the total is unknown, not a guess.
 export function lineTotal(row, pack) {
   const price = Number(row.price) || 0
   if (!price) return 0
   const { qty, unit } = priceBasis(row)
-  const amount = convertQuantity(row.quantity ?? 1, row.unit, unit, pack) ?? (Number(row.quantity) || 1)
-  return round2((price * amount) / qty)
+  const amount = convertQuantity(row.quantity ?? 1, row.unit, unit, pack)
+  return amount === null ? null : round2((price * amount) / qty)
 }
 
-// Inverse of lineTotal: the per-basis price that makes the line cost `total`.
+// Inverse of lineTotal: the per-basis price that makes the line cost
+// `total`, or null when the units can't be converted.
 export function unitPriceFromTotal(total, row, pack) {
   const { qty, unit } = priceBasis(row)
-  const amount = convertQuantity(row.quantity ?? 1, row.unit, unit, pack) ?? (Number(row.quantity) || 1)
+  const amount = convertQuantity(row.quantity ?? 1, row.unit, unit, pack)
+  if (amount === null) return null
   return amount > 0 ? round2((Number(total) * qty) / amount) : 0
 }
 

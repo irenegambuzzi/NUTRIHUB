@@ -9,6 +9,7 @@ import { CategoryManager } from '../components/expenses/CategoryManager'
 import { PAID_BY_OPTIONS, EXPENSE_PERIODS, EXPENSE_PERIOD_LABELS } from '../data/constants'
 import { colorForIndex, hexForIndex } from '../lib/categoryColors'
 import { isInPeriod, getPeriodBuckets, bucketKeyForDate, localDateString } from '../lib/expensePeriods'
+import { parseLocalDate } from '../lib/week'
 import { cn } from '../lib/cn'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
@@ -337,7 +338,7 @@ function ExpenseGroup({ group, color, subName, onDelete }) {
           <div className="min-w-0">
             <p className="font-bold text-[var(--color-text)]">{main?.name || 'Uncategorized'}</p>
             <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
-              {new Date(date).toLocaleDateString('en-GB')} · {subtitle} · {payers.join(', ')}
+              {parseLocalDate(date).toLocaleDateString('en-GB')} · {subtitle} · {payers.join(', ')}
             </span>
           </div>
         </div>

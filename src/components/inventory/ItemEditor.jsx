@@ -4,7 +4,7 @@ import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS } from '../../data/constants'
-import { roundHalf, unitFactor } from '../../lib/inventory'
+import { quantityStep, roundQuantity, unitFactor } from '../../lib/inventory'
 import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
 
@@ -40,8 +40,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
   const [unitNote, setUnitNote] = useState('')
 
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }))
-  // Quantities snap to steps of 0.5 when the field is left.
-  const snap = (field) => () => setForm((f) => ({ ...f, [field]: String(roundHalf(f[field])) }))
+  // Quantities snap to their unit's step when the field is left (stock
+  // entered in packs snaps like any count).
+  const fieldUnit = (f, field) => (field === 'current_stock' && f.multipack && f.stockInPacks ? f.packaging_unit : f.unit)
+  const snap = (field) => () => setForm((f) => ({ ...f, [field]: String(roundQuantity(f[field], fieldUnit(f, field))) }))
 
   // Switching between gr↔kg or ml↔L converts the quantities; other
   // switches (e.g. pack → pcs) can't be converted safely, so the
@@ -50,8 +52,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
     const next = e.target.value
     const factor = unitFactor(form.unit, next)
     if (factor !== null && factor !== 1 && !form.stockInPacks) {
-      const stock = roundHalf((parseFloat(form.current_stock) || 0) * factor)
-      const min = roundHalf((parseFloat(form.min_stock) || 0) * factor)
+      const stock = roundQuantity((parseFloat(form.current_stock) || 0) * factor, next)
+      const min = roundQuantity((parseFloat(form.min_stock) || 0) * factor, next)
       setForm((f) => ({ ...f, unit: next, current_stock: String(stock), min_stock: String(min) }))
       setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.`)
     } else {
@@ -97,8 +99,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
       unit: form.unit,
       packaging_unit: form.multipack ? form.packaging_unit : null,
       quantity_per_pack: form.multipack ? perPack : null,
-      current_stock: roundHalf(baseStock),
-      min_stock: roundHalf(form.min_stock),
+      current_stock: roundQuantity(baseStock, form.unit),
+      min_stock: roundQuantity(form.min_stock, form.unit),
       expiry_date: form.expiry_date || null,
       batch_lot: form.batch_lot.trim() || null,
       notes: form.notes.trim() || null,
@@ -264,16 +266,16 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
                 </button>
               )}
             </div>
-            <Input type="number" min="0" step="0.5" value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
+            <Input type="number" min="0" step={quantityStep(fieldUnit(form, 'current_stock'))} value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
           </div>
           <div>
             <Label>Minimum stock ({form.unit})</Label>
-            <Input type="number" min="0" step="0.5" value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
+            <Input type="number" min="0" step={quantityStep(form.unit)} value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
           </div>
         </div>
         {form.multipack && form.stockInPacks && (
           <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
-            {stockValue} {form.packaging_unit} × {perPack} = {roundHalf(baseStock)} {form.unit}
+            {stockValue} {form.packaging_unit} × {perPack} = {roundQuantity(baseStock, form.unit)} {form.unit}
           </p>
         )}
         <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
