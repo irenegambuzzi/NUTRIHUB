@@ -13,3 +13,12 @@ describe('currentExpensesSince', () => {
     expect(currentExpensesSince(new Date(2027, 0, 1))).toBe('2026-12-28')
   })
 })
+
+describe('categoryIdFor', async () => {
+  const { categoryIdFor } = await import('../hooks/useInventoryCategories')
+  it('makes a readable id from a new category name', () => {
+    expect(categoryIdFor('Gluten free!')).toBe('gluten-free')
+    expect(categoryIdFor('Caffè & Tè')).toBe('caffe-te')
+    expect(categoryIdFor('!!!')).toBe('category')
+  })
+})

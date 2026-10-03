@@ -4,6 +4,18 @@ import { attempt, must } from '../lib/db'
 import { inventoryCategoryStore } from '../lib/stores'
 import { CATEGORY_NAME_OVERRIDES, DURABLE_CATEGORY_IDS, HIDDEN_CATEGORY_IDS } from '../data/constants'
 
+// "Gluten free!" → "gluten-free".
+export function categoryIdFor(name) {
+  return (
+    name
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'category'
+  )
+}
+
 // Same list (and names) everywhere the app offers categories.
 function visibleCategories(rows) {
   const hidden = new Set(HIDDEN_CATEGORY_IDS)
@@ -45,7 +57,33 @@ export function useInventoryCategories() {
     return { data, error }
   }, [subsByParent])
 
+  // A new main category, at the end of the shop order. Its id is made from
+  // the name ("Gluten free" → "gluten-free"), numbered if taken.
+  const addCategory = useCallback(
+    async (name) => {
+      const ids = new Set(rows.map((c) => c.id))
+      const base = categoryIdFor(name)
+      let id = base
+      for (let n = 2; ids.has(id); n++) id = `${base}-${n}`
+      const sortOrder = Math.max(0, ...rows.filter((c) => c.type === 'parent').map((c) => c.sort_order ?? 0)) + 1
+      const { data, error } = await attempt(
+        async () =>
+          must(
+            await supabase
+              .from('inventory_categories')
+              .insert([{ id, name: name.trim(), parent_id: null, type: 'parent', sort_order: sortOrder }])
+              .select()
+              .single()
+          ),
+        { retry: false }
+      )
+      if (!error) inventoryCategoryStore.upsertLocal([data])
+      return { data, error }
+    },
+    [rows]
+  )
+
   const categoryName = useCallback((id) => byId.get(id)?.name ?? 'Uncategorized', [byId])
 
-  return { categories, parents, pantryParents, subsByParent, byId, categoryName, addSubcategory }
+  return { categories, parents, pantryParents, subsByParent, byId, categoryName, addCategory, addSubcategory }
 }

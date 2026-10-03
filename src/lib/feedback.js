@@ -76,6 +76,7 @@ export function toastLoadError(error, retry, source) {
 
 // In-app dialog that asks for values. fields: [{ name, type, label, ... }]
 //   choice – options: [{ value, label, hint }], value: the default
+//   select – a drop-down: options [{ value, label }], required: true to insist
 //   date   – optional unless required: true
 //   number – min (exclusive lower bound), unit shown after the input
 // Resolves to { name: value } when confirmed, or null when cancelled.
@@ -107,6 +108,7 @@ export function dialogErrors(fields, values) {
     }
     if (f.type === 'date' && f.required && !raw) errors[f.name] = 'Pick a date.'
     if (f.type === 'choice' && !f.options.some((o) => o.value === values[f.name])) errors[f.name] = 'Pick one.'
+    if (f.type === 'select' && f.required && !raw) errors[f.name] = 'Pick one.'
   }
   return errors
 }

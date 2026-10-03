@@ -101,3 +101,12 @@ describe('askDialog', () => {
     expect(parseNumber('')).toBeNaN()
   })
 })
+
+describe('select fields', () => {
+  it('insist on a choice when required', () => {
+    const fields = [{ name: 'categoryId', type: 'select', required: true, options: [{ value: 'snacks', label: 'Snacks' }] }]
+    expect(dialogErrors(fields, { categoryId: '' })).toEqual({ categoryId: 'Pick one.' })
+    expect(dialogErrors(fields, { categoryId: 'snacks' })).toEqual({})
+  })
+})
+

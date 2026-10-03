@@ -43,6 +43,15 @@ export const inventoryCategoryStore = createTableStore({
   compare: (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name),
 })
 
+// Categories chosen by hand for item names (supabase/011), shared by both
+// phones and tried before the keyword list.
+export const categoryMemoryStore = createTableStore({
+  name: 'category_memory',
+  table: 'category_memory',
+  persist: 'category_memory',
+  compare: (a, b) => a.id.localeCompare(b.id),
+})
+
 export const expenseCategoryStore = createTableStore({
   name: 'expense_categories',
   table: 'expense_categories',

@@ -74,7 +74,7 @@ export function GroceryPage() {
     budgetPlan,
     checkOff,
   } = useGroceryList()
-  const { parents, subsByParent, categoryName } = useInventoryCategories()
+  const { parents, subsByParent, categoryName, addCategory, addSubcategory } = useInventoryCategories()
 
   const [view, setViewState] = useState(readView)
   const [fullForm, setFullForm] = useState(null) // null | name to start the full form with
@@ -225,6 +225,8 @@ export function GroceryPage() {
                 categoryName={categoryName}
                 pantryByName={pantryByName}
                 onAdd={addItem}
+                onAddCategory={addCategory}
+                onAddSubcategory={addSubcategory}
                 onAdded={() => setFullForm(null)}
               />
             </div>

@@ -1,31 +1,29 @@
 import { useState } from 'react'
-import { AlertTriangle, Plus, Wand2 } from 'lucide-react'
+import { AlertTriangle, Plus } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Input, Select } from '../ui/Field'
+import { CategoryFields } from '../inventory/CategoryFields'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker, UnitOptions } from './shared'
 import { EXTRA_PACKAGING_UNITS, normName } from '../../lib/grocery'
 import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
-import { guessCategory } from '../../lib/categoryGuess'
+import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { quantityStep, roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { priceUnitOptions } from '../../lib/pricing'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
 
-// What a name fills in: the category guessed from it (or taken from the
-// pantry item of the same name), and that item's unit and last price.
-function fieldsFromName(value, { parents, subsByParent, pantryByName }, priceDraft = EMPTY_PRICE) {
-  const known = pantryByName.get(normName(value))
-  const guess = known ? { categoryId: known.category_id, subcategoryId: known.subcategory_id } : guessCategory(value)
-  // No (or no longer a) match: drop an earlier guess instead of keeping
+// What a name fills in: the suggested category (see useCategorySuggestions)
+// and the unit and last price of the pantry item with that name.
+function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) {
+  const pick = suggest(value)
+  // No (or no longer a) suggestion: drop an earlier one instead of keeping
   // it, e.g. "Te" → Coffee & Tea, then "Test" → nothing.
-  if (!guess?.categoryId || !parents.some((p) => p.id === guess.categoryId)) return { categoryId: '', subcategoryId: '', suggested: false }
-  // Only use a sub-category that actually exists in the database.
-  const subExists = (subsByParent.get(guess.categoryId) || []).some((sub) => sub.id === guess.subcategoryId)
-  const fields = { categoryId: guess.categoryId, subcategoryId: subExists ? guess.subcategoryId : '', suggested: true }
+  const fields = { categoryId: pick?.categoryId ?? '', subcategoryId: pick?.subcategoryId ?? '', suggested: Boolean(pick) }
+  const known = pantryByName.get(normName(value))
   if (known) {
     fields.unit = known.unit
     if (Number(known.price) > 0 && !priceDraft.price) {
@@ -36,35 +34,37 @@ function fieldsFromName(value, { parents, subsByParent, pantryByName }, priceDra
 }
 
 // The full form for adding an item to the grocery list. `initialName`
-// (from the quick-add box) starts it filled in.
-export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd, initialName = '', onAdded }) {
-  const lookups = { parents, subsByParent, pantryByName }
-  const [initial] = useState(() => (initialName ? fieldsFromName(initialName, lookups) : {}))
+// (from the quick-add box) starts it filled in. The category is suggested
+// from the name, or left empty for the user to pick; a pick by hand is
+// remembered for that name on both phones.
+export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd, onAddCategory, onAddSubcategory, initialName = '', onAdded }) {
+  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
+  const [initial] = useState(() => (initialName ? fieldsFromName(initialName, suggest, pantryByName) : {}))
   const [name, setName] = useState(initialName)
   const [categoryId, setCategoryId] = useState(initial.categoryId ?? '')
   const [subcategoryId, setSubcategoryId] = useState(initial.subcategoryId ?? '')
   const [categoryTouched, setCategoryTouched] = useState(false)
+  const [categoryError, setCategoryError] = useState('')
   const [suggested, setSuggested] = useState(initial.suggested ?? false)
   const [priceDraft, setPriceDraft] = useState(initial.priceDraft ?? EMPTY_PRICE)
   const [quantity, setQuantity] = useState('1')
   const [unit, setUnit] = useState(initial.unit ?? DEFAULT_UNIT)
   const [payer, setPayer] = useState('shared')
 
-  // Guess category/subcategory from the name until the user picks one.
+  // Suggest category/subcategory from the name until the user picks one.
   const handleNameChange = (value) => {
     setName(value)
     if (categoryTouched) return
-    const fields = fieldsFromName(value, lookups, priceDraft)
+    const fields = fieldsFromName(value, suggest, pantryByName, priceDraft)
     setCategoryId(fields.categoryId)
     setSubcategoryId(fields.subcategoryId)
     setSuggested(fields.suggested)
+    if (fields.categoryId) setCategoryError('')
     if (fields.unit) setUnit(fields.unit)
     if (fields.priceDraft) setPriceDraft(fields.priceDraft)
   }
 
-  const formCategory = categoryId || parents[0]?.id || ''
-  const formSubs = subsByParent.get(formCategory) || []
-  const suggestedUnits = SUGGESTED_UNITS[formCategory] || []
+  const suggestedUnits = SUGGESTED_UNITS[categoryId] || []
   const formQuantity = roundQuantity(quantity, unit) || 1
   const formPack = pantryByName.get(normName(name))
   const formPriceUnits = priceUnitOptions({ unit }, formPack)
@@ -73,10 +73,11 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
+    if (!categoryId) return setCategoryError('Pick a category (or add a new one).')
     const known = pantryByName.get(normName(name))
     const { error } = await onAdd({
       name: name.trim(),
-      categoryId: formCategory || null,
+      categoryId,
       subcategoryId: subcategoryId || null,
       price: parseFloat(priceDraft.price) || 0,
       priceQty: parseFloat(priceDraft.price) > 0 ? parseFloat(priceDraft.price_qty) || 1 : null,
@@ -88,7 +89,10 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
+    if (categoryTouched) remember(name, categoryId, subcategoryId || null)
     setName('')
+    setCategoryId('')
+    setSubcategoryId('')
     setPriceDraft({ price: '', price_qty: '1', price_unit: '' })
     setQuantity('1')
     setCategoryTouched(false)
@@ -100,45 +104,24 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     <form onSubmit={handleAdd}>
       <Card className="space-y-3 rounded-3xl">
         <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => handleNameChange(e.target.value)} />
-        <div className="grid grid-cols-2 gap-2">
-          <Select
-            value={formCategory}
-            onChange={(e) => {
-              setCategoryId(e.target.value)
-              setSubcategoryId('')
-              setCategoryTouched(true)
-              setSuggested(false)
-            }}
-            aria-label="Category"
-          >
-            {parents.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={subcategoryId}
-            onChange={(e) => {
-              setSubcategoryId(e.target.value)
-              setCategoryTouched(true)
-              setSuggested(false)
-            }}
-            aria-label="Subcategory"
-          >
-            <option value="">No subcategory</option>
-            {formSubs.map((sub) => (
-              <option key={sub.id} value={sub.id}>
-                {sub.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-        {suggested && (
-          <p className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5 -mt-1">
-            <Wand2 size={12} className="text-[var(--color-accent)]" /> Category suggested from the name — change it if it's wrong.
-          </p>
-        )}
+        <CategoryFields
+          categoryId={categoryId}
+          subcategoryId={subcategoryId}
+          parents={parents}
+          subsByParent={subsByParent}
+          onAddCategory={onAddCategory}
+          onAddSubcategory={onAddSubcategory}
+          onChange={(pick) => {
+            setCategoryId(pick.categoryId)
+            setSubcategoryId(pick.subcategoryId)
+            setCategoryTouched(true)
+            setSuggested(false)
+            setCategoryError('')
+          }}
+          suggested={suggested}
+          error={categoryError}
+          labels={false}
+        />
         <div className="grid grid-cols-2 gap-2">
           <Input
             type="number"
@@ -163,7 +146,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
         />
         {suggestedUnits.length > 0 && !suggestedUnits.includes(unit) && !EXTRA_PACKAGING_UNITS.includes(unit) && (
           <p className={cn('text-[11px] flex items-center gap-1.5 -mt-1', STATUS_STYLES.low.text)}>
-            <AlertTriangle size={12} /> "{unit}" is unusual for {categoryName(formCategory)} (usually {suggestedUnits.join(', ')}).
+            <AlertTriangle size={12} /> "{unit}" is unusual for {categoryName(categoryId)} (usually {suggestedUnits.join(', ')}).
           </p>
         )}
         <div className="flex items-center gap-2">

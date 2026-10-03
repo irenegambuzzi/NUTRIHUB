@@ -5,11 +5,11 @@ import { Input } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT } from '../../data/constants'
-import { guessCategory } from '../../lib/categoryGuess'
+import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { normName, payerLabel } from '../../lib/grocery'
 import { stepQuantity } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
-import { showToast } from '../../lib/feedback'
+import { askDialog, showToast } from '../../lib/feedback'
 import { buildSuggestions, matchSuggestions, readHistory, rememberAdded } from '../../lib/quickAdd'
 
 // A sensible first quantity: 100 gr / ml, otherwise 1.
@@ -23,33 +23,45 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
   const [active, setActive] = useState(0)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState(readHistory)
+  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
 
   const suggestions = useMemo(() => buildSuggestions(pantryItems, items, history), [pantryItems, items, history])
   const matches = matchSuggestions(suggestions, text)
   const isParent = (id) => parents.some((p) => p.id === id)
   const isSubOf = (parentId, id) => (subsByParent.get(parentId) || []).some((s) => s.id === id)
 
-  // Picked suggestion, or what was typed (category guessed from the name).
-  function entryFor(suggestion) {
-    if (suggestion) return suggestion
-    const name = text.trim()
-    const known = suggestions.find((s) => normName(s.name) === normName(name))
-    if (known) return known
-    const guess = guessCategory(name)
-    return { name, categoryId: guess?.categoryId, subcategoryId: guess?.subcategoryId, unit: DEFAULT_UNIT, price: 0, payer: 'shared' }
+  // Picked suggestion, or what was typed. Its category comes from what was
+  // remembered for the name, the pantry or the keywords; if there's none,
+  // the user is asked (and the answer remembered).
+  async function entryFor(suggestion) {
+    const name = (suggestion?.name ?? text).trim()
+    const known = suggestion ?? suggestions.find((s) => normName(s.name) === normName(name))
+    const entry = known ?? { name, unit: DEFAULT_UNIT, price: 0, payer: 'shared' }
+    const pick = suggest(name) ?? (isParent(entry.categoryId) ? { categoryId: entry.categoryId, subcategoryId: entry.subcategoryId } : null)
+    if (pick) return { ...entry, categoryId: pick.categoryId, subcategoryId: pick.subcategoryId }
+    const answer = await askDialog({
+      title: `Which category is "${name}"?`,
+      message: "It isn't in the list yet. The app will remember your choice for next time.",
+      fields: [{ name: 'categoryId', type: 'select', required: true, placeholder: 'Choose a category…', options: parents.map((p) => ({ value: p.id, label: p.name })) }],
+      confirmLabel: 'Add',
+    })
+    if (!answer) return null
+    remember(name, answer.categoryId, null)
+    return { ...entry, categoryId: answer.categoryId, subcategoryId: null }
   }
 
   const add = async (suggestion) => {
-    const entry = entryFor(suggestion)
-    if (!entry.name || busy) return
+    if (busy || !(suggestion?.name ?? text).trim()) return
     setBusy(true)
+    const entry = await entryFor(suggestion)
+    if (!entry) return setBusy(false)
     const open = items.find((i) => !i.completed && normName(i.name) === normName(entry.name))
     if (open) {
       const quantity = stepQuantity(open.quantity, open.unit, 1)
       const { error } = await updatePricing(open, { quantity }, totalFor({ ...open, quantity }))
       if (!error) showToast({ message: `"${open.name}" was already on the list — now ${quantity} ${open.unit}` })
     } else {
-      const categoryId = isParent(entry.categoryId) ? entry.categoryId : parents[0]?.id ?? null
+      const { categoryId } = entry
       const subcategoryId = isSubOf(categoryId, entry.subcategoryId) ? entry.subcategoryId : null
       const unit = entry.unit || DEFAULT_UNIT
       const { error } = await addItem({

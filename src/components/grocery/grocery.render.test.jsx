@@ -54,4 +54,20 @@ describe('grocery components render', () => {
     expect(html).toContain('value="Green tea"')
     expect(html).toMatch(/<option value="beverages" selected=""/)
   })
+
+  it("leaves the category empty when the name isn't known, and offers to add one", () => {
+    const html = renderToStaticMarkup(
+      <AddItemForm
+        initialName="Stuff for Marco"
+        parents={parents}
+        subsByParent={new Map()}
+        categoryName={categoryName}
+        pantryByName={new Map()}
+        onAdd={async () => ({})}
+        onAddCategory={async () => ({})}
+      />
+    )
+    expect(html).toMatch(/<option value="" disabled="" selected="">Choose a category…/)
+    expect(html).toContain('+ New category…')
+  })
 })

@@ -20,7 +20,7 @@ import { daysUntil, expiryLabel, expiryState, restockReason, stockStatus, sugges
 export function PantryPage() {
   const { items, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
   const { items: groceryItems, addItem: addGroceryItem } = useGroceryItems()
-  const { categories, pantryParents: parents, subsByParent, byId, categoryName, addSubcategory } = useInventoryCategories()
+  const { categories, pantryParents: parents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
 
   const [view, setView] = useState('items')
@@ -294,6 +294,7 @@ export function PantryPage() {
           item={editor.item}
           parents={parents}
           subsByParent={subsByParent}
+          onAddCategory={addCategory}
           onAddSubcategory={addSubcategory}
           onSave={handleSave}
           onClose={() => setEditor(null)}

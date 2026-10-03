@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import { Button } from './Button'
-import { Input, Label } from './Field'
+import { Input, Label, Select } from './Field'
 import { cn } from '../../lib/cn'
 import { closeDialog, dialogErrors, dismissToast, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
@@ -125,6 +125,17 @@ function DialogForm({ dialog }) {
                 </label>
               ))}
             </div>
+          ) : f.type === 'select' ? (
+            <Select id={`dialog-${f.name}`} autoFocus={i === 0} value={values[f.name]} onChange={(e) => set(f.name, e.target.value)}>
+              <option value="" disabled={f.required}>
+                {f.placeholder ?? 'Choose…'}
+              </option>
+              {f.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
           ) : (
             <div className="flex items-center gap-2">
               <Input

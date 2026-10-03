@@ -7,14 +7,14 @@ import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT
 import { quantityStep, roundQuantity, unitFactor } from '../../lib/inventory'
 import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
+import { CategoryFields } from './CategoryFields'
+import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 
-const NEW_SUB = '__new__'
-
-function initialState(item, parents) {
+function initialState(item) {
   const perPack = Number(item?.quantity_per_pack) || ''
   return {
     name: item?.name ?? '',
-    category_id: item?.category_id ?? parents[0]?.id ?? '',
+    category_id: item?.category_id ?? '',
     subcategory_id: item?.subcategory_id ?? '',
     unit: item?.unit ?? DEFAULT_UNIT,
     multipack: Boolean(item?.packaging_unit && perPack),
@@ -32,12 +32,28 @@ function initialState(item, parents) {
   }
 }
 
-export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSave, onClose }) {
-  const [form, setForm] = useState(() => initialState(item, parents))
-  const [newSubName, setNewSubName] = useState('')
+// Adding or editing a pantry item. For a new item the category is
+// suggested from the name until the user picks one; a pick by hand is
+// remembered for that name on both phones.
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose }) {
+  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
+  const [form, setForm] = useState(() => initialState(item))
+  const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id))
+  const [categoryPicked, setCategoryPicked] = useState(false)
+  const [suggested, setSuggested] = useState(false)
+  const [categoryError, setCategoryError] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [unitNote, setUnitNote] = useState('')
+
+  // Until a category is picked, it follows the name's suggestion.
+  const changeName = (name) => {
+    if (categoryTouched) return setForm((f) => ({ ...f, name }))
+    const pick = suggest(name)
+    setForm((f) => ({ ...f, name, category_id: pick?.categoryId ?? '', subcategory_id: pick?.subcategoryId ?? '' }))
+    setSuggested(Boolean(pick))
+    if (pick) setCategoryError('')
+  }
 
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }))
   // Quantities snap to their unit's step when the field is left (stock
@@ -66,7 +82,6 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
   const suggestedUnits = SUGGESTED_UNITS[form.category_id] || []
   const unusualUnit = suggestedUnits.length > 0 && !suggestedUnits.includes(form.unit)
-  const subs = subsByParent.get(form.category_id) || []
   const perPack = Number(form.quantity_per_pack) || 0
   const stockValue = parseFloat(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
@@ -74,24 +89,12 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) return setError('Give the item a name.')
+    if (!form.category_id) return setCategoryError('Pick a category (or add a new one).')
     if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
     setSaving(true)
     setError('')
 
-    let subcategoryId = form.subcategory_id || null
-    if (subcategoryId === NEW_SUB) {
-      if (!newSubName.trim()) {
-        setSaving(false)
-        return setError('Name the new sub-category.')
-      }
-      const { data, error: subError } = await onAddSubcategory(form.category_id, newSubName)
-      if (subError) {
-        setSaving(false)
-        // The toast explains; the editor stays open.
-        return setError('')
-      }
-      subcategoryId = data.id
-    }
+    const subcategoryId = form.subcategory_id || null
 
     const { error: saveError } = await onSave({
       name: form.name.trim(),
@@ -112,6 +115,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
     setSaving(false)
     // The toast explains; the editor stays open so Save can be pressed again.
     if (saveError) return
+    if (categoryPicked) remember(form.name, form.category_id, subcategoryId)
     onClose()
   }
 
@@ -131,39 +135,26 @@ export function ItemEditor({ item, parents, subsByParent, onAddSubcategory, onSa
 
         <div>
           <Label>Name</Label>
-          <Input autoFocus placeholder="e.g. Rice, Dish soap, Paracetamol" value={form.name} onChange={set('name')} />
+          <Input autoFocus placeholder="e.g. Rice, Dish soap, Paracetamol" value={form.name} onChange={(e) => changeName(e.target.value)} />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label>Category</Label>
-            <Select
-              value={form.category_id}
-              onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value, subcategory_id: '' }))}
-            >
-              {parents.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <Label>Sub-category</Label>
-            <Select value={form.subcategory_id} onChange={set('subcategory_id')}>
-              <option value="">None</option>
-              {subs.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-              <option value={NEW_SUB}>+ New sub-category…</option>
-            </Select>
-          </div>
-        </div>
-        {form.subcategory_id === NEW_SUB && (
-          <Input placeholder="New sub-category name" value={newSubName} onChange={(e) => setNewSubName(e.target.value)} />
-        )}
+        <CategoryFields
+          categoryId={form.category_id}
+          subcategoryId={form.subcategory_id}
+          parents={parents}
+          subsByParent={subsByParent}
+          onAddCategory={onAddCategory}
+          onAddSubcategory={onAddSubcategory}
+          onChange={(pick) => {
+            setForm((f) => ({ ...f, category_id: pick.categoryId, subcategory_id: pick.subcategoryId }))
+            setCategoryTouched(true)
+            setCategoryPicked(true)
+            setSuggested(false)
+            setCategoryError('')
+          }}
+          suggested={suggested}
+          error={categoryError}
+        />
 
         <div>
           <Label>Unit (what you count stock in)</Label>
