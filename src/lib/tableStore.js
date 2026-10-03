@@ -107,7 +107,7 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
     getSnapshot,
     isStarted: () => started,
     subscribe,
-    useRows: () => useSyncExternalStore(subscribe, getSnapshot),
+    useRows: () => useSyncExternalStore(subscribe, getSnapshot, getSnapshot),
     // Rows just saved by this phone: shown at once, without waiting for
     // realtime (which then changes nothing).
     upsertLocal: (rows) => setRows(rows.reduce((acc, row) => applyChange(acc, { eventType: 'UPDATE', new: row }, opts), state.rows)),
@@ -167,7 +167,7 @@ function writeCache(key, rows) {
 // (same hooks as a real one, so components can switch between them).
 const EMPTY_STATE = { rows: [], loaded: false }
 const noSubscription = () => () => {}
-export const emptyStore = { useRows: () => useSyncExternalStore(noSubscription, () => EMPTY_STATE) }
+export const emptyStore = { useRows: () => useSyncExternalStore(noSubscription, () => EMPTY_STATE, () => EMPTY_STATE) }
 
 // Stores made on demand for a slice (e.g. one week's meal plan), shared
 // by everything that asks for the same key.

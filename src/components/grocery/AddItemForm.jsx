@@ -13,44 +13,53 @@ import { quantityStep, roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { priceUnitOptions } from '../../lib/pricing'
 
-// The form for adding an item to the grocery list by hand.
-export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd }) {
-  const [name, setName] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [subcategoryId, setSubcategoryId] = useState('')
+const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
+
+// What a name fills in: the category guessed from it (or taken from the
+// pantry item of the same name), and that item's unit and last price.
+function fieldsFromName(value, { parents, subsByParent, pantryByName }, priceDraft = EMPTY_PRICE) {
+  const known = pantryByName.get(normName(value))
+  const guess = known ? { categoryId: known.category_id, subcategoryId: known.subcategory_id } : guessCategory(value)
+  // No (or no longer a) match: drop an earlier guess instead of keeping
+  // it, e.g. "Te" → Coffee & Tea, then "Test" → nothing.
+  if (!guess?.categoryId || !parents.some((p) => p.id === guess.categoryId)) return { categoryId: '', subcategoryId: '', suggested: false }
+  // Only use a sub-category that actually exists in the database.
+  const subExists = (subsByParent.get(guess.categoryId) || []).some((sub) => sub.id === guess.subcategoryId)
+  const fields = { categoryId: guess.categoryId, subcategoryId: subExists ? guess.subcategoryId : '', suggested: true }
+  if (known) {
+    fields.unit = known.unit
+    if (Number(known.price) > 0 && !priceDraft.price) {
+      fields.priceDraft = { price: String(known.price), price_qty: String(known.price_qty || 1), price_unit: known.price_unit || known.unit }
+    }
+  }
+  return fields
+}
+
+// The full form for adding an item to the grocery list. `initialName`
+// (from the quick-add box) starts it filled in.
+export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd, initialName = '', onAdded }) {
+  const lookups = { parents, subsByParent, pantryByName }
+  const [initial] = useState(() => (initialName ? fieldsFromName(initialName, lookups) : {}))
+  const [name, setName] = useState(initialName)
+  const [categoryId, setCategoryId] = useState(initial.categoryId ?? '')
+  const [subcategoryId, setSubcategoryId] = useState(initial.subcategoryId ?? '')
   const [categoryTouched, setCategoryTouched] = useState(false)
-  const [suggested, setSuggested] = useState(false)
-  const [priceDraft, setPriceDraft] = useState({ price: '', price_qty: '1', price_unit: '' })
+  const [suggested, setSuggested] = useState(initial.suggested ?? false)
+  const [priceDraft, setPriceDraft] = useState(initial.priceDraft ?? EMPTY_PRICE)
   const [quantity, setQuantity] = useState('1')
-  const [unit, setUnit] = useState(DEFAULT_UNIT)
+  const [unit, setUnit] = useState(initial.unit ?? DEFAULT_UNIT)
   const [payer, setPayer] = useState('shared')
 
-  // Manual add only: guess category/subcategory from the name (or take
-  // them from the pantry item of the same name) until the user picks one.
+  // Guess category/subcategory from the name until the user picks one.
   const handleNameChange = (value) => {
     setName(value)
     if (categoryTouched) return
-    const known = pantryByName.get(normName(value))
-    const guess = known ? { categoryId: known.category_id, subcategoryId: known.subcategory_id } : guessCategory(value)
-    if (guess?.categoryId && parents.some((p) => p.id === guess.categoryId)) {
-      // Only use a sub-category that actually exists in the database.
-      const subExists = (subsByParent.get(guess.categoryId) || []).some((sub) => sub.id === guess.subcategoryId)
-      setCategoryId(guess.categoryId)
-      setSubcategoryId(subExists ? guess.subcategoryId : '')
-      setSuggested(true)
-      if (known) {
-        setUnit(known.unit)
-        if (Number(known.price) > 0 && !priceDraft.price) {
-          setPriceDraft({ price: String(known.price), price_qty: String(known.price_qty || 1), price_unit: known.price_unit || known.unit })
-        }
-      }
-    } else {
-      // No (or no longer a) match: drop an earlier guess instead of
-      // keeping it, e.g. "Te" → Coffee & Tea, then "Test" → nothing.
-      setCategoryId('')
-      setSubcategoryId('')
-      setSuggested(false)
-    }
+    const fields = fieldsFromName(value, lookups, priceDraft)
+    setCategoryId(fields.categoryId)
+    setSubcategoryId(fields.subcategoryId)
+    setSuggested(fields.suggested)
+    if (fields.unit) setUnit(fields.unit)
+    if (fields.priceDraft) setPriceDraft(fields.priceDraft)
   }
 
   const formCategory = categoryId || parents[0]?.id || ''
@@ -84,6 +93,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     setQuantity('1')
     setCategoryTouched(false)
     setSuggested(false)
+    onAdded?.()
   }
 
   return (

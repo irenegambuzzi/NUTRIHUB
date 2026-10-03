@@ -45,7 +45,7 @@ export function runToastAction(id) {
 }
 
 export const getToasts = () => toasts
-export const useToasts = () => useSyncExternalStore(subscribe, getToasts)
+export const useToasts = () => useSyncExternalStore(subscribe, getToasts, getToasts)
 
 export const SAVE_ERROR = "Couldn't save — check your connection."
 export const LOAD_ERROR = "Couldn't load — check your connection."
@@ -134,4 +134,4 @@ export function closeDialog(values) {
 }
 
 export const getDialog = () => dialog
-export const useDialog = () => useSyncExternalStore(subscribe, getDialog)
+export const useDialog = () => useSyncExternalStore(subscribe, getDialog, getDialog)

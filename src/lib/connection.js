@@ -22,7 +22,7 @@ export function onConnectionChange(listener) {
   return () => listeners.delete(listener)
 }
 
-export const useOnline = () => useSyncExternalStore(onConnectionChange, () => online)
+export const useOnline = () => useSyncExternalStore(onConnectionChange, () => online, () => online)
 
 // A request that never reached Supabase (no signal), as opposed to one it
 // answered with an error.

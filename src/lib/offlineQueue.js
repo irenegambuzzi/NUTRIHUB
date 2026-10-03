@@ -89,7 +89,7 @@ const subscribe = (listener) => {
   return () => listeners.delete(listener)
 }
 
-export const useQueueState = () => useSyncExternalStore(subscribe, () => snapshot)
+export const useQueueState = () => useSyncExternalStore(subscribe, () => snapshot, () => snapshot)
 
 // Back online: send what's waiting.
 onConnectionChange(() => {
