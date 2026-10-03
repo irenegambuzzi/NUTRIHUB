@@ -4,6 +4,8 @@ import { ExpenseForm } from '../components/expenses/ExpenseForm'
 import { ExpenseCharts } from '../components/expenses/ExpenseCharts'
 import { ExpenseGroup } from '../components/expenses/ExpenseGroup'
 import { useExpenses } from '../hooks/useExpenses'
+import { reopenTrip } from '../hooks/usePurchase'
+import { askDialog } from '../lib/feedback'
 import { PAID_BY_OPTIONS, EXPENSE_PERIODS, EXPENSE_PERIOD_LABELS } from '../data/constants'
 import { colorForIndex, hexForIndex } from '../lib/categoryColors'
 import { isInPeriod, getPeriodBuckets, bucketKeyForDate } from '../lib/expensePeriods'
@@ -11,6 +13,31 @@ import { cn } from '../lib/cn'
 
 export function ExpensesPage() {
   const { expenses, categories, addExpense, addCategory, deleteCategory, deleteExpense } = useExpenses()
+
+  // An expense from a confirmed purchase: deleting it alone would leave the
+  // purchase's stock and history behind, so reopening the purchase (which
+  // undoes all of it) is offered first.
+  const removeExpense = async (expense) => {
+    if (!expense.trip_id) return deleteExpense(expense.id)
+    const answer = await askDialog({
+      title: 'Part of a confirmed purchase',
+      message: `"${expense.description || 'This expense'}" was recorded when a purchase was confirmed. Deleting only the expense leaves that purchase's stock and history as they are.`,
+      fields: [
+        {
+          name: 'how',
+          type: 'choice',
+          value: 'reopen',
+          options: [
+            { value: 'reopen', label: 'Reopen purchase', hint: 'Undoes its stock, history and expenses; the items go back to the cart.' },
+            { value: 'expense', label: 'Delete expense only', hint: 'The purchase stays, marked incomplete in Receipts.' },
+          ],
+        },
+      ],
+      confirmLabel: 'Continue',
+    })
+    if (answer?.how === 'reopen') await reopenTrip(expense.trip_id)
+    else if (answer?.how === 'expense') await deleteExpense(expense.id)
+  }
 
   const [period, setPeriod] = useState('month')
   const [paidByFilter, setPaidByFilter] = useState('all')
@@ -146,7 +173,7 @@ export function ExpensesPage() {
               group={g}
               color={colorForCategory(g.main?.name)}
               subName={(categoryId) => (categoryId && categoryId !== g.main?.id ? categories.find((c) => c.id === categoryId)?.name : null)}
-              onDelete={deleteExpense}
+              onDelete={removeExpense}
             />
           ))
         )}

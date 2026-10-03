@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import { ListChecks, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import { AlertTriangle, ListChecks, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { PhotoPicker, PhotoThumb, PhotoViewer } from './ReceiptPhoto'
 import { PriceCheck } from './PriceCheck'
 import { deleteExpenses, setReceiptLineAmount, useCategoryExpenses, useExpenseCategories } from '../../hooks/useExpenses'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
-import { reopenTrip } from '../../hooks/usePurchase'
+import { deleteTripRecord, reopenTrip } from '../../hooks/usePurchase'
+import { goneSummary, tripState } from '../../lib/trips'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
 import { money } from '../../lib/pricing'
@@ -34,20 +35,19 @@ export function ReceiptsView() {
 
   // Confirmed purchases and (older) days, newest first.
   const receipts = useMemo(() => {
-    const cards = trips.map((trip) => ({
-      key: `trip:${trip.id}`,
-      trip,
-      date: trip.trip_date,
-      items: tripItems.filter((i) => i.trip_id === trip.id),
-      list: tripExpenses.filter((e) => e.trip_id === trip.id),
-      photos: photos.filter((p) => p.trip_id === trip.id),
-    }))
+    // Each purchase as it really is now (parts may have been deleted by
+    // hand): its total and lines come from what's left.
+    const cards = trips.map((trip) => {
+      const items = tripItems.filter((i) => i.trip_id === trip.id)
+      const list = tripExpenses.filter((e) => e.trip_id === trip.id)
+      const state = tripState(items, list)
+      return { key: `trip:${trip.id}`, trip, date: trip.trip_date, items, list, state, total: state.total, photos: photos.filter((p) => p.trip_id === trip.id) }
+    })
     const days = new Map(groupByDate(expenses.filter((e) => !e.trip_id)).map((r) => [r.date, { ...r, key: `day:${r.date}`, photos: [] }]))
     for (const photo of photos.filter((p) => !p.trip_id)) {
       if (!days.has(photo.receipt_date)) days.set(photo.receipt_date, { key: `day:${photo.receipt_date}`, date: photo.receipt_date, list: [], total: 0, photos: [] })
       days.get(photo.receipt_date).photos.push(photo)
     }
-    for (const card of cards) card.total = card.list.reduce((sum, e) => sum + Number(e.amount || 0), 0)
     return [...cards, ...days.values()].sort((a, b) => b.date.localeCompare(a.date))
   }, [trips, tripItems, tripExpenses, expenses, photos])
 
@@ -80,13 +80,26 @@ export function ReceiptsView() {
     }
   }
 
-  const reopen = async ({ trip, items, total }) => {
+  // Undoes what's left of the purchase; parts deleted by hand are skipped
+  // and named afterwards.
+  const reopen = async ({ trip, items, total, state }) => {
+    const gone = goneSummary(state.lines)
     const ok = await confirmDialog({
       title: 'Reopen this purchase?',
-      message: `The ${items.length} item${items.length === 1 ? '' : 's'} (${money(total)}) go back to the cart, and the stock, history and expenses from this purchase are undone.`,
+      message: `The ${items.length} item${items.length === 1 ? '' : 's'} (${money(total)}) go back to the cart, and the stock, history and expenses from this purchase are undone.${gone ? ` ${gone}` : ''}`,
       confirmLabel: 'Reopen',
     })
-    if (ok) await reopenTrip(trip.id)
+    if (ok) await reopenTrip(trip.id, gone)
+  }
+
+  // Removes only the record of the purchase; stock and expenses stay.
+  const deleteRecord = async ({ trip, items }) => {
+    const ok = await confirmDialog({
+      title: 'Delete this purchase record?',
+      message: `Only the record of this purchase (${items.length} item${items.length === 1 ? '' : 's'}) is deleted — its stock, history and expenses stay as they are. You can undo it for a few seconds.`,
+      confirmLabel: 'Delete record',
+    })
+    if (ok) await deleteTripRecord(trip)
   }
 
   const checked = receipts.find((r) => r.key === checking)
@@ -146,15 +159,22 @@ export function ReceiptsView() {
 
               <div className="space-y-1">
                 {trip
-                  ? receipt.items.map((i) => {
-                      const expense = list.find((e) => e.id === i.expense_id)
-                      return (
-                        <div key={i.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
-                          <span>{i.name}</span>
-                          <span className="font-mono">€{Number(expense?.amount ?? i.line_total ?? 0).toFixed(2)}</span>
-                        </div>
-                      )
-                    })
+                  ? receipt.state.lines.map(({ item: i, amount, expenseGone, pantryGone }) => (
+                      <div key={i.id} className="flex justify-between gap-2 text-xs text-[var(--color-text-soft)]">
+                        <span className="min-w-0">
+                          {i.name}
+                          {(expenseGone || pantryGone) && (
+                            <span className="block text-[10px] text-amber-300">
+                              {[expenseGone && 'expense deleted', pantryGone && 'pantry item deleted'].filter(Boolean).join(' · ')}
+                            </span>
+                          )}
+                        </span>
+                        <span className="font-mono shrink-0">
+                          {expenseGone && <span className="line-through text-[var(--color-icon-muted)] mr-1.5">€{Number(i.line_total).toFixed(2)}</span>}€
+                          {amount.toFixed(2)}
+                        </span>
+                      </div>
+                    ))
                   : list.map((e) => (
                       <div key={e.id} className="flex justify-between text-xs text-[var(--color-text-soft)]">
                         <span>{e.description || 'Item'}</span>
@@ -164,13 +184,27 @@ export function ReceiptsView() {
                 {!trip && list.length === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">No checked-off items on this day.</p>}
               </div>
 
+              {trip && receipt.state.incomplete && (
+                <p className="mt-2 text-[11px] text-amber-300 flex items-start gap-1.5">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  Incomplete: part of this purchase was deleted by hand, so it no longer matches stock and expenses.
+                </p>
+              )}
               {trip && (
-                <button
-                  onClick={() => reopen(receipt)}
-                  className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
-                >
-                  <RotateCcw size={12} /> Reopen purchase
-                </button>
+                <div className="mt-2 flex flex-wrap gap-4">
+                  <button
+                    onClick={() => reopen(receipt)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                  >
+                    <RotateCcw size={12} /> Reopen purchase
+                  </button>
+                  <button
+                    onClick={() => deleteRecord(receipt)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-400"
+                  >
+                    <Trash2 size={12} /> Delete record
+                  </button>
+                </div>
               )}
             </Card>
           )

@@ -19,7 +19,7 @@ function Toasts() {
   const toasts = useToasts()
   if (toasts.length === 0) return null
   return (
-    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
+    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-[60] flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}

@@ -73,7 +73,10 @@ export async function startAuth() {
       const wasIn = isSignedIn()
       set({ status: 'in', session })
       storage.set(UNLOCKED_KEY, '1')
-      if (!wasIn) onSignIn()
+      // Never call Supabase from inside this callback: it runs while the
+      // session is locked, and requests made here would wait on that lock
+      // (supabase-js docs). Start them just after it instead.
+      if (!wasIn) setTimeout(onSignIn, 0)
     } else if (event === 'SIGNED_OUT') {
       set({ status: 'out', session: null })
     }

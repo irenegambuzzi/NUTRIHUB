@@ -179,6 +179,74 @@ describe('a purchase edited on the confirm screen', () => {
   })
 })
 
+describe('a purchase partly deleted by hand', () => {
+  let groceries, ids, trip
+  const add = async (name, pantry) =>
+    (await one(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id) values ($1, 2, 'pcs', 2, 2, 'pcs', $2, true, 'misc') returning id`, [name, pantry])).id
+
+  beforeAll(async () => {
+    groceries = (await one(`select id from expense_categories where name = 'Groceries'`)).id
+    const tea = (await one(`insert into pantry_items (name, unit, current_stock, category_id) values ('Tea', 'pcs', 1, 'beverages') returning id`)).id
+    const soap = (await one(`insert into pantry_items (name, unit, current_stock, category_id) values ('Soap', 'pcs', 5, 'toiletries') returning id`)).id
+    ids = { tea, soap, teaEntry: await add('Tea', tea), soapEntry: await add('Soap', soap), newEntry: await add('Brand new thing', null) }
+    trip = '55555555-5555-5555-5555-555555555555'
+    await one(`select * from confirm_shopping_trip($1)`, [
+      {
+        id: trip,
+        trip_date: '2026-10-06',
+        items: [
+          { grocery_item_id: ids.teaEntry, line_total: 2, expense_category_id: groceries, pantry_item_id: tea, add: 2 },
+          { grocery_item_id: ids.soapEntry, line_total: 4, expense_category_id: groceries, pantry_item_id: soap, add: 2 },
+          { grocery_item_id: ids.newEntry, line_total: 1, expense_category_id: groceries, pantry_item_id: null, add: 2 },
+        ],
+      },
+    ])
+    // By hand: the Tea pantry item and its history, the Soap expense, and
+    // most of the Soap stock (used up).
+    await q(`delete from stock_logs where item_id = $1`, [tea])
+    await q(`delete from pantry_items where id = $1`, [tea])
+    await q(`delete from expenses where trip_id = $1 and description = 'Soap'`, [trip])
+    await q(`update pantry_items set current_stock = 1 where id = $1`, [soap])
+  })
+
+  it('shows what was deleted: the links are emptied', async () => {
+    const rows = await q(`select name, expense_id is null as expense_gone, pantry_item_id is null as pantry_gone from shopping_trip_items where trip_id = $1 order by position`, [trip])
+    expect(rows).toEqual([
+      { name: 'Tea', expense_gone: false, pantry_gone: true },
+      { name: 'Soap', expense_gone: true, pantry_gone: false },
+      { name: 'Brand new thing', expense_gone: false, pantry_gone: false },
+    ])
+  })
+
+  it('reopens without errors, undoing only what is left and never going below 0', async () => {
+    expect((await one(`select reopen_shopping_trip($1) as n`, [trip])).n).toBe(3)
+    // Soap: 1 left − 2 bought → 0, not −1.
+    expect(Number((await one(`select current_stock from pantry_items where id = $1`, [ids.soap])).current_stock)).toBe(0)
+    // Tea stays deleted (not made again); the new thing's pantry item goes.
+    expect(Number((await one(`select count(*) from pantry_items where name in ('Tea', 'Brand new thing')`)).count)).toBe(0)
+    expect(Number((await one(`select count(*) from expenses where trip_id = $1`, [trip])).count)).toBe(0)
+    const back = await q(`select name, in_cart, completed from grocery_items where id = any($1) order by name`, [[ids.teaEntry, ids.soapEntry, ids.newEntry]])
+    expect(back).toEqual([
+      { name: 'Brand new thing', in_cart: true, completed: false },
+      { name: 'Soap', in_cart: true, completed: false },
+      { name: 'Tea', in_cart: true, completed: false },
+    ])
+  })
+
+  it('"Delete record" removes only the record: stock and expenses stay, entries are unlinked', async () => {
+    const record = '66666666-6666-6666-6666-666666666666'
+    const entry = await add('Record only', null)
+    await one(`select * from confirm_shopping_trip($1)`, [
+      { id: record, trip_date: '2026-10-06', items: [{ grocery_item_id: entry, line_total: 3, expense_category_id: groceries, pantry_item_id: null, add: 2 }] },
+    ])
+    await q(`delete from shopping_trips where id = $1`, [record])
+    expect(Number((await one(`select count(*) from shopping_trip_items where trip_id = $1`, [record])).count)).toBe(0)
+    expect(await one(`select amount::float, trip_id from expenses where description = 'Record only'`)).toEqual({ amount: 3, trip_id: null })
+    expect(Number((await one(`select current_stock from pantry_items where name = 'Record only'`)).current_stock)).toBe(2)
+    expect(await one(`select completed, trip_id from grocery_items where id = $1`, [entry])).toEqual({ completed: true, trip_id: null })
+  })
+})
+
 describe('015: only the logged-in household can use the data', () => {
   const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
   const STRANGER = '99999999-9999-9999-9999-999999999999'

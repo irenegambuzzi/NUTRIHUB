@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { getQueue, isSyncing } from './offlineQueue'
-import { getDialog } from './feedback'
+import { getDialog, getToasts } from './feedback'
 
 // "New version available": the state of the app's own update, and when
 // it's safe to apply it without asking. Wired to the service worker in
@@ -32,15 +32,17 @@ export function applyUpdate() {
 }
 
 // Safe to reload without asking: nothing waiting to be sent, no dialog,
-// nothing being typed, and no screen with unsaved input (marked with
-// data-unsaved, e.g. the confirm-purchase screen or an open form).
+// no toast still offering Undo (or Retry), nothing being typed, and no
+// screen with unsaved input (marked with data-unsaved, e.g. the
+// confirm-purchase screen or an open form).
 export function isSafeToReload({
   queue = getQueue(),
   syncing = isSyncing(),
   dialog = getDialog(),
+  toasts = getToasts(),
   doc = typeof document === 'undefined' ? null : document,
 } = {}) {
-  if (queue.length || syncing || dialog) return false
+  if (queue.length || syncing || dialog || toasts.some((t) => t.action)) return false
   if (!doc) return true
   if (doc.querySelector('[data-unsaved]')) return false
   const active = doc.activeElement

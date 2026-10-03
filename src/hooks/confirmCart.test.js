@@ -51,3 +51,23 @@ describe('confirming with a price changed on the confirm screen (€1 → €2)'
     expect(sent[rpc].args.payload).toMatchObject({ trip_date: '2026-10-05', items: [{ grocery_item_id: 'g1', line_total: 2, payer: 'akbar', add: 1 }] })
   })
 })
+
+describe('Undo after confirming', () => {
+  it('appears as soon as the purchase is saved, even if reloading the lists hangs', async () => {
+    const sent = fakeDb()
+    // Every list reload (select) never answers.
+    const never = new Promise(() => {})
+    const from = client.supabase.from
+    client.supabase.from = (table) =>
+      table === 'expense_categories' ? from(table) : { ...from(table), select: () => ({ order: () => never, eq: () => never, then: (r) => never.then(r) }) }
+    const milk = { id: 'g1', name: 'Milk', quantity: 1, unit: 'btl', price: 2, price_qty: 1, price_unit: 'btl', payer: 'shared', category_id: 'dairy' }
+    const done = confirmCart({ id: 'trip-2', date: '2026-10-05', lines: [purchaseLine(milk, [])], answers: {}, totalOf: (i) => lineTotal(i), photoIds: [] })
+    const result = await Promise.race([done, new Promise((r) => setTimeout(() => r('timeout'), 1000))])
+    expect(result).not.toBe('timeout')
+    expect(sent.some((s) => s.op === 'rpc')).toBe(true)
+    const toast = getToasts().find((t) => t.message.startsWith('Purchase confirmed'))
+    expect(toast).toBeTruthy()
+    expect(toast.action.label).toBe('Undo')
+  })
+})
+

@@ -64,7 +64,7 @@ export function ExpenseGroup({ group, color, subName, onDelete }) {
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-mono text-[var(--color-text-soft)]">€{Number(e.amount).toFixed(2)}</span>
                     <button
-                      onClick={() => onDelete(e.id)}
+                      onClick={() => onDelete(e)}
                       className="text-[var(--color-icon-muted)] hover:text-red-400 transition"
                       title="Delete expense"
                     >
