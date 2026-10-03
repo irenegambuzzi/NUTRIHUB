@@ -1,7 +1,9 @@
 import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { attempt, deleteWithUndo, must } from '../lib/db'
-import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince } from '../lib/stores'
+import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
+import { updateRows } from '../lib/inventory'
+import { unitPriceFromTotal } from '../lib/pricing'
+import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore } from '../lib/stores'
 import { emptyStore } from '../lib/tableStore'
 
 const refreshExpenses = () => Promise.all(allExpenseStores().map((s) => s.refresh()))
@@ -99,3 +101,28 @@ export function useCategoryExpenses(categoryId) {
   const { rows: expenses, loaded } = (categoryId ? expensesInCategory(categoryId) : emptyStore).useRows()
   return { expenses, loaded }
 }
+
+// A receipt line's price, edited while checking a receipt: the expense
+// takes the new amount and, if the grocery entry it came from is still on
+// the list, that entry's unit price follows (so its line total matches).
+// `pack` is the entry's pantry item, for unit conversions. Both are saved
+// together, or neither.
+export function setReceiptLineAmount(expense, amount, groceryItem = null, pack = null) {
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        must(await supabase.from('expenses').update({ amount }).eq('id', expense.id))
+        onFail(async () => must(await supabase.from('expenses').update({ amount: expense.amount }).eq('id', expense.id)))
+        if (groceryItem) {
+          const price = unitPriceFromTotal(amount, groceryItem, pack)
+          if (price != null) {
+            must(await updateRows('grocery_items', groceryItem.id, { price }))
+            groceryStore.patchLocal([groceryItem.id], { price })
+          }
+        }
+        allExpenseStores().forEach((s) => s.patchLocal([expense.id], { amount }))
+      }),
+    { retry: false, onFail: refreshExpenses }
+  )
+}
+

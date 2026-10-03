@@ -59,6 +59,14 @@ export const shopOrderStore = createTableStore({
   persist: 'shop_order',
 })
 
+// Receipt photos (supabase/013), newest day first; loaded with Receipts.
+export const receiptPhotoStore = createTableStore({
+  name: 'receipt_photos',
+  table: 'receipt_photos',
+  query: (q) => q.order('receipt_date', { ascending: false }),
+  compare: newestFirst('receipt_date'),
+})
+
 export const expenseCategoryStore = createTableStore({
   name: 'expense_categories',
   table: 'expense_categories',

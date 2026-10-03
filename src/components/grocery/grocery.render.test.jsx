@@ -5,6 +5,8 @@ vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
 const { ShoppingMode } = await import('./ShoppingMode')
 const { QuickAdd } = await import('./QuickAdd')
 const { AddItemForm } = await import('./AddItemForm')
+const { ReceiptsView } = await import('./ReceiptsView')
+const { PriceCheck } = await import('./PriceCheck')
 
 const parents = [
   { id: 'beverages', name: 'Beverages' },
@@ -71,5 +73,27 @@ describe('grocery components render', () => {
     )
     expect(html).toMatch(/<option value="" disabled="" selected="">Choose a category…/)
     expect(html).toContain('+ New category…')
+  })
+
+  it('receipts: add a photo with the camera or a file', () => {
+    const html = renderToStaticMarkup(<ReceiptsView />)
+    expect(html).toContain('Add a receipt photo')
+    expect(html).toContain('Take photo')
+    expect(html).toContain('capture="environment"')
+    expect(html).toContain('accept="image/*,application/pdf"')
+  })
+
+  it('check prices: each line with an editable price and the total', () => {
+    const lines = [
+      { id: 'e1', description: 'Milk', amount: 1.2 },
+      { id: 'e2', description: 'Bread', amount: 2 },
+    ]
+    const html = renderToStaticMarkup(
+      <PriceCheck date="2026-10-03" photos={[]} lines={lines} linkFor={(e) => (e.id === 'e1' ? {} : null)} onSave={async () => ({})} onClose={() => {}} />
+    )
+    expect(html).toContain('Check prices')
+    expect(html).toContain('value="1.20"')
+    expect(html).toContain('Only the expense changes')
+    expect(html).toContain('€3.20')
   })
 })
