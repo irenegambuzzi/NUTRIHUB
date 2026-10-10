@@ -3,16 +3,27 @@ import { Card } from '../components/ui/Card'
 import { ExpenseForm } from '../components/expenses/ExpenseForm'
 import { ExpenseCharts } from '../components/expenses/ExpenseCharts'
 import { ExpenseGroup } from '../components/expenses/ExpenseGroup'
+import { CategoryTotals } from '../components/expenses/CategoryTotals'
+import { IncomeSection } from '../components/expenses/IncomeSection'
+import { MoneySummary } from '../components/expenses/MoneySummary'
+import { PeriodPicker } from '../components/expenses/PeriodPicker'
 import { useExpenses } from '../hooks/useExpenses'
+import { useIncome } from '../hooks/useIncome'
+import { useCategoryColors } from '../hooks/useCategoryColors'
 import { reopenTrip } from '../hooks/usePurchase'
 import { askDialog } from '../lib/feedback'
-import { PAID_BY_OPTIONS, EXPENSE_PERIODS, EXPENSE_PERIOD_LABELS } from '../data/constants'
-import { colorForIndex, hexForIndex } from '../lib/categoryColors'
-import { isInPeriod, getPeriodBuckets, bucketKeyForDate } from '../lib/expensePeriods'
+import { PAID_BY_OPTIONS } from '../data/constants'
+import { getPeriodRange, getPeriodBuckets, bucketKeyForDate, localDateString } from '../lib/expensePeriods'
+import { currentExpensesSince } from '../lib/stores'
+import { categoryTotals, sumAmounts } from '../lib/moneySummary'
 import { cn } from '../lib/cn'
 
 export function ExpensesPage() {
-  const { expenses, categories, addExpense, addCategory, deleteCategory, deleteExpense } = useExpenses()
+  // Data is loaded from `since`; looking further back moves it earlier.
+  const [since, setSince] = useState(currentExpensesSince)
+  const { expenses, categories, addExpense, addCategory, deleteCategory, deleteExpense } = useExpenses(since)
+  const { income, missing: incomeMissing, addIncome, updateIncome, deleteIncome } = useIncome(since)
+  const styleFor = useCategoryColors(categories)
 
   // An expense from a confirmed purchase: deleting it alone would leave the
   // purchase's stock and history behind, so reopening the purchase (which
@@ -40,7 +51,19 @@ export function ExpensesPage() {
   }
 
   const [period, setPeriod] = useState('month')
+  const [offset, setOffset] = useState(0)
   const [paidByFilter, setPaidByFilter] = useState('all')
+
+  const showPeriod = (nextPeriod, nextOffset) => {
+    const start = localDateString(getPeriodRange(nextPeriod, new Date(), nextOffset).start)
+    setSince((current) => (start < current ? start : current))
+    setPeriod(nextPeriod)
+    setOffset(nextOffset)
+  }
+  const { startDate, endDate } = useMemo(() => {
+    const { start, end } = getPeriodRange(period, new Date(), offset)
+    return { startDate: localDateString(start), endDate: localDateString(end) }
+  }, [period, offset])
 
   // Everything is shown by main category; sub-categories only appear
   // when a main category is opened.
@@ -57,32 +80,29 @@ export function ExpensesPage() {
     }
   }, [categories])
 
-  const colorForCategory = useMemo(() => {
-    const map = new Map()
-    mainCategories.forEach((c, i) => map.set(c.name, { chip: colorForIndex(i), hex: hexForIndex(i) }))
-    return (name) => map.get(name) || { chip: colorForIndex(mainCategories.length), hex: hexForIndex(mainCategories.length) }
-  }, [mainCategories])
-
   const filteredExpenses = useMemo(
     () =>
       expenses.filter((e) => {
-        if (!isInPeriod(e.expense_date, period)) return false
+        if (e.expense_date < startDate || e.expense_date >= endDate) return false
         if (paidByFilter !== 'all' && e.paid_by !== paidByFilter) return false
         return true
       }),
-    [expenses, period, paidByFilter]
+    [expenses, startDate, endDate, paidByFilter]
   )
 
-  const total = filteredExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+  const filteredIncome = useMemo(
+    () => income.filter((i) => i.income_date >= startDate && i.income_date < endDate && (paidByFilter === 'all' || i.received_by === paidByFilter)),
+    [income, startDate, endDate, paidByFilter]
+  )
 
-  const pieData = useMemo(() => {
-    const map = new Map()
-    for (const e of filteredExpenses) {
-      const label = mainOf(e.category_id)?.name || 'Uncategorized'
-      map.set(label, (map.get(label) || 0) + Number(e.amount || 0))
-    }
-    return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
-  }, [filteredExpenses, mainOf])
+  const total = sumAmounts(filteredExpenses)
+  const incomeTotal = sumAmounts(filteredIncome)
+
+  const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
+  const pieData = useMemo(
+    () => totals.map((c) => ({ name: c.name, value: c.total, hex: styleFor(c.id).hex })),
+    [totals, styleFor]
+  )
 
   // One row per main category per day (e.g. one "Groceries" row for a
   // shopping trip), newest day first, biggest total first within a day.
@@ -100,14 +120,14 @@ export function ExpensesPage() {
   }, [filteredExpenses, mainOf])
 
   const barData = useMemo(() => {
-    const buckets = getPeriodBuckets(period)
+    const buckets = getPeriodBuckets(period, new Date(), offset)
     const totals = new Map(buckets.map((b) => [b.key, 0]))
     for (const e of filteredExpenses) {
       const key = bucketKeyForDate(e.expense_date, period)
       if (totals.has(key)) totals.set(key, totals.get(key) + Number(e.amount || 0))
     }
     return buckets.map((b) => ({ label: b.label, amount: Math.round((totals.get(b.key) || 0) * 100) / 100 }))
-  }, [filteredExpenses, period])
+  }, [filteredExpenses, period, offset])
 
   return (
     <div className="space-y-4">
@@ -125,41 +145,31 @@ export function ExpensesPage() {
         addExpense={addExpense}
         addCategory={addCategory}
         deleteCategory={deleteCategory}
+        styleFor={styleFor}
       />
 
-      <div className="flex flex-wrap gap-2">
-        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1">
-          {EXPENSE_PERIODS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={cn(
-                'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
-                period === p ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]'
-              )}
-            >
-              {EXPENSE_PERIOD_LABELS[p]}
-            </button>
-          ))}
-        </div>
+      <PeriodPicker period={period} offset={offset} onPeriod={(p) => showPeriod(p, 0)} onOffset={(o) => showPeriod(period, o)} />
 
-        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1">
-          {[{ value: 'all', label: 'Everyone' }, ...PAID_BY_OPTIONS].map((o) => (
-            <button
-              key={o.value}
-              onClick={() => setPaidByFilter(o.value)}
-              className={cn(
-                'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
-                paidByFilter === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 self-start w-fit">
+        {[{ value: 'all', label: 'Everyone' }, ...PAID_BY_OPTIONS].map((o) => (
+          <button
+            key={o.value}
+            onClick={() => setPaidByFilter(o.value)}
+            className={cn(
+              'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
+              paidByFilter === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
       </div>
 
-      <ExpenseCharts pieData={pieData} barData={barData} colorForCategory={colorForCategory} />
+      <MoneySummary income={incomeTotal} expenses={total} />
+
+      <CategoryTotals totals={totals} total={total} styleFor={styleFor} />
+
+      <ExpenseCharts pieData={pieData} barData={barData} />
 
       <div className="space-y-2">
         {groups.length === 0 ? (
@@ -171,13 +181,16 @@ export function ExpensesPage() {
             <ExpenseGroup
               key={g.key}
               group={g}
-              color={colorForCategory(g.main?.name)}
+              color={styleFor(g.main?.id)}
+              styleFor={styleFor}
               subName={(categoryId) => (categoryId && categoryId !== g.main?.id ? categories.find((c) => c.id === categoryId)?.name : null)}
               onDelete={removeExpense}
             />
           ))
         )}
       </div>
+
+      <IncomeSection entries={filteredIncome} missing={incomeMissing} addIncome={addIncome} updateIncome={updateIncome} deleteIncome={deleteIncome} />
     </div>
   )
 }

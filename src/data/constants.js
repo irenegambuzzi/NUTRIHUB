@@ -124,10 +124,17 @@ export const PAID_BY_OPTIONS = [
   { value: 'shared', label: 'Shared' },
 ]
 
-export const EXPENSE_PERIODS = ['week', 'month', 'year']
+export const EXPENSE_PERIODS = ['week', 'month', '3months', '6months', 'year']
 
 export const EXPENSE_PERIOD_LABELS = {
-  week: 'This week',
-  month: 'This month',
-  year: 'This year',
+  week: 'Week',
+  month: 'Month',
+  '3months': '3 Months',
+  '6months': '6 Months',
+  year: 'Year',
 }
+
+export const INCOME_TYPES = [
+  { value: 'salary', label: 'Salary' },
+  { value: 'other', label: 'Other' },
+]

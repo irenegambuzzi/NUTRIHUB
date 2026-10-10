@@ -98,8 +98,9 @@ export const expenseCategoryStore = createTableStore({
   compare: (a, b) => a.name.localeCompare(b.name),
 })
 
-// The Expenses page only shows this week, month or year, so it loads the
-// expenses from the earliest of those (a week can start in December).
+// The Expenses page opens on this week, month or year, so it loads the
+// expenses from the earliest of those (a week can start in December);
+// looking further back loads from there (see `since` in useExpenses).
 export function currentExpensesSince(now = new Date()) {
   const starts = ['week', 'month', 'year'].map((p) => getPeriodRange(p, now).start)
   return localDateString(new Date(Math.min(...starts)))
@@ -109,11 +110,36 @@ export const expensesSince = storeFamily((since) =>
   createTableStore({
     name: 'expenses',
     table: 'expenses',
-    query: (q) => q.gte('expense_date', since).order('expense_date', { ascending: false }),
+    query: (q) => q.gte('expense_date', since).order('expense_date', { ascending: false }).order('id'),
+    paginate: true,
     accept: (row) => row.expense_date >= since,
     compare: newestFirst('expense_date'),
   })
 )
+
+// Income (supabase/016), loaded from the same day as the expenses shown.
+export const incomeSince = storeFamily((since) =>
+  createTableStore({
+    name: 'income',
+    table: 'income',
+    query: (q) => q.gte('income_date', since).order('income_date', { ascending: false }).order('id'),
+    paginate: true,
+    optional: true,
+    accept: (row) => row.income_date >= since,
+    compare: newestFirst('income_date'),
+  })
+)
+
+export const allIncomeStores = () => incomeSince.all().filter((s) => s.isStarted())
+
+// The saved color of each expense category (supabase/016).
+export const categoryColorStore = createTableStore({
+  name: 'expense_category_colors',
+  table: 'expense_category_colors',
+  persist: 'expense_category_colors',
+  optional: true,
+  compare: (a, b) => a.category_id.localeCompare(b.category_id),
+})
 
 // Receipts: every expense in one category (Groceries), loaded only when
 // the Receipts view is opened.

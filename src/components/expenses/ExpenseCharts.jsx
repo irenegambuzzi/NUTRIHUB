@@ -5,7 +5,7 @@ import { Card } from '../ui/Card'
 const AXIS_COLOR = 'var(--color-text-muted)'
 
 // Spending by main category (pie) and over the period (bars).
-export function ExpenseCharts({ pieData, barData, colorForCategory }) {
+export function ExpenseCharts({ pieData, barData }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Card>
@@ -19,7 +19,7 @@ export function ExpenseCharts({ pieData, barData, colorForCategory }) {
             <PieChart>
               <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={80} paddingAngle={2}>
                 {pieData.map((entry) => (
-                  <Cell key={entry.name} fill={colorForCategory(entry.name).hex} stroke="var(--color-surface)" strokeWidth={2} />
+                  <Cell key={entry.name} fill={entry.hex} stroke="var(--color-surface)" strokeWidth={2} />
                 ))}
               </Pie>
               <Tooltip

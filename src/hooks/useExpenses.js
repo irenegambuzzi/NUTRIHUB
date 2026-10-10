@@ -67,10 +67,10 @@ export function deleteExpenses(ids, message = ids.length === 1 ? 'Expense delete
   })
 }
 
-// This week's, month's and year's expenses (what the Expenses page can
-// show), plus the categories.
-export function useExpenses() {
-  const { rows: expenses } = expensesSince(currentExpensesSince()).useRows()
+// Expenses from `since` on (by default the start of this week, month and
+// year: what the Expenses page opens on), plus the categories.
+export function useExpenses(since = currentExpensesSince()) {
+  const { rows: expenses } = expensesSince(since).useRows()
   const { categories, addCategory, deleteCategory } = useExpenseCategories()
 
   const addExpense = useCallback(

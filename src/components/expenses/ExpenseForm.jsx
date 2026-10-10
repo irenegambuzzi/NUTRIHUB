@@ -8,7 +8,7 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 
 // Adding an expense by hand, plus the category manager it opens.
-export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, addCategory, deleteCategory }) {
+export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, addCategory, deleteCategory, styleFor }) {
   const [mainId, setMainId] = useState('')
   const [subId, setSubId] = useState('')
   const [managingCategories, setManagingCategories] = useState(false)
@@ -47,6 +47,7 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
       {managingCategories && (
         <CategoryManager
           categories={categories}
+          styleFor={styleFor}
           onAdd={addCategory}
           onDelete={handleDeleteCategory}
           onClose={() => setManagingCategories(false)}

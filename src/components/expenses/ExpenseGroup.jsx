@@ -8,7 +8,7 @@ const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.l
 
 // A main category's expenses for one day. Collapsed: one line with the
 // total. Opened: the expenses grouped by sub-category.
-export function ExpenseGroup({ group, color, subName, onDelete }) {
+export function ExpenseGroup({ group, color, styleFor, subName, onDelete }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
@@ -21,7 +21,7 @@ export function ExpenseGroup({ group, color, subName, onDelete }) {
   for (const e of items) {
     const name = subName(e.category_id)
     let section = sections.find((s) => s.name === name)
-    if (!section) sections.push((section = { name, items: [], total: 0 }))
+    if (!section) sections.push((section = { name, categoryId: e.category_id, items: [], total: 0 }))
     section.items.push(e)
     section.total += Number(e.amount || 0)
   }
@@ -31,7 +31,7 @@ export function ExpenseGroup({ group, color, subName, onDelete }) {
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full p-3 flex justify-between items-center gap-3 text-left">
         <div className="flex items-center gap-3 min-w-0">
-          <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', color.chip.solid)} />
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color.hex }} />
           <div className="min-w-0">
             <p className="font-bold text-[var(--color-text)]">{main?.name || 'Uncategorized'}</p>
             <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
@@ -51,7 +51,10 @@ export function ExpenseGroup({ group, color, subName, onDelete }) {
             <div key={section.name ?? '_main'} className="pt-2">
               {section.name && (
                 <p className="flex justify-between text-[10px] font-bold uppercase text-[var(--color-text-muted)] mb-1">
-                  <span>{section.name}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: styleFor(section.categoryId).hex }} />
+                    {section.name}
+                  </span>
                   <span className="font-mono">€{section.total.toFixed(2)}</span>
                 </p>
               )}

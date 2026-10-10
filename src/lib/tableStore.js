@@ -26,6 +26,11 @@ export const newestFirst =
   (a, b) =>
     String(b[field] ?? '').localeCompare(String(a[field] ?? '')) || String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''))
 
+const PAGE_SIZE = 1000
+
+// Postgres "undefined table", or PostgREST not knowing the table.
+const isMissingTable = (error) => error?.code === '42P01' || error?.code === 'PGRST205'
+
 const DISCONNECTED = ['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']
 
 // options:
@@ -39,6 +44,10 @@ const DISCONNECTED = ['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']
 //   limit      – keep at most this many rows
 //   persist    – keep a copy on the phone under this key, shown at once
 //                and when there's no signal
+//   paginate   – load in pages of 1000 (the most one request returns);
+//                `query` must then end with a unique order (e.g. id)
+//   optional   – the table may not exist yet (a migration not run): that
+//                is not an error, the store stays empty and `missing`
 export function createTableStore({ name, table, columns = '*', query = (q) => q, ...options }) {
   const keep = columns === '*' ? null : columns.split(',').map((c) => c.trim())
   const pick = keep ? (row) => Object.fromEntries(keep.map((c) => [c, row[c]])) : (row) => row
@@ -57,14 +66,29 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
     emit()
   }
 
+  async function load() {
+    if (!options.paginate) return query(supabase.from(table).select(columns))
+    const all = []
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await query(supabase.from(table).select(columns)).range(from, from + PAGE_SIZE - 1)
+      if (error) return { data: null, error }
+      all.push(...data)
+      if (data.length < PAGE_SIZE) return { data: all, error: null }
+    }
+  }
+
   async function refresh() {
     // No signal, or offline changes still to send: keep showing the copy
     // we have (it includes those changes); reloaded once they're sent.
     if (isOffline() || !canRefresh()) return
     buffered = buffered ?? []
-    const { data, error } = await query(supabase.from(table).select(columns))
+    const { data, error } = await load()
     const pending = buffered
     buffered = null
+    if (error && options.optional && isMissingTable(error)) {
+      state = { rows: [], loaded: true, missing: true }
+      return emit()
+    }
     if (error) return toastLoadError(error, refresh, name)
     let rows = data.map(opts.normalize)
     if (opts.compare) rows.sort(opts.compare)

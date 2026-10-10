@@ -8,7 +8,7 @@ import { expenseUsageStore } from '../../lib/stores'
 // categories (Other), so neither can be removed here.
 const PROTECTED = ['Other', 'Groceries']
 
-export function CategoryManager({ categories, onAdd, onDelete, onClose }) {
+export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose }) {
   const [name, setName] = useState('')
   const [parentId, setParentId] = useState('')
   const [error, setError] = useState('')
@@ -45,6 +45,7 @@ export function CategoryManager({ categories, onAdd, onDelete, onClose }) {
     return (
       <div key={c.id} className="flex items-center gap-2 py-1.5 text-xs">
         {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
+        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: styleFor(c.id).hex }} />
         <span className="flex-1 text-[var(--color-text)]">{c.name}</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
           {count} expense{count === 1 ? '' : 's'}
