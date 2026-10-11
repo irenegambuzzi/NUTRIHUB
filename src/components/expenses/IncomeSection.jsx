@@ -33,6 +33,8 @@ export function IncomeSection({
   updateIncome,
   deleteIncome,
   addCategory,
+  renameCategory,
+  moveCategory,
   deleteCategory,
 }) {
   const [adding, setAdding] = useState(false)
@@ -160,6 +162,9 @@ export function IncomeSection({
           styleFor={styleFor}
           onAdd={addCategory}
           onDelete={deleteCategory}
+          onRename={renameCategory}
+          onMove={moveCategory}
+          lockedHints={{ Salary: 'Kept as it is: income is sorted as Salary or Other by this name.', Other: 'Where income goes when a category is deleted.' }}
           onClose={() => setManaging(false)}
           title="Income categories"
           noun="income entry"

@@ -9,7 +9,7 @@ const iconButton = 'text-[var(--color-icon-muted)] transition w-9 h-9 flex items
 
 // One expense or income entry inside a sorted group: what it is, when,
 // who, and the amount.
-function Row({ title, detail, amount, tone, actions }) {
+function Row({ title, detail, amount, tone, before, actions }) {
   return (
     <div className="flex justify-between items-center gap-2 py-1.5 border-t first:border-t-0 border-[var(--color-border)]">
       <div className="min-w-0">
@@ -17,6 +17,7 @@ function Row({ title, detail, amount, tone, actions }) {
         <span className="text-[10px] text-[var(--color-text-muted)] block truncate">{detail}</span>
       </div>
       <div className="flex items-center gap-1 shrink-0">
+        {before}
         <span className={`font-mono ${tone}`}>{amount}</span>
         {actions}
       </div>
@@ -25,7 +26,9 @@ function Row({ title, detail, amount, tone, actions }) {
 }
 
 // `names(categoryId)` → { main, sub } category names.
-export function ExpenseRow({ expense, names, onDelete }) {
+// The edit button sits before the amount and the delete button after it,
+// so a tap meant for one doesn't land on the other.
+export function ExpenseRow({ expense, names, onEdit, onDelete }) {
   const { main, sub } = names(expense.category_id)
   return (
     <Row
@@ -33,6 +36,11 @@ export function ExpenseRow({ expense, names, onDelete }) {
       detail={[dateLabel(expense.expense_date), sub && main ? `${main} › ${sub}` : null, paidByLabel(expense.paid_by)].filter(Boolean).join(' · ')}
       amount={`€${Number(expense.amount).toFixed(2)}`}
       tone="text-[var(--color-text-soft)]"
+      before={
+        <button onClick={() => onEdit(expense)} className={`${iconButton} mr-1 hover:text-[var(--color-primary)]`} title="Edit expense" aria-label="Edit expense">
+          <Pencil size={13} />
+        </button>
+      }
       actions={
         <button onClick={() => onDelete(expense)} className={`${iconButton} hover:text-red-400`} title="Delete expense" aria-label="Delete expense">
           <Trash2 size={13} />

@@ -8,7 +8,7 @@ import { emptyStore } from '../lib/tableStore'
 
 const refreshExpenses = () => Promise.all(allExpenseStores().map((s) => s.refresh()))
 
-// Expense categories, and adding/removing them.
+// Expense categories, and adding, renaming, moving and removing them.
 export function useExpenseCategories() {
   const { rows: categories } = expenseCategoryStore.useRows()
 
@@ -18,6 +18,28 @@ export function useExpenseCategories() {
       { retry: false }
     )
     if (!error) expenseCategoryStore.upsertLocal([data])
+    return { data, error }
+  }, [])
+
+  // Same category, new name: its id (so its color, sub-categories and
+  // expenses) is untouched.
+  const renameCategory = useCallback(async (id, name) => {
+    const { data, error } = await attempt(
+      async () => must(await supabase.from('expense_categories').update({ name }).eq('id', id).select())[0],
+      { retry: false, onFail: () => expenseCategoryStore.refresh() }
+    )
+    if (!error && data) expenseCategoryStore.upsertLocal([data])
+    return { data, error }
+  }, [])
+
+  // Under another main category (parentId) or as a main category (null).
+  // Only the category's own row changes: its expenses stay attached.
+  const moveCategory = useCallback(async (id, parentId) => {
+    const { data, error } = await attempt(
+      async () => must(await supabase.from('expense_categories').update({ parent_id: parentId, type: parentId ? 'sub' : 'parent' }).eq('id', id).select())[0],
+      { retry: false, onFail: () => expenseCategoryStore.refresh() }
+    )
+    if (!error && data) expenseCategoryStore.upsertLocal([data])
     return { data, error }
   }, [])
 
@@ -44,7 +66,7 @@ export function useExpenseCategories() {
     [categories]
   )
 
-  return { categories, addCategory, deleteCategory }
+  return { categories, addCategory, renameCategory, moveCategory, deleteCategory }
 }
 
 // Deletes right away; Undo puts the expenses back exactly and re-links
@@ -71,7 +93,7 @@ export function deleteExpenses(ids, message = ids.length === 1 ? 'Expense delete
 // year: what the Expenses page opens on), plus the categories.
 export function useExpenses(since = currentExpensesSince()) {
   const { rows: expenses } = expensesSince(since).useRows()
-  const { categories, addCategory, deleteCategory } = useExpenseCategories()
+  const { categories, addCategory, renameCategory, moveCategory, deleteCategory } = useExpenseCategories()
 
   const addExpense = useCallback(
     ({ categoryId, amount, description, paidBy, expenseDate }) =>
@@ -90,9 +112,28 @@ export function useExpenses(since = currentExpensesSince()) {
     []
   )
 
+  // Saves every field of an existing expense in place (same row, same id).
+  const updateExpense = useCallback(
+    (id, { categoryId, amount, description, paidBy, expenseDate }) =>
+      attempt(
+        async () => {
+          const rows = must(
+            await supabase
+              .from('expenses')
+              .update({ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate })
+              .eq('id', id)
+              .select()
+          )
+          allExpenseStores().forEach((s) => s.upsertLocal(rows))
+        },
+        { retry: false, onFail: refreshExpenses }
+      ),
+    []
+  )
+
   const deleteExpense = useCallback((id) => deleteExpenses([id]), [])
 
-  return { expenses, categories, addExpense, addCategory, deleteCategory, deleteExpense, deleteExpenses }
+  return { expenses, categories, addExpense, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense, deleteExpenses }
 }
 
 // Every expense in one category (the Groceries receipts); nothing is

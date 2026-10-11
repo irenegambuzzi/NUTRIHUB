@@ -39,6 +39,40 @@ export function useIncomeCategories() {
     return { data, error }
   }, [])
 
+  const renameCategory = useCallback(async (id, name) => {
+    const { data, error } = await attempt(
+      async () => must(await supabase.from('income_categories').update({ name }).eq('id', id).select())[0],
+      { retry: false, onFail: () => incomeCategoryStore.refresh() }
+    )
+    if (!error && data) incomeCategoryStore.upsertLocal([data])
+    return { data, error }
+  }, [])
+
+  // Under another main category (parentId) or as a main category (null).
+  // The entries stay on the category; their old Salary / Other type is
+  // brought in step with where the category now sits.
+  const moveCategory = useCallback(
+    async (id, parentId) => {
+      const { data, error } = await attempt(
+        async () => {
+          const moved = must(
+            await supabase.from('income_categories').update({ parent_id: parentId, type: parentId ? 'sub' : 'parent' }).eq('id', id).select()
+          )[0]
+          const next = saved.map((c) => (c.id === id ? moved : c))
+          must(await supabase.from('income').update({ income_type: incomeTypeFor(id, next) }).eq('category_id', id))
+          return moved
+        },
+        { retry: false, onFail: () => Promise.all([incomeCategoryStore.refresh(), refreshIncome()]) }
+      )
+      if (!error && data) {
+        incomeCategoryStore.upsertLocal([data])
+        await refreshIncome()
+      }
+      return { data, error }
+    },
+    [saved]
+  )
+
   // Deleting a category never loses income: its entries (and those in its
   // sub-categories) move to "Other" first, which is created if missing.
   const deleteCategory = useCallback(
@@ -61,7 +95,7 @@ export function useIncomeCategories() {
     [saved]
   )
 
-  return { categories, missing: !!missing, addCategory, deleteCategory }
+  return { categories, missing: !!missing, addCategory, renameCategory, moveCategory, deleteCategory }
 }
 
 // Income entries from `since` (YYYY-MM-DD) on, with their categories, and
@@ -69,7 +103,7 @@ export function useIncomeCategories() {
 // nothing here touches expenses.
 export function useIncome(since) {
   const { rows, loaded, missing } = incomeSince(since).useRows()
-  const { categories, missing: categoriesMissing, addCategory, deleteCategory } = useIncomeCategories()
+  const { categories, missing: categoriesMissing, addCategory, renameCategory, moveCategory, deleteCategory } = useIncomeCategories()
   const income = useMemo(() => resolveIncomeCategories(rows, categories, categoriesMissing), [rows, categories, categoriesMissing])
 
   // category_id is only sent once the column exists; the old type always
@@ -110,5 +144,5 @@ export function useIncome(since) {
     [toRow]
   )
 
-  return { income, loaded, missing: !!missing, categories, categoriesMissing, addCategory, deleteCategory, addIncome, updateIncome, deleteIncome }
+  return { income, loaded, missing: !!missing, categories, categoriesMissing, addCategory, renameCategory, moveCategory, deleteCategory, addIncome, updateIncome, deleteIncome }
 }

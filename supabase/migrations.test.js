@@ -489,4 +489,37 @@ describe('017: income categories, locked like the rest', () => {
       expect(await fails(`insert into income_categories (name) values ('Nope')`)).toMatch(/row-level security/)
     })
   })
+
+  it('renames and moves categories in place: same id, same color, same entries, no new rows (expenses and income)', async () => {
+    await as('authenticated', MEMBER, async () => {
+      for (const [table, colors, entries, entryTable] of [
+        ['expense_categories', 'expense_category_colors', 'expenses', 'expenses'],
+        ['income_categories', 'income_category_colors', 'income', 'income'],
+      ]) {
+        const col = table === 'expense_categories' ? { extra: '', vals: '' } : { extra: ", income_type", vals: ", 'other'" }
+        const main = (await rows(`insert into ${table} (name) values ('Going Out X') returning id`))[0].id
+        const alone = (await rows(`insert into ${table} (name) values ('Aperitivo X') returning id`))[0].id
+        await db.query(`insert into ${colors} (category_id, color) values ($1, '#112233')`, [alone])
+        await db.query(`insert into ${entryTable} (amount${col.extra}, category_id) values (12${col.vals}, $1), (8${col.vals}, $1)`, [alone])
+        const count = async () => (await rows(`select (select count(*) from ${table})::int as c, (select count(*) from ${entryTable})::int as e`))[0]
+        const before = await count()
+        // Rename: only the name changes; a taken name is refused and changes nothing.
+        await db.query(`update ${table} set name = 'Drinks X' where id = $1`, [alone])
+        expect(await fails(`update ${table} set name = 'Going Out X' where id = $1`, [alone])).toMatch(/unique|duplicate/)
+        // Move: a main category becomes a sub-category of another.
+        await db.query(`update ${table} set parent_id = $2, type = 'sub' where id = $1`, [alone, main])
+        const moved = (await rows(`select name, parent_id, type from ${table} where id = $1`, [alone]))[0]
+        expect(moved).toEqual({ name: 'Drinks X', parent_id: main, type: 'sub' })
+        expect(await count()).toEqual(before)
+        expect((await rows(`select color from ${colors} where category_id = $1`, [alone]))[0].color).toBe('#112233')
+        expect((await rows(`select count(*)::int as n, sum(amount)::float as t from ${entryTable} where category_id = $1`, [alone]))[0]).toEqual({ n: 2, t: 20 })
+        // And back to a main category.
+        await db.query(`update ${table} set parent_id = null, type = 'parent' where id = $1`, [alone])
+        expect((await rows(`select parent_id, type from ${table} where id = $1`, [alone]))[0]).toEqual({ parent_id: null, type: 'parent' })
+        expect((await rows(`select count(*)::int as n from ${entryTable} where category_id = $1`, [alone]))[0].n).toBe(2)
+        await db.query(`delete from ${entryTable} where category_id = $1`, [alone])
+        await db.query(`delete from ${table} where id in ($1, $2)`, [alone, main])
+      }
+    })
+  })
 })

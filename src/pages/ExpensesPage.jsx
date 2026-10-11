@@ -20,14 +20,14 @@ import { usePersonFilter } from '../lib/personFilter'
 import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
-import { Plus } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
 
 export function ExpensesPage() {
   // Data is loaded from `since`; looking further back moves it earlier.
   const [since, setSince] = useState(currentExpensesSince)
-  const { expenses, categories, addExpense, addCategory, deleteCategory, deleteExpense } = useExpenses(since)
+  const { expenses, categories, addExpense, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
   const {
     income,
     missing: incomeMissing,
@@ -37,6 +37,8 @@ export function ExpensesPage() {
     updateIncome,
     deleteIncome,
     addCategory: addIncomeCategory,
+    renameCategory: renameIncomeCategory,
+    moveCategory: moveIncomeCategory,
     deleteCategory: deleteIncomeCategory,
   } = useIncome(since)
   const styleFor = useCategoryColors(categories)
@@ -72,6 +74,7 @@ export function ExpensesPage() {
   const [paidByFilter, setPaidByFilter] = usePersonFilter('money.expensePerson')
   const [receivedByFilter, setReceivedByFilter] = usePersonFilter('money.incomePerson')
   const [addingExpense, setAddingExpense] = useState(false)
+  const [editingExpense, setEditingExpense] = useState(null)
 
   const showPeriod = (nextPeriod, nextOffset) => {
     const start = localDateString(getPeriodRange(nextPeriod, new Date(), nextOffset).start)
@@ -128,6 +131,7 @@ export function ExpensesPage() {
           color={styleFor(g.main?.id)}
           styleFor={styleFor}
           subName={(categoryId) => (categoryId && categoryId !== g.main?.id ? categories.find((c) => c.id === categoryId)?.name : null)}
+          onEdit={setEditingExpense}
           onDelete={removeExpense}
         />
       ))
@@ -156,6 +160,8 @@ export function ExpensesPage() {
         updateIncome={updateIncome}
         deleteIncome={deleteIncome}
         addCategory={addIncomeCategory}
+        renameCategory={renameIncomeCategory}
+        moveCategory={moveIncomeCategory}
         deleteCategory={deleteIncomeCategory}
       />
 
@@ -181,8 +187,10 @@ export function ExpensesPage() {
             categories={categories}
             mainCategories={mainCategories}
             subsOf={subsOf}
-            addExpense={addExpense}
+            onSubmit={addExpense}
             addCategory={addCategory}
+            renameCategory={renameCategory}
+            moveCategory={moveCategory}
             deleteCategory={deleteCategory}
             styleFor={styleFor}
             onClose={() => setAddingExpense(false)}
@@ -201,8 +209,39 @@ export function ExpensesPage() {
           styleFor={styleFor}
           plural="expenses"
           renderDefault={expenseGroups}
-          renderEntry={(e) => <ExpenseRow key={e.id} expense={e} names={namesOf} onDelete={removeExpense} />}
+          renderEntry={(e) => <ExpenseRow key={e.id} expense={e} names={namesOf} onEdit={setEditingExpense} onDelete={removeExpense} />}
         />
+
+        {editingExpense && (
+          <div data-unsaved className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setEditingExpense(null)}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-4"
+            >
+              <div className="flex justify-between items-center">
+                <p className="text-sm font-extrabold text-[var(--color-primary)]">Edit expense</p>
+                <button onClick={() => setEditingExpense(null)} aria-label="Close" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
+                  <X size={18} />
+                </button>
+              </div>
+              <ExpenseForm
+                initial={editingExpense}
+                submitLabel="Save"
+                categories={categories}
+                mainCategories={mainCategories}
+                subsOf={subsOf}
+                addCategory={addCategory}
+                renameCategory={renameCategory}
+                moveCategory={moveCategory}
+                deleteCategory={deleteCategory}
+                styleFor={styleFor}
+                onCancel={() => setEditingExpense(null)}
+                onClose={() => setEditingExpense(null)}
+                onSubmit={(values) => updateExpense(editingExpense.id, values)}
+              />
+            </div>
+          </div>
+        )}
       </section>
     </div>
   )

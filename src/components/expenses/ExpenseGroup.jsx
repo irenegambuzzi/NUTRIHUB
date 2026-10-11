@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Trash2 } from 'lucide-react'
+import { ChevronDown, Pencil, Trash2 } from 'lucide-react'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
@@ -8,7 +8,7 @@ const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.l
 
 // A main category's expenses for one day. Collapsed: one line with the
 // total. Opened: the expenses grouped by sub-category.
-export function ExpenseGroup({ group, color, styleFor, subName, onDelete }) {
+export function ExpenseGroup({ group, color, styleFor, subName, onEdit, onDelete }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
@@ -65,6 +65,14 @@ export function ExpenseGroup({ group, color, styleFor, subName, onDelete }) {
                     <span className="text-[10px] text-[var(--color-text-muted)]">{paidByLabel(e.paid_by)}</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => onEdit(e)}
+                      className="text-[var(--color-icon-muted)] hover:text-[var(--color-primary)] transition w-9 h-9 -my-1.5 flex items-center justify-center"
+                      title="Edit expense"
+                      aria-label="Edit expense"
+                    >
+                      <Pencil size={13} />
+                    </button>
                     <span className="font-mono text-[var(--color-text-soft)]">€{Number(e.amount).toFixed(2)}</span>
                     <button
                       onClick={() => onDelete(e)}

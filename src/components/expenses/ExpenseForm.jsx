@@ -1,26 +1,44 @@
 import { useState } from 'react'
-import { Plus, Settings2, X } from 'lucide-react'
+import { Plus, Check, Settings2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Label, Input, Select } from '../ui/Field'
 import { CategoryManager } from './CategoryManager'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
+import { categoryTree } from '../../lib/moneyList'
 
-// Adding an expense by hand, plus the category manager it opens.
-export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, addCategory, deleteCategory, styleFor, onClose }) {
-  const [mainId, setMainId] = useState('')
-  const [subId, setSubId] = useState('')
+// The expense fields, for adding an expense by hand or editing one
+// (`initial`), plus the category manager they open. onSubmit resolves to
+// { error }; on failure the form keeps what was typed.
+export function ExpenseForm({
+  initial,
+  submitLabel = 'Add expense',
+  onSubmit,
+  onCancel,
+  categories,
+  mainCategories,
+  subsOf,
+  addCategory,
+  renameCategory,
+  moveCategory,
+  deleteCategory,
+  styleFor,
+  onClose,
+}) {
+  const initialMain = initial ? categoryTree(categories).mainOf(initial.category_id) : null
+  const [mainId, setMainId] = useState(initialMain?.id ?? '')
+  const [subId, setSubId] = useState(initial && initial.category_id !== initialMain?.id ? initial.category_id ?? '' : '')
   const [managingCategories, setManagingCategories] = useState(false)
-  const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
-  const [paidBy, setPaidBy] = useState('shared')
-  const [expenseDate, setExpenseDate] = useState(() => localDateString())
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [description, setDescription] = useState(initial?.description ?? '')
+  const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
+  const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
 
   const handleAddExpense = async (e) => {
     e.preventDefault()
     if (!amount || Number(amount) <= 0) return
-    const { error } = await addExpense({
+    const { error } = await onSubmit({
       categoryId: subId || mainId || null,
       amount: Number(amount),
       description,
@@ -29,13 +47,25 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
-    setAmount('')
-    setDescription('')
+    if (!initial) {
+      setAmount('')
+      setDescription('')
+    }
     onClose?.()
   }
 
   const handleDeleteCategory = async (id) => {
     const result = await deleteCategory(id)
+    if (!result.error && (mainId === id || subId === id)) {
+      setMainId('')
+      setSubId('')
+    }
+    return result
+  }
+
+  // Moving the category on screen takes it (or its parent) out of the picker.
+  const handleMoveCategory = async (id, parentId) => {
+    const result = await moveCategory(id, parentId)
     if (!result.error && (mainId === id || subId === id)) {
       setMainId('')
       setSubId('')
@@ -51,15 +81,17 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
           styleFor={styleFor}
           onAdd={addCategory}
           onDelete={handleDeleteCategory}
+          onRename={renameCategory}
+          onMove={handleMoveCategory}
           onClose={() => setManagingCategories(false)}
         />
       )}
 
       <form onSubmit={handleAddExpense} data-unsaved={amount || description ? '' : undefined}>
-        <Card className="space-y-3">
+        <Card className={initial ? 'space-y-3 border-0 shadow-none p-0 bg-transparent' : 'space-y-3'}>
           <div className="flex justify-between items-center">
-            <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add an expense</p>
-            {onClose && (
+            {!initial && <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add an expense</p>}
+            {!initial && onClose && (
               <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
                 <X size={16} />
               </button>
@@ -128,9 +160,16 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
             </Select>
           </div>
 
-          <Button type="submit" className="w-full">
-            <Plus size={16} /> Add expense
-          </Button>
+          <div className="flex gap-2">
+            {onCancel && (
+              <Button type="button" variant="ghost" onClick={onCancel} className="flex-1">
+                Cancel
+              </Button>
+            )}
+            <Button type="submit" className="flex-1">
+              {initial ? <Check size={16} /> : <Plus size={16} />} {submitLabel}
+            </Button>
+          </div>
         </Card>
       </form>
     </>
