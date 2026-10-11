@@ -130,7 +130,7 @@ export const incomeSince = storeFamily((since) =>
   })
 )
 
-export const allIncomeStores = () => incomeSince.all().filter((s) => s.isStarted())
+export const allIncomeStores = () => [...incomeSince.all(), incomeUsageStore].filter((s) => s.isStarted())
 
 // The saved color of each expense category (supabase/016).
 export const categoryColorStore = createTableStore({
@@ -139,6 +139,34 @@ export const categoryColorStore = createTableStore({
   persist: 'expense_category_colors',
   optional: true,
   compare: (a, b) => a.category_id.localeCompare(b.category_id),
+})
+
+// Income categories and their colors (supabase/017); until it has been
+// run these are missing and income keeps its old Salary / Other type.
+export const incomeCategoryStore = createTableStore({
+  name: 'income_categories',
+  table: 'income_categories',
+  persist: 'income_categories',
+  optional: true,
+  query: (q) => q.order('name'),
+  compare: (a, b) => a.name.localeCompare(b.name),
+})
+
+export const incomeCategoryColorStore = createTableStore({
+  name: 'income_category_colors',
+  table: 'income_category_colors',
+  persist: 'income_category_colors',
+  optional: true,
+  compare: (a, b) => a.category_id.localeCompare(b.category_id),
+})
+
+// Which category each income entry is in, for the category manager's
+// usage counts (all years); loaded when the manager opens.
+export const incomeUsageStore = createTableStore({
+  name: 'income',
+  table: 'income',
+  columns: 'id, category_id',
+  optional: true,
 })
 
 // Receipts: every expense in one category (Groceries), loaded only when

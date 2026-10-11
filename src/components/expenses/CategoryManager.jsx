@@ -8,7 +8,20 @@ import { expenseUsageStore } from '../../lib/stores'
 // categories (Other), so neither can be removed here.
 const PROTECTED = ['Other', 'Groceries']
 
-export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose }) {
+// Expense categories by default; income passes its own wording and usage
+// store — both work the same way.
+export function CategoryManager({
+  categories,
+  styleFor,
+  onAdd,
+  onDelete,
+  onClose,
+  title = 'Expense categories',
+  noun = 'expense',
+  plural = 'expenses',
+  usageStore = expenseUsageStore,
+  protectedNames = PROTECTED,
+}) {
   const [name, setName] = useState('')
   const [parentId, setParentId] = useState('')
   const [error, setError] = useState('')
@@ -17,7 +30,7 @@ export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose
   const parents = categories.filter((c) => !c.parent_id)
   const subsOf = (id) => categories.filter((c) => c.parent_id === id)
   // Counts every expense ever, not just the period on screen.
-  const { rows: expenses } = expenseUsageStore.useRows()
+  const { rows: expenses } = usageStore.useRows()
   const usage = (c) => expenses.filter((e) => e.category_id === c.id || subsOf(c.id).some((s) => s.id === e.category_id)).length
 
   const handleAdd = async (e) => {
@@ -41,14 +54,14 @@ export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose
 
   const row = (c, isSub) => {
     const count = usage(c)
-    const locked = PROTECTED.includes(c.name) && !c.parent_id
+    const locked = protectedNames.includes(c.name) && !c.parent_id
     return (
       <div key={c.id} className="flex items-center gap-2 py-1.5 text-xs">
         {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
         <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: styleFor(c.id).hex }} />
         <span className="flex-1 text-[var(--color-text)]">{c.name}</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          {count} expense{count === 1 ? '' : 's'}
+          {count} {count === 1 ? noun : plural}
         </span>
         {confirming === c.id ? (
           <span className="flex items-center gap-1">
@@ -82,7 +95,7 @@ export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose
         className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-4"
       >
         <div className="flex justify-between items-center">
-          <p className="text-sm font-extrabold text-[var(--color-primary)]">Expense categories</p>
+          <p className="text-sm font-extrabold text-[var(--color-primary)]">{title}</p>
           <button onClick={onClose} className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
             <X size={18} />
           </button>
@@ -109,7 +122,7 @@ export function CategoryManager({ categories, styleFor, onAdd, onDelete, onClose
         {confirmingCategory && (
           <p className="text-[11px] text-yellow-300">
             Deleting "{confirmingCategory.name}"{subsOf(confirmingCategory.id).length > 0 ? ' and its sub-categories' : ''} moves its{' '}
-            {usage(confirmingCategory)} expense{usage(confirmingCategory) === 1 ? '' : 's'} to "Other". Nothing is lost.
+            {usage(confirmingCategory)} {usage(confirmingCategory) === 1 ? noun : plural} to "Other". Nothing is lost.
           </p>
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}

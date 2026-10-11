@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 (which relies on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016')).sort()
+  // 015 (the login lock) and 016 and 017 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -405,6 +405,88 @@ describe('016: income and category colors, locked like the rest', () => {
       expect(await fails(`insert into expense_category_colors (category_id, color) values ($1, 'orange')`, [cat])).toMatch(/check|unique|duplicate/)
       await db.query(`delete from expense_categories where id = $1`, [cat])
       expect((await db.query(`select count(*)::int as n from expense_category_colors`)).rows[0].n).toBe(0)
+    })
+  })
+})
+
+describe('017: income categories, locked like the rest', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  const run = (file) => db.exec(fs.readFileSync(path.join(dir, file), 'utf8'))
+  async function as(role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  let before
+
+  beforeAll(async () => {
+    // Income as it is today: entered before categories existed.
+    await db.exec(`
+      insert into income (amount, income_type, source) values (2000, 'salary', 'Old salary'), (150, 'other', 'Old refund'), (1800, 'salary', 'Older salary');
+    `)
+    before = {
+      income: (await rows(`select count(*)::int as n, sum(amount)::float as total, sum(amount) filter (where income_type = 'salary')::float as salary from income`))[0],
+      expenses: (await rows(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses`))[0],
+      policies: (await rows(`select count(*)::int as n from pg_policies where tablename in ('expenses', 'expense_categories', 'income')`))[0].n,
+    }
+    await run('017_income_categories.sql')
+    await run('017_income_categories.sql') // safe to re-run
+  })
+
+  it('moves every existing income entry to Salary or Other and changes nothing else', async () => {
+    const after = {
+      income: (await rows(`select count(*)::int as n, sum(amount)::float as total, sum(amount) filter (where income_type = 'salary')::float as salary from income`))[0],
+      expenses: (await rows(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses`))[0],
+      policies: (await rows(`select count(*)::int as n from pg_policies where tablename in ('expenses', 'expense_categories', 'income')`))[0].n,
+    }
+    expect(after).toEqual(before)
+    expect(await rows(`select c.name, count(*)::int as n, sum(i.amount)::float as total from income i join income_categories c on c.id = i.category_id group by c.name order by c.name`)).toEqual([
+      { name: 'Other', n: 1, total: 150 },
+      { name: 'Salary', n: 2, total: 3800 },
+    ])
+    expect((await rows(`select count(*)::int as n from income_categories`))[0].n).toBe(2)
+  })
+
+  it('leaves the new tables closed to anon, with the same policy as the others, and the check says so', async () => {
+    const check = fs.readFileSync(path.join(dir, '017_income_categories.sql'), 'utf8').split('-- ── Check')[1].replace(/^[^\n]*\n[^\n]*\n/, '')
+    expect((await rows(check))[0]).toEqual({ open_to_anon: 'none', locked_to_household: true, starting_categories: true, entries_without_category: 0 })
+    expect(await as('anon', null, () => fails('select * from income_categories'))).toMatch(/permission denied/)
+    expect(await as('anon', null, () => fails('select * from income_category_colors'))).toMatch(/permission denied/)
+    const policy = (t) => rows(`select cmd, roles::text, qual, with_check from pg_policies where tablename = $1 and policyname = 'household_only'`, [t])
+    expect(await policy('income_categories')).toEqual(await policy('expenses'))
+    expect(await policy('income_category_colors')).toEqual(await policy('expenses'))
+    expect((await rows(`select count(*)::int as n from pg_publication_tables where pubname = 'supabase_realtime' and tablename in ('income_categories', 'income_category_colors')`))[0].n).toBe(2)
+  })
+
+  it('lets the household add categories and sub-categories, and keeps out strangers', async () => {
+    await as('authenticated', MEMBER, async () => {
+      const main = (await rows(`insert into income_categories (name) values ('Freelance') returning id`))[0].id
+      const sub = (await rows(`insert into income_categories (name, parent_id, type) values ('Design', $1, 'sub') returning id`, [main]))[0].id
+      await db.query(`insert into income_category_colors (category_id, color) values ($1, '#F97316')`, [sub])
+      const entry = (await rows(`insert into income (amount, income_type, category_id) values (80, 'other', $1) returning id`, [sub]))[0].id
+      expect(await fails(`insert into income_categories (name) values ('Freelance')`)).toMatch(/unique|duplicate/)
+      // Deleting a main category removes its sub-category and color; the entry stays, uncategorized.
+      await db.query(`delete from income_categories where id = $1`, [main])
+      expect((await rows(`select category_id from income where id = $1`, [entry]))[0].category_id).toBeNull()
+      expect((await rows(`select count(*)::int as n from income_category_colors`))[0].n).toBe(0)
+      await db.query(`delete from income where id = $1`, [entry])
+    })
+    await as('authenticated', STRANGER, async () => {
+      expect(await fails(`insert into income_categories (name) values ('Nope')`)).toMatch(/row-level security/)
     })
   })
 })

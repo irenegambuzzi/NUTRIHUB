@@ -8,22 +8,23 @@ import { assignCategoryColors, categoryStyle, UNCATEGORIZED_COLOR } from '../lib
 // categories (and the ones from before colors existed) get theirs worked
 // out the same way on every phone, then saved so they never change. If
 // the table isn't there yet, the worked-out colors are simply not saved.
-export function useCategoryColors(categories) {
-  const { rows: stored, loaded, missing } = categoryColorStore.useRows()
+// Expense colors by default; income passes its own table.
+export function useCategoryColors(categories, { store = categoryColorStore, table = 'expense_category_colors' } = {}) {
+  const { rows: stored, loaded, missing } = store.useRows()
   const { colors, fresh } = useMemo(() => assignCategoryColors(categories, stored), [categories, stored])
 
   useEffect(() => {
     if (!loaded || missing || fresh.length === 0 || categories.length === 0 || isOffline()) return
     // Another phone saving the same ones meanwhile is fine: first wins.
     supabase
-      .from('expense_category_colors')
+      .from(table)
       .upsert(fresh, { onConflict: 'category_id', ignoreDuplicates: true })
       .select()
       .then(({ data, error }) => {
         if (error) return console.error(error)
-        if (data?.length) categoryColorStore.upsertLocal(data)
+        if (data?.length) store.upsertLocal(data)
       })
-  }, [loaded, missing, fresh, categories.length])
+  }, [loaded, missing, fresh, categories.length, store, table])
 
   return useMemo(() => {
     const styles = new Map([...colors].map(([id, hex]) => [id, categoryStyle(hex)]))

@@ -5,11 +5,11 @@ const money = (n) => `${n < 0 ? '−' : ''}€${Math.abs(n).toFixed(2)}`
 
 // Income, expenses and what's left (or overspent) in the period.
 export function MoneySummary({ income, expenses }) {
-  const difference = income - expenses
+  const balance = income - expenses
   const tiles = [
     { label: 'Income', value: money(income), tone: 'text-[#7FDB92]' },
     { label: 'Expenses', value: money(expenses), tone: 'text-[var(--color-accent)]' },
-    { label: 'Difference', value: `${difference > 0 ? '+' : ''}${money(difference)}`, tone: difference < 0 ? 'text-rose-300' : 'text-[var(--color-text)]' },
+    { label: 'Balance', value: `${balance > 0 ? '+' : ''}${money(balance)}`, tone: balance < 0 ? 'text-rose-300' : 'text-[var(--color-text)]' },
   ]
   return (
     <Card className="grid grid-cols-3 gap-2 text-center p-3">

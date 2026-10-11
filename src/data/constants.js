@@ -133,8 +133,3 @@ export const EXPENSE_PERIOD_LABELS = {
   '6months': '6 Months',
   year: 'Year',
 }
-
-export const INCOME_TYPES = [
-  { value: 'salary', label: 'Salary' },
-  { value: 'other', label: 'Other' },
-]
