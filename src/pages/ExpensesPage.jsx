@@ -14,11 +14,13 @@ import { incomeCategoryColorStore } from '../lib/stores'
 import { categoryTree } from '../lib/moneyList'
 import { reopenTrip } from '../hooks/usePurchase'
 import { askDialog } from '../lib/feedback'
-import { PAID_BY_OPTIONS } from '../data/constants'
+import { PersonSelector } from '../components/expenses/PersonSelector'
+import { Button } from '../components/ui/Button'
+import { usePersonFilter } from '../lib/personFilter'
 import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
-import { cn } from '../lib/cn'
+import { Plus } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
 
@@ -67,7 +69,9 @@ export function ExpensesPage() {
 
   const [period, setPeriod] = useState('month')
   const [offset, setOffset] = useState(0)
-  const [paidByFilter, setPaidByFilter] = useState('all')
+  const [paidByFilter, setPaidByFilter] = usePersonFilter('money.expensePerson')
+  const [receivedByFilter, setReceivedByFilter] = usePersonFilter('money.incomePerson')
+  const [addingExpense, setAddingExpense] = useState(false)
 
   const showPeriod = (nextPeriod, nextOffset) => {
     const start = localDateString(getPeriodRange(nextPeriod, new Date(), nextOffset).start)
@@ -95,8 +99,8 @@ export function ExpensesPage() {
   )
 
   const filteredIncome = useMemo(
-    () => income.filter((i) => i.income_date >= startDate && i.income_date < endDate && (paidByFilter === 'all' || i.received_by === paidByFilter)),
-    [income, startDate, endDate, paidByFilter]
+    () => income.filter((i) => i.income_date >= startDate && i.income_date < endDate && (receivedByFilter === 'all' || i.received_by === receivedByFilter)),
+    [income, startDate, endDate, receivedByFilter]
   )
 
   const total = sumAmounts(filteredExpenses)
@@ -134,22 +138,7 @@ export function ExpensesPage() {
       <div className="space-y-4">
         <PeriodPicker period={period} offset={offset} onPeriod={(p) => showPeriod(p, 0)} onOffset={(o) => showPeriod(period, o)} />
 
-        <div className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 self-start w-fit">
-          {[{ value: 'all', label: 'Everyone' }, ...PAID_BY_OPTIONS].map((o) => (
-            <button
-              key={o.value}
-              onClick={() => setPaidByFilter(o.value)}
-              className={cn(
-                'px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200',
-                paidByFilter === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        <MoneySummary income={incomeTotal} expenses={total} />
+        <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} />
       </div>
 
       <IncomeSection
@@ -161,6 +150,8 @@ export function ExpensesPage() {
         styleFor={incomeStyleFor}
         period={period}
         offset={offset}
+        person={receivedByFilter}
+        onPerson={setReceivedByFilter}
         addIncome={addIncome}
         updateIncome={updateIncome}
         deleteIncome={deleteIncome}
@@ -171,20 +162,32 @@ export function ExpensesPage() {
       <section className="space-y-4">
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-extrabold text-[var(--color-primary)]">Expenses</h2>
-          <span className="text-xs font-mono font-bold text-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm">
-            €{total.toFixed(2)}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold text-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm">
+              €{total.toFixed(2)}
+            </span>
+            {!addingExpense && (
+              <Button variant="ghost" onClick={() => setAddingExpense(true)} className="px-3 py-1.5 text-xs">
+                <Plus size={14} /> Add expense
+              </Button>
+            )}
+          </div>
         </div>
 
-        <ExpenseForm
-          categories={categories}
-          mainCategories={mainCategories}
-          subsOf={subsOf}
-          addExpense={addExpense}
-          addCategory={addCategory}
-          deleteCategory={deleteCategory}
-          styleFor={styleFor}
-        />
+        <PersonSelector value={paidByFilter} onChange={setPaidByFilter} label="Paid by" />
+
+        {addingExpense && (
+          <ExpenseForm
+            categories={categories}
+            mainCategories={mainCategories}
+            subsOf={subsOf}
+            addExpense={addExpense}
+            addCategory={addCategory}
+            deleteCategory={deleteCategory}
+            styleFor={styleFor}
+            onClose={() => setAddingExpense(false)}
+          />
+        )}
 
         <CategoryTotals totals={totals} total={total} styleFor={styleFor} />
 
@@ -194,6 +197,7 @@ export function ExpensesPage() {
           categoryOf={mainOf}
           period={period}
           offset={offset}
+          scope={paidByFilter}
           styleFor={styleFor}
           plural="expenses"
           renderDefault={expenseGroups}

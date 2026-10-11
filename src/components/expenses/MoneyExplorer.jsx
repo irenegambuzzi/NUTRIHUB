@@ -18,17 +18,18 @@ const chipClasses = 'min-h-10 pl-3 pr-2 rounded-full inline-flex items-center ga
 // Charts, chart filters, "Sort by" and the list for one kind of money
 // (income or expenses), for the period on screen.
 //   entries        – everything in the period (already filtered by person)
+//   scope          – the person selection; changing it clears the chart filters
 //   dateOf         – an entry's date
 //   categoryOf     – (categoryId) => its main category ({ id, name }) or null
 //   renderDefault  – (entries) => the list as it was before sorting
 //   renderEntry    – (entry) => one row, for the sorted lists
-export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, styleFor, plural, renderDefault, renderEntry }) {
+export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, plural, renderDefault, renderEntry }) {
   const [bucket, setBucket] = useState(null)
   const [category, setCategory] = useState(null)
   const [sort, setSort] = useState(null)
 
   // A new period (or person) starts with no chart filter.
-  const periodKey = `${period}|${offset}`
+  const periodKey = `${period}|${offset}|${scope ?? ''}`
   const [seenPeriod, setSeenPeriod] = useState(periodKey)
   if (seenPeriod !== periodKey) {
     setSeenPeriod(periodKey)
@@ -127,6 +128,11 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sty
             ))}
           </div>
         </div>
+        {sort && (
+          <button onClick={() => setSort(null)} className="min-h-10 px-3 rounded-full text-xs font-bold text-[var(--color-text-muted)] underline underline-offset-2">
+            ✕ Clear sort
+          </button>
+        )}
       </div>
 
       <div className="space-y-2">

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Settings2 } from 'lucide-react'
+import { Plus, Settings2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Label, Input, Select } from '../ui/Field'
@@ -8,7 +8,7 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 
 // Adding an expense by hand, plus the category manager it opens.
-export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, addCategory, deleteCategory, styleFor }) {
+export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, addCategory, deleteCategory, styleFor, onClose }) {
   const [mainId, setMainId] = useState('')
   const [subId, setSubId] = useState('')
   const [managingCategories, setManagingCategories] = useState(false)
@@ -31,6 +31,7 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
     if (error) return
     setAmount('')
     setDescription('')
+    onClose?.()
   }
 
   const handleDeleteCategory = async (id) => {
@@ -56,7 +57,14 @@ export function ExpenseForm({ categories, mainCategories, subsOf, addExpense, ad
 
       <form onSubmit={handleAddExpense} data-unsaved={amount || description ? '' : undefined}>
         <Card className="space-y-3">
-          <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add an expense</p>
+          <div className="flex justify-between items-center">
+            <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add an expense</p>
+            {onClose && (
+              <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
+                <X size={16} />
+              </button>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>

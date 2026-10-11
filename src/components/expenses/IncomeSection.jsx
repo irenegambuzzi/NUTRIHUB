@@ -6,6 +6,7 @@ import { IncomeForm } from './IncomeForm'
 import { CategoryManager } from './CategoryManager'
 import { MoneyExplorer } from './MoneyExplorer'
 import { IncomeRow } from './EntryRows'
+import { PersonSelector } from './PersonSelector'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { categoryTree } from '../../lib/moneyList'
 import { incomeUsageStore } from '../../lib/stores'
@@ -26,6 +27,8 @@ export function IncomeSection({
   styleFor,
   period,
   offset,
+  person,
+  onPerson,
   addIncome,
   updateIncome,
   deleteIncome,
@@ -54,6 +57,8 @@ export function IncomeSection({
         </div>
       </div>
 
+      <PersonSelector value={person} onChange={onPerson} label="Received by" />
+
       {missing && (
         <Card className="text-xs text-yellow-300">Income needs a one-time database update (supabase/016_income_and_category_colors.sql) before it can be saved.</Card>
       )}
@@ -81,6 +86,7 @@ export function IncomeSection({
         categoryOf={tree.mainOf}
         period={period}
         offset={offset}
+        scope={person}
         styleFor={styleFor}
         plural="income entries"
         renderDefault={(visible) =>
