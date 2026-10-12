@@ -5,7 +5,7 @@
 //
 // The history can't say which items were new before this feature, so only
 // items created after NEW_ITEM_SINCE can be new; everything older never is.
-export const NEW_ITEM_SINCE = '2026-10-12T17:30:00Z'
+export const NEW_ITEM_SINCE = '2026-10-14T19:55:00Z'
 
 // History entries that count as "bought or restocked" (the + buttons in
 // HOME, a confirmed purchase in SHOP). Fixing the stock by hand in the

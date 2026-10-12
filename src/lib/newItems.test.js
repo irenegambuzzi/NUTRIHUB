@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { NEW_ITEM_SINCE, isNewItem } from './newItems'
 
-const after = '2026-10-13T08:00:00Z'
-const later = '2026-10-14T08:00:00Z'
+const after = '2026-10-15T08:00:00Z'
+const later = '2026-10-16T08:00:00Z'
 const item = { id: 'a', created_at: after }
 
 describe('isNewItem', () => {

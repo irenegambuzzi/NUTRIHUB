@@ -5,7 +5,7 @@ vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
 const { ItemTile } = await import('./ItemTile')
 const { ItemEditor } = await import('./ItemEditor')
 
-const base = { id: 'p1', name: 'Rice', category_id: 'pantry-staples', unit: 'gr', current_stock: 500, min_stock: 100, created_at: '2026-10-13T08:00:00Z' }
+const base = { id: 'p1', name: 'Rice', category_id: 'pantry-staples', unit: 'gr', current_stock: 500, min_stock: 100, created_at: '2026-10-15T08:00:00Z' }
 const tile = (item, isNew) =>
   renderToStaticMarkup(<ItemTile item={item} isNew={isNew} onAdjust={() => {}} onDiscard={() => {}} onEdit={() => {}} onDelete={() => {}} onSendToGrocery={() => {}} />)
 const tileClass = (html) => html.match(/^<div class="([^"]*)"/)[1]
