@@ -5,7 +5,8 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { isDurable } from '../../lib/inventory'
 import { money } from '../../lib/pricing'
-import { GROCERY_LIST_LABELS, listOf, matchesGrocerySearch } from '../../lib/grocerySearch'
+import { GROCERY_LIST_LABELS, listOf, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
+import { formatPurchaseQuantity } from '../../lib/inventory'
 import { groupByCategory, moveCategoryWrites, moveItemWrites, routeOrder } from '../../lib/shopMode'
 import { useShopOrder } from '../../hooks/useShopOrder'
 import { SortableList } from '../ui/SortableList'
@@ -32,7 +33,7 @@ function rememberSort(sort) {
 // by category (categories in aisle order) or as "my route", where each
 // item can be put anywhere, whatever its category. Items not arranged
 // yet go where their category is.
-export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', onCheck, onConfirm }) {
+export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, variantNamesOf = () => [], onCheck, onConfirm }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   const { positions, savePositions } = useShopOrder()
@@ -45,7 +46,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
 
   const query = search.trim().toLowerCase()
-  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName)) : []
+  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, variantNamesOf(i))) : []
 
   const setSort = (next) => {
     setSortState(next)
@@ -114,7 +115,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
                       {GROCERY_LIST_LABELS[cart ? 'inCart' : 'toBuy']} ({list.length})
                     </h3>
                     {list.map((item) => (
-                      <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} showCategory showList />
+                      <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} showCategory showList hint={variantHint(item, query, variantNamesOf(item))} />
                     ))}
                   </section>
                 )
@@ -150,7 +151,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
         ) : (
           <div className="space-y-2">
             {route.map((item) => (
-              <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} showCategory />
+              <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} showCategory />
             ))}
           </div>
         )
@@ -185,7 +186,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
                   </span>
                 )}
               </div>
-              {!arranging && list.map((item) => <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} />)}
+              {!arranging && list.map((item) => <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} />)}
             </section>
           )
         })
@@ -203,7 +204,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
           </div>
           <p className="text-[10px] text-[var(--color-text-muted)]">Tap an item to take it out again. Nothing is added to the pantry or expenses until you confirm.</p>
           {inCart.map((item) => (
-            <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} />
+            <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} />
           ))}
         </section>
       )}
@@ -242,7 +243,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 
 // One big tile: tap to put it in the cart (or take it out again) — only
 // the cart changes; the purchase is confirmed separately.
-function ShopTile({ item, total, onCheck, showCategory = false, showList = false }) {
+function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null }) {
   return (
     <button
       onClick={() => onCheck(item)}
@@ -265,7 +266,8 @@ function ShopTile({ item, total, onCheck, showCategory = false, showList = false
         </span>
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           {showCategory && <CategoryIcon category={item.category_id} size={12} />}
-          {item.quantity} {item.unit}
+          {formatPurchaseQuantity(item.quantity, item.unit, pack)}
+          {hint && <span className="ml-1">· {hint}</span>}
           {showList && (
             <span
               className={cn(

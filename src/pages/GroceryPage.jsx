@@ -19,7 +19,7 @@ import { inventoryCategoryColor } from '../lib/categoryColors'
 import { restockReason, syncShoppingForItem } from '../lib/inventory'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
-import { matchesGrocerySearch } from '../lib/grocerySearch'
+import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
 
 // List or shopping mode, remembered on this phone (Receipts isn't).
 const VIEW_KEY = 'nutrihub-grocery-view'
@@ -89,9 +89,12 @@ export function GroceryPage() {
   const [search, setSearch] = useState('')
 
   const query = search.trim().toLowerCase()
+  // The names of a group's variants, so searching "Lays" finds the
+  // "Chips & Snacks" line.
+  const variantNamesOf = (g) => pantryFor(g)?.variants?.map((v) => v.name) ?? []
   // Searching looks through every category, to buy and in the cart alike.
   const inCategory = query
-    ? (i) => matchesGrocerySearch(i, query, categoryName)
+    ? (i) => matchesGrocerySearch(i, query, categoryName, variantNamesOf(i))
     : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
@@ -126,7 +129,7 @@ export function GroceryPage() {
   const quickAdd = (
     <QuickAdd
       items={items}
-      pantryItems={pantryItems}
+      pantryItems={pantryItems.filter((p) => !p.group_id)}
       parents={parents}
       subsByParent={subsByParent}
       categoryName={categoryName}
@@ -319,6 +322,7 @@ export function GroceryPage() {
                   key={item.id}
                   item={item}
                   showList={Boolean(query)}
+                  hint={variantHint(item, query, variantNamesOf(item))}
                   reason={reasonOf(item)}
                   pack={pantryFor(item)}
                   total={totalOf(item)}
@@ -349,6 +353,7 @@ export function GroceryPage() {
                     key={item.id}
                     item={item}
                     showList={Boolean(query)}
+                    hint={variantHint(item, query, variantNamesOf(item))}
                     reason={reasonOf(item)}
                     pack={pantryFor(item)}
                     total={totalOf(item)}
@@ -374,6 +379,8 @@ export function GroceryPage() {
             costOf={costOf}
             budget={groceryBudget}
             search={search}
+            pantryFor={pantryFor}
+            variantNamesOf={variantNamesOf}
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
           />

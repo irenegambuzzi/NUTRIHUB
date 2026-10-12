@@ -6,19 +6,23 @@ import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS } from '../../data/constants'
+import { purchaseUnitOptions } from '../../lib/units'
+import { askDialog, confirmDialog } from '../../lib/feedback'
+import { checkMoveIntoGroup } from '../../lib/groups'
 import { quantityStep, roundQuantity, unitFactor } from '../../lib/inventory'
 import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 
-function initialState(item) {
+function initialState(item, group) {
   const perPack = Number(item?.quantity_per_pack) || ''
   return {
     name: item?.name ?? '',
-    category_id: item?.category_id ?? '',
-    subcategory_id: item?.subcategory_id ?? '',
-    unit: item?.unit ?? DEFAULT_UNIT,
+    category_id: item?.category_id ?? group?.category_id ?? '',
+    subcategory_id: item?.subcategory_id ?? group?.subcategory_id ?? '',
+    unit: item?.unit ?? group?.unit ?? DEFAULT_UNIT,
+    group_id: item?.group_id ?? group?.id ?? '',
     multipack: Boolean(item?.packaging_unit && perPack),
     packaging_unit: item?.packaging_unit ?? PACKAGING_UNITS[0],
     quantity_per_pack: perPack || 6,
@@ -37,10 +41,15 @@ function initialState(item) {
 // Adding or editing a pantry item. For a new item the category is
 // suggested from the name until the user picks one; a pick by hand is
 // remembered for that name on both phones.
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose }) {
+// `asGroup`: making (or editing) a group — a total of variants, with no
+// stock, expiry or batch of its own. `groups`: the groups an item can be
+// moved into; `group`: the group a new variant is made in; `variantCount`:
+// how many variants the edited group has.
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0 }) {
+  const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
-  const [form, setForm] = useState(() => initialState(item))
-  const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id))
+  const [form, setForm] = useState(() => initialState(item, group))
+  const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id || group))
   const [categoryPicked, setCategoryPicked] = useState(false)
   const [suggested, setSuggested] = useState(false)
   const [categoryError, setCategoryError] = useState('')
@@ -48,6 +57,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [error, setError] = useState('')
   const [unitNote, setUnitNote] = useState('')
   const [expiryValid, setExpiryValid] = useState(true)
+  const [groupNote, setGroupNote] = useState('')
 
   // Until a category is picked, it follows the name's suggestion.
   const changeName = (name) => {
@@ -64,28 +74,74 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const fieldUnit = (f, field) => (field === 'current_stock' && f.multipack && f.stockInPacks ? f.packaging_unit : f.unit)
   const snap = (field) => () => setForm((f) => ({ ...f, [field]: String(roundQuantity(f[field], fieldUnit(f, field))) }))
 
-  // Switching between gr↔kg or ml↔L converts the quantities; other
-  // switches (e.g. pack → pcs) can't be converted safely, so the
-  // numbers are left for the user to check.
-  const changeUnit = (e) => {
-    const next = e.target.value
+  // Changing the unit never changes a quantity by itself. For a saved item
+  // the user is asked what happens to the stock and the minimum; a new
+  // item has nothing to lose.
+  const applyUnit = (next, convert) => {
     const factor = unitFactor(form.unit, next)
-    if (factor !== null && factor !== 1 && !form.stockInPacks) {
+    const options = purchaseUnitOptions(next, form.packaging_unit)
+    const packaging = form.packaging_unit === next ? options[0] : form.packaging_unit
+    if (convert && factor !== null && factor !== 1 && !form.stockInPacks) {
       const stock = roundQuantity((parseFloat(form.current_stock) || 0) * factor, next)
       const min = roundQuantity((parseFloat(form.min_stock) || 0) * factor, next)
-      setForm((f) => ({ ...f, unit: next, current_stock: String(stock), min_stock: String(min) }))
+      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min) }))
       setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.`)
     } else {
-      setForm((f) => ({ ...f, unit: next }))
+      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging }))
       setUnitNote(item && next !== item.unit ? `Quantities weren't converted — check stock and minimum in ${next}.` : '')
     }
   }
 
+  const changeUnit = async (e) => {
+    const next = e.target.value
+    if (next === form.unit) return
+    if (!item || isGroup) return applyUnit(next, true)
+    const factor = unitFactor(form.unit, next)
+    const stock = parseFloat(form.current_stock) || 0
+    const min = parseFloat(form.min_stock) || 0
+    const options = [
+      ...(factor !== null && factor !== 1
+        ? [{ value: 'convert', label: 'Convert the numbers', hint: `${stock} ${form.unit} → ${roundQuantity(stock * factor, next)} ${next} (the same amount, counted differently)` }]
+        : []),
+      { value: 'keep', label: 'Keep the numbers as they are', hint: `${stock} ${form.unit} becomes ${stock} ${next} — a different amount` },
+    ]
+    const answer = await askDialog({
+      title: `Count "${form.name || item.name}" in ${next} instead of ${form.unit}?`,
+      message: `Stock is ${stock} ${form.unit} and the minimum ${min} ${form.unit}. Nothing changes until you save — choose what should happen to those numbers.`,
+      fields: [{ name: 'how', type: 'choice', options, value: options[0].value }],
+      confirmLabel: 'Change unit',
+    })
+    if (answer) applyUnit(next, answer.how === 'convert')
+  }
+
+  // Moving an item into a group: same unit, or a confirmed conversion, or
+  // blocked — never mixed silently.
+  const changeGroup = async (e) => {
+    const id = e.target.value
+    setGroupNote('')
+    if (!id) return setForm((f) => ({ ...f, group_id: '' }))
+    const target = groups.find((g) => g.id === id)
+    const check = checkMoveIntoGroup({ ...item, name: form.name || item?.name, unit: form.unit }, target)
+    if (check.blocked) return setGroupNote(check.blocked)
+    if (check.convert) {
+      const stock = roundQuantity((parseFloat(form.current_stock) || 0) * check.convert.factor, target.unit)
+      const ok = await confirmDialog({
+        title: `Move into "${target.name}"?`,
+        message: `"${target.name}" counts in ${target.unit}, this item in ${form.unit}. Its stock ${form.current_stock} ${form.unit} will be converted to ${stock} ${target.unit} (the same amount). Nothing is saved until you press Save.`,
+        confirmLabel: 'Convert and move',
+      })
+      if (!ok) return
+      const min = roundQuantity((parseFloat(form.min_stock) || 0) * check.convert.factor, target.unit)
+      return setForm((f) => ({ ...f, group_id: id, unit: target.unit, current_stock: String(stock), min_stock: String(min) }))
+    }
+    setForm((f) => ({ ...f, group_id: id }))
+  }
+
+  const perPack = Number(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
   const suggestedUnits = SUGGESTED_UNITS[form.category_id] || []
   const unusualUnit = suggestedUnits.length > 0 && !suggestedUnits.includes(form.unit)
-  const perPack = Number(form.quantity_per_pack) || 0
   const stockValue = parseFloat(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
 
@@ -119,10 +175,16 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
       unit: form.unit,
       packaging_unit: form.multipack ? form.packaging_unit : null,
       quantity_per_pack: form.multipack ? perPack : null,
-      current_stock: roundQuantity(baseStock, form.unit),
+      // A group has no stock, expiry or batch of its own.
+      ...(isGroup
+        ? item
+          ? {}
+          : { current_stock: 0, is_group: true }
+        : { current_stock: roundQuantity(baseStock, form.unit), expiry_date: form.expiry_date || null, batch_lot: form.batch_lot.trim() || null }),
+      // Only sent when it changes: until supabase/018 has been run the
+      // column doesn't exist.
+      ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
       min_stock: roundQuantity(form.min_stock, form.unit),
-      expiry_date: form.expiry_date || null,
-      batch_lot: form.batch_lot.trim() || null,
       notes: form.notes.trim() || null,
       ...(parseFloat(form.price) > 0
         ? { price: parseFloat(form.price), price_qty: parseFloat(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
@@ -143,7 +205,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-lg max-h-[92vh] overflow-y-auto p-5 space-y-4"
       >
         <div className="flex justify-between items-center">
-          <p className="text-sm font-extrabold text-[var(--color-primary)]">{item ? 'Edit item' : 'Add an item'}</p>
+          <p className="text-sm font-extrabold text-[var(--color-primary)]">{isGroup ? (item ? 'Edit group' : 'Add a group') : group && !item ? `Add a variant to ${group.name}` : item ? 'Edit item' : 'Add an item'}</p>
           <button type="button" onClick={onClose} className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
             <X size={18} />
           </button>
@@ -151,7 +213,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
         <div>
           <Label>Name</Label>
-          <Input autoFocus placeholder="e.g. Rice, Dish soap, Paracetamol" value={form.name} onChange={(e) => changeName(e.target.value)} />
+          <Input autoFocus placeholder={isGroup ? 'e.g. Chips & Snacks' : group ? 'Name or brand, e.g. Lays paprika' : 'e.g. Rice, Dish soap, Paracetamol'} value={form.name} onChange={(e) => changeName(e.target.value)} />
         </div>
 
         <CategoryFields
@@ -174,7 +236,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
         <div>
           <Label>Unit (what you count stock in)</Label>
-          <Select value={form.unit} onChange={changeUnit}>
+          <Select value={form.unit} onChange={changeUnit} disabled={Boolean(form.group_id) || (isGroup && variantCount > 0)}>
             {UNIT_GROUPS.map((g) => (
               <optgroup key={g.label} label={g.label}>
                 {g.units.map((u) => (
@@ -185,6 +247,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
               </optgroup>
             ))}
           </Select>
+          {form.group_id && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Counted in the unit of its group. Take it out of the group to change it.</p>}
+          {isGroup && variantCount > 0 && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">The variants count in this unit — move them out of the group before changing it.</p>}
           {unitNote && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">{unitNote}</p>}
           {unusualUnit && (
             <div className="mt-1.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 p-2 space-y-1.5">
@@ -210,22 +274,22 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         <div className="rounded-2xl border border-[var(--color-border)] p-3 space-y-3">
           <button
             type="button"
-            onClick={() => setForm((f) => ({ ...f, multipack: !f.multipack, stockInPacks: false }))}
+            onClick={() => setForm((f) => ({ ...f, multipack: !f.multipack, stockInPacks: false, packaging_unit: f.packaging_unit === f.unit ? purchaseUnitOptions(f.unit)[0] : f.packaging_unit }))}
             className={cn(
               'w-full flex items-center gap-2 text-xs font-bold',
               form.multipack ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'
             )}
           >
             <Package size={14} />
-            {form.multipack ? 'Comes in a multipack' : 'Comes in a multipack? (6-pack, case of 12, …)'}
+            {form.multipack ? 'Bought in a different unit' : 'Bought in a different unit? (1 pack = 12 pcs, 1 bottle = 1.5 L, …)'}
           </button>
           {form.multipack && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label>Packaging</Label>
+                  <Label>Purchase unit</Label>
                   <Select value={form.packaging_unit} onChange={set('packaging_unit')}>
-                    {PACKAGING_UNITS.map((p) => (
+                    {purchaseUnitOptions(form.unit, form.packaging_unit).map((p) => (
                       <option key={p} value={p}>
                         {p}
                       </option>
@@ -234,7 +298,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
                 </div>
                 <div>
                   <Label>{form.unit} per {form.packaging_unit}</Label>
-                  <Input type="number" min="1" step="1" value={form.quantity_per_pack} onChange={set('quantity_per_pack')} />
+                  <Input type="number" inputMode="decimal" min="0.01" step="any" value={form.quantity_per_pack} onChange={set('quantity_per_pack')} />
                 </div>
               </div>
               <div className="flex gap-1.5">
@@ -262,6 +326,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         </div>
 
         <div className="grid grid-cols-2 gap-2">
+          {!isGroup && (
           <div>
             <div className="flex justify-between items-center">
               <Label>Current stock</Label>
@@ -277,7 +342,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             </div>
             <Input type="number" min="0" step={quantityStep(fieldUnit(form, 'current_stock'))} value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
           </div>
-          <div>
+          )}
+          <div className={isGroup ? 'col-span-2' : undefined}>
             <Label>Minimum stock ({form.unit})</Label>
             <Input type="number" min="0" step={quantityStep(form.unit)} value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
           </div>
@@ -288,9 +354,30 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           </p>
         )}
         <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
-          It goes on the grocery list automatically when stock falls to the minimum or below.
+          {isGroup
+            ? "The group goes on the grocery list as one line when the total of its variants falls to the minimum or below."
+            : form.group_id
+              ? "While it's in a group, the group's minimum decides when to buy — this one isn't used."
+              : 'It goes on the grocery list automatically when stock falls to the minimum or below.'}
         </p>
 
+        {!isGroup && !group && (groups.length > 0 || item?.group_id) && (
+          <div>
+            <Label>Group (optional)</Label>
+            <Select value={form.group_id} onChange={changeGroup} aria-label="Group">
+              <option value="">No group — a normal item</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.unit})
+                </option>
+              ))}
+            </Select>
+            {groupNote && <p className="text-[11px] text-red-400 mt-1">{groupNote}</p>}
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Put it in a group like "Chips &amp; Snacks" to count it with the others. Its stock, expiry, batch and history stay with it.</p>
+          </div>
+        )}
+
+        {!isGroup && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <Label>Expiry date</Label>
@@ -333,6 +420,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             {batchProblem && <p className="text-[11px] text-red-400 mt-1">{batchProblem}</p>}
           </div>
         </div>
+        )}
 
         <div>
           <Label>Price (e.g. €2.50 per 500 gr, €1 per can, €6 per pack)</Label>
@@ -352,7 +440,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         {error && <p className="text-xs text-red-400">{error}</p>}
 
         <Button type="submit" disabled={saving} className="w-full">
-          {saving ? 'Saving…' : item ? 'Save changes' : 'Add to inventory'}
+          {saving ? 'Saving…' : item ? 'Save changes' : isGroup ? 'Create group' : 'Add to inventory'}
         </Button>
       </form>
     </div>

@@ -8,17 +8,18 @@ import { payerLabel } from '../../lib/grocery'
 import { GROCERY_LIST_LABELS, listOf } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { quantityStep, roundQuantity, stepQuantity } from '../../lib/inventory'
+import { formatPurchaseQuantity, quantityStep, roundQuantity, stepQuantity } from '../../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
-import { formatUnitPrice, lineTotal, money, priceUnitOptions } from '../../lib/pricing'
+import { formatStockUnitPrice, formatUnitPrice, lineTotal, money, priceUnitOptions } from '../../lib/pricing'
 
-export function GroceryItemTile({ item, showList = false, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer }) {
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer }) {
   const c = inventoryCategoryColor(item.category_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
   const [savingQuantity, setSavingQuantity] = useState(false)
   const label = RESTOCK_LABELS[reason]
   const unitPrice = formatUnitPrice(item)
+  const stockUnitPrice = formatStockUnitPrice(item, pack)
   const priceUnits = priceUnitOptions(item, pack)
 
   const startEditing = () => {
@@ -107,7 +108,7 @@ export function GroceryItemTile({ item, showList = false, reason, pack, total, b
           title="Type the quantity"
           className={cn('min-w-12 px-1.5 text-center text-xs font-bold text-[var(--color-text)]', savingQuantity && 'opacity-50')}
         >
-          {item.quantity} {item.unit}
+          {formatPurchaseQuantity(item.quantity, item.unit, pack)}
         </button>
         <button
           onClick={() => changeQuantity(1)}
@@ -118,6 +119,8 @@ export function GroceryItemTile({ item, showList = false, reason, pack, total, b
           <Plus size={12} />
         </button>
       </div>
+
+      {hint && <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{hint}</p>}
 
       {showList && (
         <span
@@ -190,6 +193,7 @@ export function GroceryItemTile({ item, showList = false, reason, pack, total, b
                 </span>
               )}
               <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{unitPrice}</span>
+              {stockUnitPrice && <span className="text-[10px] text-[var(--color-text-muted)] font-mono">≈ {stockUnitPrice}</span>}
             </>
           ) : (
             <span className="text-xs text-[var(--color-text-muted)] font-semibold flex items-center gap-1">

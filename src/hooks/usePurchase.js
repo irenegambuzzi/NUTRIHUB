@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, followUp, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { getDurableExpenseCategoryId, getGroceriesCategoryId, syncShoppingForItem, updateRows } from '../lib/inventory'
+import { newVariantFields } from '../lib/groups'
 import { confirmationPayload } from '../lib/purchase'
 import { money } from '../lib/pricing'
 import { groceryStore, pantryStore, tripItemStore, tripStore } from '../lib/stores'
@@ -46,7 +47,7 @@ export async function reopenTrip(tripId, note = null) {
 // `patches` ([{ id, patch }]) are the edits made on the confirm screen:
 // saved to the grocery entries first, so the entries and everything the
 // confirmation writes use the same values as `lines` and `totalOf`.
-export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [] }) {
+export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map() }) {
   const result = await attempt(
     async () => {
       for (const { id: itemId, patch } of patches) {
@@ -54,8 +55,14 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
         groceryStore.patchLocal([itemId], patch)
       }
       const expenseCategoryFor = await expenseCategories(lines)
-      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor, photoIds })
-      return must(await supabase.rpc('confirm_shopping_trip', { payload }))
+      const made = await makeVariants(lines, variantIds)
+      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor, photoIds, variantIds })
+      try {
+        return must(await supabase.rpc('confirm_shopping_trip', { payload }))
+      } catch (error) {
+        await removeEmptyVariants(made)
+        throw error
+      }
     },
     { retry: false, onFail: reloadAll }
   )
@@ -69,6 +76,50 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
   })
   afterConfirm(lines)
   return result
+}
+
+// The new variants chosen for group lines are made first (the purchase
+// then restocks them like any item). Each has an id fixed for this
+// confirm screen and is only made if it isn't there yet, so pressing
+// Confirm again never makes a second one or resets its stock.
+async function makeVariants(lines, variantIds) {
+  const made = []
+  const byName = new Map()
+  for (const line of lines) {
+    if (!line.newVariant) continue
+    const key = `${line.group.id}:${line.newVariant.toLowerCase()}`
+    if (byName.has(key)) {
+      variantIds.set(line.item.id, byName.get(key))
+      continue
+    }
+    const id = variantIds.get(line.item.id) ?? crypto.randomUUID()
+    variantIds.set(line.item.id, id)
+    byName.set(key, id)
+    const row = {
+      id,
+      ...newVariantFields(line.group, line.newVariant, {
+        current_stock: 0,
+        packaging_unit: line.group.packaging_unit ?? null,
+        quantity_per_pack: line.group.quantity_per_pack ?? null,
+      }),
+    }
+    must(await supabase.from('pantry_items').upsert([row], { onConflict: 'id', ignoreDuplicates: true }))
+    made.push(id)
+  }
+  if (made.length) await pantryStore.refresh()
+  return made
+}
+
+// A purchase that didn't go through leaves no empty variant behind (one
+// that got stock — the purchase saved after all — is never touched).
+async function removeEmptyVariants(ids) {
+  if (!ids.length) return
+  try {
+    await supabase.from('pantry_items').delete().in('id', ids).eq('current_stock', 0)
+    await pantryStore.refresh()
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 const UNDO_FOR = 10000

@@ -1,4 +1,4 @@
-import { LEGACY_UNITS } from '../data/constants'
+import { LEGACY_UNITS, PACKAGING_UNITS, UNIT_VALUES } from '../data/constants'
 
 const METRIC_FACTORS = { gr: ['kg', 1000], ml: ['L', 1000] }
 
@@ -32,4 +32,11 @@ export function convertQuantity(qty, from, to, pack) {
     if (toBase != null && fromBase != null) return n * toBase * fromBase
   }
   return null
+}
+
+// Units an item can be bought in: packaging and count units, not the
+// metric ones (those convert on their own) and not the stock unit itself.
+export function purchaseUnitOptions(stockUnit, current) {
+  const counts = UNIT_VALUES.filter((u) => !['gr', 'kg', 'ml', 'L'].includes(u))
+  return [...new Set([...PACKAGING_UNITS, ...counts, current].filter((u) => u && u !== stockUnit))]
 }

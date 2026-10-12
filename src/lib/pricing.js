@@ -51,3 +51,15 @@ export function priceUnitOptions(row, pack) {
   const units = [row.unit, METRIC_PARTNER[row.unit], pack?.unit, pack?.packaging_unit, row.price_unit]
   return [...new Set(units.filter(Boolean))]
 }
+
+// What 1 stock unit costs when the price is quoted in another unit (the
+// purchase unit): "€0.25 / pcs" for €3 per pack of 12; null when the price
+// is already per stock unit or can't be converted.
+export function formatStockUnitPrice(row, pantry) {
+  if (!pantry || !(Number(row.price) > 0)) return null
+  const { qty, unit } = priceBasis(row)
+  if (unit === pantry.unit) return null
+  const amount = convertQuantity(1, pantry.unit, unit, pantry)
+  if (amount === null || !(amount > 0)) return null
+  return `€${((Number(row.price) * amount) / qty).toFixed(2)} / ${pantry.unit}`
+}

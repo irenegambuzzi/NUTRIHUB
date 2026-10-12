@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 and 017 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017')).sort()
+  // 015 (the login lock) and 016 and 017, 018 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -520,6 +520,83 @@ describe('017: income categories, locked like the rest', () => {
         await db.query(`delete from ${entryTable} where category_id = $1`, [alone])
         await db.query(`delete from ${table} where id in ($1, $2)`, [alone, main])
       }
+    })
+  })
+})
+
+describe('018: item groups', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const run = (file) => db.exec(fs.readFileSync(path.join(dir, file), 'utf8'))
+  async function as(role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  let before
+
+  beforeAll(async () => {
+    await db.exec(`
+      insert into pantry_items (name, unit, current_stock, min_stock, category_id) values
+        ('Group test rice', 'gr', 1250.5, 500, 'pantry-staples'), ('Group test lays', 'pcs', 3, 1, 'snacks'), ('Group test empty', 'pcs', 0, 2, 'snacks');
+    `)
+    before = await rows(`select id, name, unit, current_stock::float as stock, min_stock::float as min, category_id, expiry_date, batch_lot from pantry_items order by id`)
+    await run('018_item_groups.sql')
+    await run('018_item_groups.sql') // safe to re-run
+  })
+
+  it('changes no existing item: same rows, same stock, nobody is a group or a variant', async () => {
+    const after = await rows(`select id, name, unit, current_stock::float as stock, min_stock::float as min, category_id, expiry_date, batch_lot from pantry_items order by id`)
+    expect(after).toEqual(before)
+    expect((await rows(`select count(*)::int as n from pantry_items where is_group or group_id is not null`))[0].n).toBe(0)
+  })
+
+  it('ends with a check that says nothing changed and nothing is open to anon', async () => {
+    const check = fs.readFileSync(path.join(dir, '018_item_groups.sql'), 'utf8')
+    const result = (await db.exec(check)).at(-1).rows[0]
+    expect(result).toEqual({ stock_changed: 0, items_lost: 0, groups_now: 0, variants_now: 0, columns: 2, open_to_anon: 'none', locked_to_household: true })
+  })
+
+  it('keeps pantry_items closed to anon, and open to the household only', async () => {
+    expect(await as('anon', null, () => fails('select * from pantry_items'))).toMatch(/permission denied/)
+    await as('authenticated', MEMBER, async () => {
+      expect((await rows('select count(*)::int as n from pantry_items')).length).toBe(1)
+    })
+    expect(await as('authenticated', '99999999-9999-9999-9999-999999999999', async () => (await rows('select count(*)::int as n from pantry_items'))[0].n)).toBe(0)
+  })
+
+  it('holds a group and its variants; deleting a group never deletes the variants or their stock', async () => {
+    await as('authenticated', MEMBER, async () => {
+      const group = (await rows(`insert into pantry_items (name, unit, min_stock, is_group, category_id) values ('Chips & Snacks', 'pcs', 4, true, 'snacks') returning id`))[0].id
+      const a = (await rows(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Lays', 'pcs', 3, $1, 'snacks') returning id`, [group]))[0].id
+      await db.query(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Pringles', 'pcs', 2, $1, 'snacks')`, [group])
+      expect((await rows(`select sum(current_stock)::float as total from pantry_items where group_id = $1`, [group]))[0].total).toBe(5)
+      // A group inside a group, or an item as its own group, is refused.
+      expect(await fails(`update pantry_items set group_id = $1 where id = $1`, [group])).toMatch(/pantry_items_group_shape/)
+      expect(await fails(`insert into pantry_items (name, unit, is_group, group_id) values ('Nested', 'pcs', true, $1)`, [group])).toMatch(/pantry_items_group_shape/)
+      // Taking a variant out gives back a normal item with its stock.
+      await db.query(`update pantry_items set group_id = null where id = $1`, [a])
+      expect((await rows(`select current_stock::float as stock, group_id from pantry_items where id = $1`, [a]))[0]).toEqual({ stock: 3, group_id: null })
+      await db.query(`update pantry_items set group_id = $2 where id = $1`, [a, group])
+      // Even a group deleted by force leaves its variants, unlinked, with their stock.
+      await db.query(`delete from pantry_items where id = $1`, [group])
+      expect((await rows(`select name, current_stock::float as stock, group_id from pantry_items where name in ('Lays', 'Pringles') order by name`))).toEqual([
+        { name: 'Lays', stock: 3, group_id: null },
+        { name: 'Pringles', stock: 2, group_id: null },
+      ])
+      await db.query(`delete from pantry_items where name in ('Lays', 'Pringles')`)
     })
   })
 })

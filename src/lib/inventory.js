@@ -92,13 +92,24 @@ export function normalizeItem(item) {
   return unit === item.unit && priceUnit === item.price_unit ? item : { ...item, unit, price_unit: priceUnit }
 }
 
-// Why an item needs buying: 'out' | 'expired' | 'low' | null.
+// Why an item needs buying: 'out' | 'expired' | 'low' | null. An item in
+// a group never needs buying on its own — the group, with its total and
+// its threshold, does.
 export function restockReason(item) {
+  if (item.group_id) return null
   const status = stockStatus(item)
   if (status === 'out') return 'out'
   if (expiryState(item) === 'expired') return 'expired'
   if (status === 'low') return 'low'
   return null
+}
+
+// The colour state of an item card: why it needs buying, or — for a
+// variant, which has no threshold of its own — out or expired.
+export function displayReason(item) {
+  if (!item.group_id) return restockReason(item)
+  if (stockStatus(item) === 'out') return 'out'
+  return expiryState(item) === 'expired' ? 'expired' : null
 }
 
 export function formatStock(item) {
@@ -132,6 +143,16 @@ export function suggestedPurchase(item) {
   }
   const step = quantityStep(item.unit)
   return { quantity: Math.max(1, round(Math.ceil(round(need / step)) * step)), unit: item.unit }
+}
+
+// A quantity in the item's purchase unit with its stock-unit equivalent,
+// "2 pack (24 pcs)"; just "2 pack" when there is no conversion to show
+// (no purchase unit, or the quantity is in another unit).
+export function formatPurchaseQuantity(quantity, unit, pantry) {
+  const base = `${quantity} ${unit}`
+  const perPack = Number(pantry?.quantity_per_pack)
+  if (!pantry?.packaging_unit || unit !== pantry.packaging_unit || !(perPack > 0) || pantry.unit === unit) return base
+  return `${base} (${round(Number(quantity) * perPack)} ${pantry.unit})`
 }
 
 // Converts a purchased quantity into the pantry item's base unit
@@ -269,11 +290,20 @@ export async function updateRows(table, ids, patch) {
 // is fine again. Manually added entries are never touched.
 // Throws if the list couldn't be read or changed.
 export async function syncShoppingForItem(item) {
+  if (item.group_id) return syncGroupOf(item)
+  let emptyGroup = false
+  if (item.is_group) {
+    // A group is judged on the total of its variants (a group with none
+    // yet isn't "out of stock", just not set up).
+    const variants = must(await supabase.from('pantry_items').select('current_stock').eq('group_id', item.id))
+    emptyGroup = variants.length === 0
+    item = { ...item, current_stock: round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0)) }
+  }
   const open = must(
     await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', item.id).eq('completed', false)
   )
 
-  if (!restockReason(item)) {
+  if (emptyGroup || !restockReason(item)) {
     const autoIds = open.filter((g) => g.auto_generated).map((g) => g.id)
     if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
@@ -296,4 +326,14 @@ export async function syncShoppingForItem(item) {
     },
   ])
   must(result)
+}
+
+// A variant never goes on the list for itself: its own automatic entries
+// are removed and the group is checked instead.
+async function syncGroupOf(variant) {
+  const own = must(await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', variant.id).eq('completed', false))
+  const autoIds = own.filter((g) => g.auto_generated).map((g) => g.id)
+  if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
+  const group = must(await supabase.from('pantry_items').select('*').eq('id', variant.group_id).maybeSingle())
+  if (group) await syncShoppingForItem(normalizeItem(group))
 }

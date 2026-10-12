@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History } from 'lucide-react'
+import { Plus, Layers, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Select } from '../components/ui/Field'
 import { SearchBox } from '../components/ui/SearchBox'
 import { ItemEditor } from '../components/inventory/ItemEditor'
 import { ItemTile } from '../components/inventory/ItemTile'
+import { GroupTile } from '../components/inventory/GroupTile'
 import { StatTile } from '../components/inventory/StatTile'
 import { HistoryView } from '../components/inventory/HistoryView'
 import { DataView } from '../components/inventory/DataView'
 import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
-import { SORTS, matchesExpiry, matchesStatus, searchRank } from '../lib/pantryFilters'
+import { SORTS, matchesExpiryDeep, matchesStatus, searchRank } from '../lib/pantryFilters'
+import { groupsReady, newVariantFields } from '../lib/groups'
+import { showToast } from '../lib/feedback'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useNewItemIds } from '../hooks/useNewItemIds'
 import { useGroceryItems } from '../hooks/useGroceryItems'
@@ -25,6 +28,12 @@ export function PantryPage() {
   const { categories, pantryParents: parents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
   const newIds = useNewItemIds(items)
+  const topLevel = useMemo(() => items.filter((i) => !i.group_id), [items])
+  const groupRows = useMemo(() => items.filter((i) => i.is_group), [items])
+  const ready = groupsReady(items)
+  const groupById = useMemo(() => new Map(groupRows.map((g) => [g.id, g])), [groupRows])
+  const variantsOfGroup = useMemo(() => (g) => items.filter((i) => i.group_id === g.id).sort((a, b) => a.name.localeCompare(b.name)), [items])
+  const [groupNotice, setGroupNotice] = useState(false)
 
   const [view, setView] = useState('items')
   const [editor, setEditor] = useState(null) // null | { item } (item undefined = new)
@@ -38,15 +47,16 @@ export function PantryPage() {
   const stats = useMemo(() => {
     const count = (fn) => items.filter(fn).length
     return {
-      total: items.length,
-      low: count((i) => stockStatus(i) === 'low'),
-      out: count((i) => stockStatus(i) === 'out'),
+      total: topLevel.length,
+      // A variant has no threshold of its own: only items and groups count.
+      low: topLevel.filter((i) => stockStatus(i) === 'low').length,
+      out: topLevel.filter((i) => stockStatus(i) === 'out').length,
       expired: count((i) => expiryState(i) === 'expired'),
       expiringWeek: count((i) => expiryState(i) === 'week'),
       expiringMonth: count((i) => ['week', 'month'].includes(expiryState(i))),
       needBuying: count((i) => restockReason(i)),
     }
-  }, [items])
+  }, [items, topLevel])
 
   const expiryAlerts = useMemo(
     () =>
@@ -67,19 +77,19 @@ export function PantryPage() {
     const sortFn = SORTS[sort].fn
     if (query) {
       return items
-        .map((i) => ({ item: i, rank: searchRank(i, query, categoryName) }))
+        .map((i) => ({ item: i, rank: searchRank(i, query, categoryName, groupById.get(i.group_id)?.name) }))
         .filter((r) => r.rank >= 0)
         .sort((a, b) => a.rank - b.rank || sortFn(a.item, b.item))
         .map((r) => r.item)
     }
-    return items
+    return topLevel
       .filter((i) => {
         if (parentFilter !== 'all' && i.category_id !== parentFilter) return false
         if (subFilter !== 'all' && i.subcategory_id !== subFilter) return false
-        return matchesStatus(i, statusFilter) && matchesExpiry(i, expiryFilter)
+        return matchesStatus(i, statusFilter) && matchesExpiryDeep(i, expiryFilter)
       })
       .sort(sortFn)
-  }, [items, query, parentFilter, subFilter, statusFilter, expiryFilter, sort, categoryName])
+  }, [items, topLevel, groupById, query, parentFilter, subFilter, statusFilter, expiryFilter, sort, categoryName])
 
   const filtersActive = parentFilter !== 'all' || statusFilter !== 'all' || expiryFilter !== 'all'
 
@@ -111,16 +121,51 @@ export function PantryPage() {
     navigate('/grocery')
   }
 
+  const restockGroup = async (group, { delta, variantId, newName }) => {
+    if (variantId) return adjustStock(items.find((i) => i.id === variantId), delta, 'restocked')
+    return addItem(newVariantFields(group, newName, { current_stock: delta, packaging_unit: group.packaging_unit, quantity_per_pack: group.quantity_per_pack }))
+  }
+
+  // A variant becomes a normal item again, with its stock; Undo puts it back.
+  const takeOut = async (variant) => {
+    const groupId = variant.group_id
+    const { error } = await updateItem(variant, { group_id: null })
+    if (error) return
+    showToast({
+      message: `"${variant.name}" is a normal item again`,
+      action: { label: 'Undo', onClick: () => updateItem({ ...variant, group_id: null }, { group_id: groupId }) },
+    })
+  }
+
+  const openGroupEditor = (next) => (ready ? setEditor(next) : setGroupNotice(true))
+
   const handleSave = (fields) => (editor?.item ? updateItem(editor.item, fields) : addItem(fields))
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-extrabold text-[var(--color-primary)]">Home Inventory</h2>
-        <Button onClick={() => setEditor({})} className="rounded-full py-2">
-          <Plus size={14} /> Add item
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => openGroupEditor({ asGroup: true })} className="rounded-full py-2 bg-[var(--color-surface-soft)] text-[var(--color-text)]">
+            <Layers size={14} /> Add group
+          </Button>
+          <Button onClick={() => setEditor({})} className="rounded-full py-2">
+            <Plus size={14} /> Add item
+          </Button>
+        </div>
       </div>
+
+      {groupNotice && (
+        <Card className="space-y-1">
+          <p className="text-xs font-bold text-amber-300">Item groups need a one-time update of the database</p>
+          <p className="text-xs text-[var(--color-text-soft)]">
+            Run supabase/018_item_groups.sql in Supabase (SQL Editor), then reload the app. Until then everything else works exactly as before.
+          </p>
+          <button onClick={() => setGroupNotice(false)} className="text-[11px] font-bold text-[var(--color-accent)]">
+            OK
+          </button>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {[
@@ -263,19 +308,39 @@ export function PantryPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {filteredItems.map((item) => (
-                <ItemTile
-                  key={item.id}
-                  item={item}
-                  isNew={newIds.has(item.id)}
-                  subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
-                  onAdjust={adjustStock}
-                  onDiscard={discardExpired}
-                  onEdit={(i) => setEditor({ item: i })}
-                  onDelete={deleteItem}
-                  onSendToGrocery={sendToGrocery}
-                />
-              ))}
+              {filteredItems.map((item) =>
+                item.is_group ? (
+                  <GroupTile
+                    key={item.id}
+                    group={item}
+                    variants={variantsOfGroup(item)}
+                    newIds={newIds}
+                    isNew={newIds.has(item.id)}
+                    subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
+                    onAdjust={adjustStock}
+                    onDiscard={discardExpired}
+                    onEdit={(i) => setEditor({ item: i })}
+                    onDelete={deleteItem}
+                    onSendToGrocery={sendToGrocery}
+                    onAddVariant={(g) => setEditor({ group: g })}
+                    onTakeOut={takeOut}
+                    onRestock={restockGroup}
+                  />
+                ) : (
+                  <ItemTile
+                    key={item.id}
+                    item={item}
+                    isNew={newIds.has(item.id)}
+                    groupName={groupById.get(item.group_id)?.name}
+                    subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
+                    onAdjust={adjustStock}
+                    onDiscard={discardExpired}
+                    onEdit={(i) => setEditor({ item: i })}
+                    onDelete={deleteItem}
+                    onSendToGrocery={sendToGrocery}
+                  />
+                )
+              )}
             </div>
           )}
         </>
@@ -288,6 +353,10 @@ export function PantryPage() {
       {editor && (
         <ItemEditor
           item={editor.item}
+          asGroup={Boolean(editor.asGroup)}
+          group={editor.group}
+          groups={ready ? groupRows : []}
+          variantCount={editor.item?.is_group ? variantsOfGroup(editor.item).length : 0}
           parents={parents}
           subsByParent={subsByParent}
           onAddCategory={addCategory}

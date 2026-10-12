@@ -29,6 +29,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const [tripId] = useState(() => crypto.randomUUID())
   const [date, setDate] = useState(localDateString)
   const [answers, setAnswers] = useState({})
+  // Ids of the new variants made for group lines, fixed for this screen.
+  const variantIds = useRef(new Map())
   const [photoIds, setPhotoIds] = useState([])
   const [busy, setBusy] = useState(false)
   // Edits by item id ({ quantity, unit, total, payer }). Also kept in a ref,
@@ -67,7 +69,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (confirmedLines.some((l) => !l.ready)) return
     const patches = cartItems.map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     setBusy(true)
-    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches })
+    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches, variantIds: variantIds.current })
     setBusy(false)
     if (!error) onClose()
   }
@@ -189,7 +191,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // what Confirm uses) and is also saved to the grocery entry when the field
 // is left, so the other phone sees it.
 function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, updatePricing, updatePayer, onRemove }) {
-  const { item, pantry, needsPackSize, expired, expiredStock } = line
+  const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
 
@@ -220,7 +222,7 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, upd
   }
 
   const unitPrice = formatUnitPrice(item)
-  const needsAnswer = needsPackSize || (expiredStock > 0 && typeof answer.discard !== 'boolean')
+  const needsAnswer = needsPackSize || needsVariant || (expiredStock > 0 && typeof answer.discard !== 'boolean')
 
   return (
     <div className={cn('rounded-2xl border p-3 space-y-2 bg-[var(--color-surface)]', needsAnswer ? 'border-amber-400/60' : 'border-[var(--color-border)]')}>
@@ -276,7 +278,41 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, upd
           />
         </div>
       </div>
+      {pantry && add > 0 && item.unit !== pantry.unit && (
+        <p className="text-[10px] text-[var(--color-text-muted)]">
+          = {add} {pantry.unit} added to the stock
+        </p>
+      )}
       {total === null && <p className="text-[10px] text-amber-300">The total can't be worked out from the price's unit — type the total paid.</p>}
+
+      {group && (
+        <div className={cn('rounded-xl border p-2 space-y-1.5', needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>
+          <p className="text-[11px] text-[var(--color-text-soft)]">Which variant of "{group.name}" gets this stock?</p>
+          <Select
+            value={answer.newVariantName !== undefined && !answer.variantId ? 'new' : answer.variantId ?? ''}
+            onChange={(e) => (e.target.value === 'new' ? onAnswer({ variantId: null, newVariantName: answer.newVariantName ?? '' }) : onAnswer({ variantId: e.target.value || null, newVariantName: undefined }))}
+            aria-label={`Variant for ${item.name}`}
+            className="text-xs p-2"
+          >
+            <option value="">Choose a variant…</option>
+            {(group.variants ?? []).map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name} ({v.current_stock} {v.unit})
+              </option>
+            ))}
+            <option value="new">New variant…</option>
+          </Select>
+          {answer.newVariantName !== undefined && !answer.variantId && (
+            <Input
+              value={answer.newVariantName}
+              onChange={(e) => onAnswer({ newVariantName: e.target.value })}
+              placeholder="Name / brand of the new variant"
+              aria-label={`New variant of ${group.name}`}
+              className="text-xs p-2"
+            />
+          )}
+        </div>
+      )}
 
       {needsPackSize && (
         <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-2 space-y-1">

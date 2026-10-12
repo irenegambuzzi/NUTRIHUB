@@ -1,16 +1,19 @@
-import { Minus, Plus, Pencil, Trash, Trash2, ShoppingCart, CalendarClock } from 'lucide-react'
+import { useState } from 'react'
+import { Minus, Plus, Pencil, Trash, Trash2, ShoppingCart, CalendarClock, PackagePlus } from 'lucide-react'
+import { RestockForm } from './RestockForm'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { STOCK_STATUS_LABELS, expiryLabel, expiryState, formatStock, restockReason, stockFill, stockStatus, tapStep } from '../../lib/inventory'
+import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 
-export function ItemTile({ item, isNew = false, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
+export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
   // Tile colour: red Out, purple Expired, yellow Low, green OK.
-  const tone = restockReason(item) || 'ok'
+  const tone = displayReason(item) || 'ok'
+  const [restocking, setRestocking] = useState(false)
   const unitPrice = formatUnitPrice(item)
   const expiry = expiryState(item)
   const step = tapStep(item.unit)
@@ -39,6 +42,7 @@ export function ItemTile({ item, isNew = false, subcategoryName, onAdjust, onDis
       <button onClick={() => onEdit(item)} className="text-left pr-10">
         <p className="text-sm font-bold leading-tight text-[var(--color-text)]">{item.name}</p>
       </button>
+      {groupName && <span className="self-start mt-1 text-[10px] font-semibold text-[var(--color-text-muted)]">in {groupName}</span>}
       {subcategoryName && (
         <span className={cn('self-start mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border', c.bg, c.border, c.text)}>{subcategoryName}</span>
       )}
@@ -100,12 +104,23 @@ export function ItemTile({ item, isNew = false, subcategoryName, onAdjust, onDis
           </button>
         )}
         <button
-          onClick={() => onSendToGrocery(item)}
-          title="Add to grocery list"
-          className="ml-auto bg-[var(--color-surface-soft)] p-1.5 rounded-xl text-[var(--color-accent)]"
+          onClick={() => setRestocking((r) => !r)}
+          title="Add bought stock"
+          aria-expanded={restocking}
+          className="bg-[var(--color-surface-soft)] p-1.5 rounded-xl text-[var(--color-text)]"
         >
-          <ShoppingCart size={14} />
+          <PackagePlus size={14} />
         </button>
+        {!item.group_id && (
+          <button
+            onClick={() => onSendToGrocery(item)}
+            title="Add to grocery list"
+            className="ml-auto bg-[var(--color-surface-soft)] p-1.5 rounded-xl text-[var(--color-accent)]"
+          >
+            <ShoppingCart size={14} />
+          </button>
+        )}
+        {restocking && <RestockForm item={item} onSubmit={({ delta }) => onAdjust(item, delta, 'restocked')} onClose={() => setRestocking(false)} />}
       </div>
     </div>
   )

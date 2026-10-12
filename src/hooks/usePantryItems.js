@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
@@ -6,6 +6,7 @@ import { showToast } from '../lib/feedback'
 import { pantryStore, stockLogStore } from '../lib/stores'
 import { isOffline } from '../lib/connection'
 import { queueStock } from '../lib/offlineActions'
+import { withGroupTotals } from '../lib/groups'
 
 export const ITEM_FIELDS = [
   'name',
@@ -24,6 +25,8 @@ export const ITEM_FIELDS = [
   'price_unit',
   'payer',
   'last_purchased_at',
+  'is_group',
+  'group_id',
 ]
 
 function pickFields(source) {
@@ -33,7 +36,10 @@ function pickFields(source) {
 }
 
 export function usePantryItems() {
-  const { rows: items } = pantryStore.useRows()
+  const { rows } = pantryStore.useRows()
+  // Groups show the total of their variants (see lib/groups.js); every
+  // other item is exactly as stored.
+  const items = useMemo(() => withGroupTotals(rows), [rows])
   const fetchItems = pantryStore.refresh
 
   const addItem = useCallback(async (fields) => {
@@ -69,6 +75,13 @@ export function usePantryItems() {
       if (error) return { error }
       pantryStore.upsertLocal([data])
       if (!delta) await followUp('the shopping list', () => syncShoppingForItem(data))
+      // Moved into or out of a group: both groups are judged again.
+      if ((data.group_id ?? null) !== (item.group_id ?? null)) {
+        for (const id of [item.group_id, data.group_id].filter(Boolean)) {
+          const group = pantryStore.getSnapshot().rows.find((r) => r.id === id)
+          if (group) await followUp('the shopping list', () => syncShoppingForItem(group))
+        }
+      }
       // A rename carries over to the item's open grocery entries.
       if (data.name !== item.name) {
         await followUp('the shopping list', async () =>
@@ -135,8 +148,14 @@ export function usePantryItems() {
   // grocery entries and history rows that pointed to it (the database
   // unlinks them on delete).
   const deleteItem = useCallback(
-    (item) =>
-      deleteWithUndo({
+    (item) => {
+      // A group is only deleted once it's empty: its variants and their
+      // stock are never deleted with it.
+      if (item.is_group && pantryStore.getSnapshot().rows.some((r) => r.group_id === item.id)) {
+        showToast({ message: `"${item.name}" still has variants — move them out of the group first.`, tone: 'error' })
+        return
+      }
+      return deleteWithUndo({
         message: `Deleted "${item.name}"`,
         remove: async () => {
           const grocery = must(await supabase.from('grocery_items').select('id').eq('pantry_item_id', item.id))
@@ -152,7 +171,8 @@ export function usePantryItems() {
           await fetchItems()
         },
         onFail: fetchItems,
-      }),
+      })
+    },
     [fetchItems]
   )
 
