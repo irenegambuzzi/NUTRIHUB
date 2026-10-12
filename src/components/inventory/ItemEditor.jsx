@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { X, Package, AlertTriangle } from 'lucide-react'
+import { DateField, CalendarPick } from '../ui/DateField'
+import { formatTypedDate, looksLikeDate, parseTypedDate } from '../../lib/dateInput'
 import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { cn } from '../../lib/cn'
@@ -45,6 +47,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [unitNote, setUnitNote] = useState('')
+  const [expiryValid, setExpiryValid] = useState(true)
 
   // Until a category is picked, it follows the name's suggestion.
   const changeName = (name) => {
@@ -86,11 +89,24 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const stockValue = parseFloat(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
 
+  // A batch / lot that looks like a date has to be a real one (checked
+  // for what was typed, not for lots saved earlier).
+  const batchProblem =
+    looksLikeDate(form.batch_lot) && form.batch_lot !== (item?.batch_lot ?? '') && parseTypedDate(form.batch_lot).error
+      ? parseTypedDate(form.batch_lot).error
+      : ''
+  const batchAsDate = (text) => {
+    const { iso } = parseTypedDate(text)
+    return iso ? formatTypedDate(iso) : text
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) return setError('Give the item a name.')
     if (!form.category_id) return setCategoryError('Pick a category (or add a new one).')
     if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
+    if (!expiryValid) return setError('Fix the expiry date first (DD/MM/YYYY), or remove it.')
+    if (batchProblem) return setError(batchProblem)
     setSaving(true)
     setError('')
 
@@ -275,14 +291,46 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           It goes on the grocery list automatically when stock falls to the minimum or below.
         </p>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <Label>Expiry date</Label>
-            <Input type="date" value={form.expiry_date} onChange={set('expiry_date')} />
+            <DateField
+              label="Expiry date"
+              value={form.expiry_date}
+              onChange={(expiry_date) => setForm((f) => ({ ...f, expiry_date }))}
+              onValidity={setExpiryValid}
+            />
           </div>
           <div>
             <Label>Batch / lot (optional)</Label>
-            <Input value={form.batch_lot} onChange={set('batch_lot')} />
+            <div className="relative">
+              <Input
+                value={form.batch_lot}
+                onChange={set('batch_lot')}
+                onBlur={() => setForm((f) => ({ ...f, batch_lot: batchAsDate(f.batch_lot.trim()) }))}
+                aria-invalid={Boolean(batchProblem)}
+                className={`pr-16 ${batchProblem ? 'border-red-400' : ''}`}
+              />
+              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center">
+                {form.batch_lot && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, batch_lot: '' }))}
+                    title="Remove batch / lot"
+                    aria-label="Remove batch / lot"
+                    className="p-1.5 text-[var(--color-icon-muted)] hover:text-[var(--color-text)]"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+                <CalendarPick
+                  value={parseTypedDate(form.batch_lot).iso}
+                  onPick={(iso) => setForm((f) => ({ ...f, batch_lot: formatTypedDate(iso) }))}
+                  label="Batch / lot date"
+                />
+              </div>
+            </div>
+            {batchProblem && <p className="text-[11px] text-red-400 mt-1">{batchProblem}</p>}
           </div>
         </div>
 

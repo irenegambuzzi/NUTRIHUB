@@ -4,9 +4,9 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, expiryLabel, expiryState, formatStock, restockReason, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
-import { EXPIRY_STYLES, STATUS_STYLES } from '../../lib/inventoryStyles'
+import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 
-export function ItemTile({ item, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
+export function ItemTile({ item, isNew = false, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
   // Tile colour: red Out, purple Expired, yellow Low, green OK.
@@ -45,6 +45,9 @@ export function ItemTile({ item, subcategoryName, onAdjust, onDiscard, onEdit, o
 
       <div className="flex flex-wrap gap-1 mt-1.5">
         <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', STATUS_STYLES[status].badge)}>{STOCK_STATUS_LABELS[status]}</span>
+        {isNew && (
+          <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
+        )}
         {expiry !== 'none' && (
           <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1', EXPIRY_STYLES[expiry])}>
             <CalendarClock size={10} />

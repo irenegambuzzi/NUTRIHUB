@@ -1,3 +1,4 @@
+import { NEW_ITEM_SINCE, RESTOCK_REASONS } from './newItems'
 import { createTableStore, newestFirst, storeFamily } from './tableStore'
 import { normalizeItem } from './inventory'
 import { getPeriodRange } from './expensePeriods'
@@ -33,6 +34,17 @@ export const stockLogStore = createTableStore({
   query: (q) => q.order('created_at', { ascending: false }).limit(STOCK_LOG_LIMIT),
   compare: newestFirst(),
   limit: STOCK_LOG_LIMIT,
+})
+
+// When items were bought or restocked since NEW_ITEM_SINCE: what ends an
+// item's "New Item" label in HOME (see newItems.js).
+export const restockLogStore = createTableStore({
+  name: 'restock_logs',
+  table: 'stock_logs',
+  columns: 'id, item_id, reason, created_at',
+  query: (q) => q.in('reason', RESTOCK_REASONS).gte('created_at', NEW_ITEM_SINCE).order('created_at').order('id'),
+  paginate: true,
+  accept: (row) => RESTOCK_REASONS.includes(row.reason) && row.created_at >= NEW_ITEM_SINCE,
 })
 
 export const inventoryCategoryStore = createTableStore({

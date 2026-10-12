@@ -5,6 +5,7 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { isDurable } from '../../lib/inventory'
 import { money } from '../../lib/pricing'
+import { GROCERY_LIST_LABELS, listOf, matchesGrocerySearch } from '../../lib/grocerySearch'
 import { groupByCategory, moveCategoryWrites, moveItemWrites, routeOrder } from '../../lib/shopMode'
 import { useShopOrder } from '../../hooks/useShopOrder'
 import { SortableList } from '../ui/SortableList'
@@ -31,7 +32,7 @@ function rememberSort(sort) {
 // by category (categories in aisle order) or as "my route", where each
 // item can be put anywhere, whatever its category. Items not arranged
 // yet go where their category is.
-export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, onCheck, onConfirm }) {
+export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', onCheck, onConfirm }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   const { positions, savePositions } = useShopOrder()
@@ -42,6 +43,9 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
   const groups = groupByCategory(open, positions, defaultOrder)
   const route = routeOrder(open, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
+
+  const query = search.trim().toLowerCase()
+  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName)) : []
 
   const setSort = (next) => {
     setSortState(next)
@@ -94,6 +98,32 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
         </div>
       </div>
 
+      {query ? (
+        <div className="space-y-2">
+          {found.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-muted)] text-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              Nothing matches "{search.trim()}" — not to buy and not in the cart.
+            </p>
+          ) : (
+            [false, true].map((cart) => {
+              const list = found.filter((i) => Boolean(i.in_cart) === cart)
+              return (
+                list.length > 0 && (
+                  <section key={String(cart)} className="space-y-2">
+                    <h3 className="text-xs font-extrabold uppercase text-[var(--color-text-muted)]">
+                      {GROCERY_LIST_LABELS[cart ? 'inCart' : 'toBuy']} ({list.length})
+                    </h3>
+                    {list.map((item) => (
+                      <ShopTile key={item.id} item={item} total={totalOf(item)} onCheck={onCheck} showCategory showList />
+                    ))}
+                  </section>
+                )
+              )
+            })
+          )}
+        </div>
+      ) : (
+        <>
       {arranging && (
         <p className="text-[11px] text-[var(--color-text-muted)]">
           {sort === 'route'
@@ -178,6 +208,9 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
         </section>
       )}
 
+        </>
+      )}
+
       {/* Running total, above the tab bar. */}
       <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] md:bottom-4 z-20 px-4 pointer-events-none">
         <div className="max-w-md mx-auto pointer-events-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-lg px-4 py-2.5 flex items-center justify-between gap-3">
@@ -209,7 +242,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 
 // One big tile: tap to put it in the cart (or take it out again) — only
 // the cart changes; the purchase is confirmed separately.
-function ShopTile({ item, total, onCheck, showCategory = false }) {
+function ShopTile({ item, total, onCheck, showCategory = false, showList = false }) {
   return (
     <button
       onClick={() => onCheck(item)}
@@ -233,6 +266,16 @@ function ShopTile({ item, total, onCheck, showCategory = false }) {
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           {showCategory && <CategoryIcon category={item.category_id} size={12} />}
           {item.quantity} {item.unit}
+          {showList && (
+            <span
+              className={cn(
+                'ml-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border',
+                item.in_cart ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-soft)]'
+              )}
+            >
+              {GROCERY_LIST_LABELS[listOf(item)]}
+            </span>
+          )}
         </span>
       </span>
       <span className="text-sm font-mono font-bold text-[var(--color-accent)] shrink-0">{total === null ? '?' : total > 0 ? money(total) : ''}</span>

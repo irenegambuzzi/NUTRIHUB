@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Receipt, ShoppingCart, Sparkles, Wallet, X, Users, Microwave } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Select } from '../components/ui/Field'
+import { SearchBox } from '../components/ui/SearchBox'
 import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { AddItemForm } from '../components/grocery/AddItemForm'
 import { BudgetCard } from '../components/grocery/BudgetCard'
@@ -18,6 +19,7 @@ import { inventoryCategoryColor } from '../lib/categoryColors'
 import { restockReason, syncShoppingForItem } from '../lib/inventory'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
+import { matchesGrocerySearch } from '../lib/grocerySearch'
 
 // List or shopping mode, remembered on this phone (Receipts isn't).
 const VIEW_KEY = 'nutrihub-grocery-view'
@@ -84,8 +86,13 @@ export function GroceryPage() {
   const [sortMode, setSortMode] = useState('priority')
   const [bulkScope, setBulkScope] = useState('restock')
   const [syncing, setSyncing] = useState(false)
+  const [search, setSearch] = useState('')
 
-  const inCategory = (i) => selectedCategory === 'All' || i.category_id === selectedCategory
+  const query = search.trim().toLowerCase()
+  // Searching looks through every category, to buy and in the cart alike.
+  const inCategory = query
+    ? (i) => matchesGrocerySearch(i, query, categoryName)
+    : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
     : sortItems(groceryItems.filter(inCategory), sortMode)
@@ -165,6 +172,10 @@ export function GroceryPage() {
           <Receipt size={13} /> Receipts
         </button>
       </div>
+
+      {view !== 'receipts' && (
+        <SearchBox value={search} onChange={setSearch} placeholder="Search the list and the cart…" />
+      )}
 
       {view === 'list' ? (
         <>
@@ -297,7 +308,9 @@ export function GroceryPage() {
 
           {filteredItems.length === 0 && filteredDurables.length === 0 ? (
             <Card className="text-center rounded-3xl">
-              <p className="text-xs text-[var(--color-text-muted)]">Nothing here yet — add your first item above.</p>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {query ? `Nothing matches "${search.trim()}" — not on the list and not in the cart.` : 'Nothing here yet — add your first item above.'}
+              </p>
             </Card>
           ) : filteredItems.length === 0 ? null : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -305,6 +318,7 @@ export function GroceryPage() {
                 <GroceryItemTile
                   key={item.id}
                   item={item}
+                  showList={Boolean(query)}
                   reason={reasonOf(item)}
                   pack={pantryFor(item)}
                   total={totalOf(item)}
@@ -334,6 +348,7 @@ export function GroceryPage() {
                   <GroceryItemTile
                     key={item.id}
                     item={item}
+                    showList={Boolean(query)}
                     reason={reasonOf(item)}
                     pack={pantryFor(item)}
                     total={totalOf(item)}
@@ -358,6 +373,7 @@ export function GroceryPage() {
             totalOf={totalOf}
             costOf={costOf}
             budget={groceryBudget}
+            search={search}
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
           />

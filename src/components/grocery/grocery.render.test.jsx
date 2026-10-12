@@ -35,6 +35,27 @@ describe('grocery components render', () => {
     expect(html).toContain('Confirm purchase')
   })
 
+  it('shopping mode search: both lists at once, each result says where it is, partial and case-insensitive', () => {
+    const show = (search) =>
+      renderToStaticMarkup(
+        <ShoppingMode items={items} parents={parents} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} search={search} onCheck={() => {}} />
+      )
+    const both = show('  I')
+    expect(both).toContain('To buy (1)')
+    expect(both).toContain('In the cart (1)')
+    expect(both).toContain('Milk')
+    expect(both).toContain('Chips')
+    const cartOnly = show('CHIP')
+    expect(cartOnly).toContain('In the cart (1)')
+    expect(cartOnly).not.toContain('To buy (')
+    expect(cartOnly).not.toContain('Milk')
+    expect(show('zzz')).toContain('Nothing matches &quot;zzz&quot;')
+    // The running total is for the whole list, not just the results.
+    expect(show('zzz')).toContain('€2.40')
+    // Cleared: the lists are as before.
+    expect(show('')).toBe(renderToStaticMarkup(<ShoppingMode items={items} parents={parents} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} onCheck={() => {}} />))
+  })
+
   it('confirm screen: every cart item, its questions, and Confirm locked until they are answered', () => {
     const cart = [
       { id: 'c1', name: 'Rice', category_id: 'snacks', quantity: 2, unit: 'pack', price: 1.5, price_qty: 1, price_unit: 'pack', in_cart: true },

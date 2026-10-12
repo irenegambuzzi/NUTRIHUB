@@ -5,13 +5,14 @@ import { CategoryIcon } from '../ui/CategoryIcon'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker } from './shared'
 import { payerLabel } from '../../lib/grocery'
+import { GROCERY_LIST_LABELS, listOf } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { quantityStep, roundQuantity, stepQuantity } from '../../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 import { formatUnitPrice, lineTotal, money, priceUnitOptions } from '../../lib/pricing'
 
-export function GroceryItemTile({ item, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer }) {
+export function GroceryItemTile({ item, showList = false, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer }) {
   const c = inventoryCategoryColor(item.category_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
@@ -117,6 +118,17 @@ export function GroceryItemTile({ item, reason, pack, total, budgetMark, categor
           <Plus size={12} />
         </button>
       </div>
+
+      {showList && (
+        <span
+          className={cn(
+            'inline-block mt-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border',
+            item.in_cart ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-soft)]'
+          )}
+        >
+          {GROCERY_LIST_LABELS[listOf(item)]}
+        </span>
+      )}
 
       {!item.in_cart && (label || budgetMark) && (
         <div className="flex flex-wrap gap-1 mt-1">

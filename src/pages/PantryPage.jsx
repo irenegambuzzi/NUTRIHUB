@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History, X } from 'lucide-react'
+import { Plus, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
-import { Input, Select } from '../components/ui/Field'
+import { Select } from '../components/ui/Field'
+import { SearchBox } from '../components/ui/SearchBox'
 import { ItemEditor } from '../components/inventory/ItemEditor'
 import { ItemTile } from '../components/inventory/ItemTile'
 import { StatTile } from '../components/inventory/StatTile'
@@ -13,6 +14,7 @@ import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
 import { SORTS, matchesExpiry, matchesStatus, searchRank } from '../lib/pantryFilters'
 import { usePantryItems } from '../hooks/usePantryItems'
+import { useNewItemIds } from '../hooks/useNewItemIds'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { daysUntil, expiryLabel, expiryState, restockReason, stockStatus, suggestedPurchase } from '../lib/inventory'
@@ -22,6 +24,7 @@ export function PantryPage() {
   const { items: groceryItems, addItem: addGroceryItem } = useGroceryItems()
   const { categories, pantryParents: parents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
+  const newIds = useNewItemIds(items)
 
   const [view, setView] = useState('items')
   const [editor, setEditor] = useState(null) // null | { item } (item undefined = new)
@@ -190,15 +193,7 @@ export function PantryPage() {
       {view === 'items' && (
         <>
           <Card className="space-y-2">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-icon-muted)]" />
-              <Input placeholder="Search all items…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 pr-8" />
-              {search && (
-                <button onClick={() => setSearch('')} title="Clear search" className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-icon-muted)]">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search all items…" />
             {query && filtersActive && <p className="text-[10px] text-[var(--color-text-muted)]">Searching all categories — filters are ignored while searching.</p>}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               <Select
@@ -272,6 +267,7 @@ export function PantryPage() {
                 <ItemTile
                   key={item.id}
                   item={item}
+                  isNew={newIds.has(item.id)}
                   subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
                   onAdjust={adjustStock}
                   onDiscard={discardExpired}
