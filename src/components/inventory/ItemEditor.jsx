@@ -15,10 +15,10 @@ import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 
-function initialState(item, group) {
+function initialState(item, group, prefill) {
   const perPack = Number(item?.quantity_per_pack) || ''
   return {
-    name: item?.name ?? '',
+    name: item?.name ?? prefill?.name ?? '',
     category_id: item?.category_id ?? group?.category_id ?? '',
     subcategory_id: item?.subcategory_id ?? group?.subcategory_id ?? '',
     unit: item?.unit ?? group?.unit ?? DEFAULT_UNIT,
@@ -44,14 +44,19 @@ function initialState(item, group) {
 // `asGroup`: making (or editing) a group — a total of variants, with no
 // stock, expiry or batch of its own. `groups`: the groups an item can be
 // moved into; `group`: the group a new variant is made in; `variantCount`:
-// how many variants the edited group has.
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0 }) {
+// how many variants the edited group has. `prefill` ({ name }): a new item
+// that starts with this name and the category suggested for it.
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
-  const [form, setForm] = useState(() => initialState(item, group))
+  const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
+  const [form, setForm] = useState(() => ({
+    ...initialState(item, group, prefill),
+    ...(startPick ? { category_id: startPick.categoryId ?? '', subcategory_id: startPick.subcategoryId ?? '' } : {}),
+  }))
   const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id || group))
   const [categoryPicked, setCategoryPicked] = useState(false)
-  const [suggested, setSuggested] = useState(false)
+  const [suggested, setSuggested] = useState(Boolean(startPick))
   const [categoryError, setCategoryError] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')

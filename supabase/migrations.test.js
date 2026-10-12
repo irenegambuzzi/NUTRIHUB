@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 and 017, 018 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018')).sort()
+  // 015 (the login lock) and 016 to 019 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -597,6 +597,118 @@ describe('018: item groups', () => {
         { name: 'Pringles', stock: 2, group_id: null },
       ])
       await db.query(`delete from pantry_items where name in ('Lays', 'Pringles')`)
+    })
+  })
+})
+
+describe('019: stores ("Bought at") and orders', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  const file = '019_stores_and_orders.sql'
+  const run = () => db.exec(fs.readFileSync(path.join(dir, file), 'utf8'))
+  async function as(role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  const snapshot = () => rows(`select id, amount::float as amount, category_id, description, paid_by, expense_date::text as date, created_at::text as created, trip_id from expenses order by id`)
+  let before
+
+  beforeAll(async () => {
+    const groceries = (await rows(`select id from expense_categories where name = 'Groceries'`))[0].id
+    await db.exec(`
+      insert into expenses (category_id, amount, description, paid_by, expense_date) values
+        ('${groceries}', 42.5, 'Weekly shop', 'shared', '2026-10-01'), ('${groceries}', 18.2, 'Market', 'irene', '2026-10-03'), (null, 9.99, 'No category', 'akbar', '2026-09-20');
+    `)
+    before = await snapshot()
+  })
+
+  it('changes no existing expense: same rows, amounts, categories, dates and total; every store empty', async () => {
+    await run()
+    await run() // safe to re-run
+    expect(await snapshot()).toEqual(before)
+    expect((await rows(`select count(*)::int as n, sum(amount)::float as total from expenses`))[0]).toEqual({ n: before.length, total: before.reduce((s, e) => s + e.amount, 0) })
+    expect((await rows(`select count(*)::int as n from expenses where shop_id is not null`))[0].n).toBe(0)
+  })
+
+  it('ends with a check that says the expenses are untouched and nothing is open to anon', async () => {
+    const result = (await db.exec(fs.readFileSync(path.join(dir, file), 'utf8'))).at(-1).rows[0]
+    expect(result).toMatchObject({
+      expenses_before: before.length,
+      expenses_now: before.length,
+      expenses_changed: 0,
+      expenses_lost: 0,
+      expenses_with_store: 0,
+      open_to_anon: 'none',
+      locked_to_household: true,
+      realtime_on: true,
+      new_columns: true,
+    })
+    expect(Number(result.total_before)).toBe(Number(result.total_now))
+    expect(Number(result.total_now)).toBeCloseTo(before.reduce((s, e) => s + e.amount, 0), 2)
+  })
+
+  it('leaves both new tables closed to anon, with the same policy as the others', async () => {
+    expect(await as('anon', null, () => fails('select * from shops'))).toMatch(/permission denied/)
+    expect(await as('anon', null, () => fails('select * from orders'))).toMatch(/permission denied/)
+    expect(await as('anon', null, () => fails(`insert into shops (name) values ('X')`))).toMatch(/permission denied/)
+    const policy = (t) => rows(`select cmd, roles::text, qual, with_check from pg_policies where tablename = $1 and policyname = 'household_only'`, [t])
+    expect(await policy('shops')).toEqual(await policy('expenses'))
+    expect(await policy('orders')).toEqual(await policy('expenses'))
+    expect(await as('authenticated', STRANGER, async () => {
+      await fails(`select 1`)
+      return rows(`select id from shops`)
+    })).toEqual([])
+    expect(await as('authenticated', STRANGER, () => fails(`insert into shops (name) values ('Sneaky')`))).toMatch(/row-level security/)
+  })
+
+  it('holds stores once per name; deleting a store keeps its expenses, with the store emptied', async () => {
+    await as('authenticated', MEMBER, async () => {
+      const zalando = (await rows(`insert into shops (name, is_online) values ('Zalando', true) returning id`))[0].id
+      expect(await fails(`insert into shops (name) values ('zalando')`)).toMatch(/shops_name_key|duplicate/)
+      expect(await fails(`insert into shops (name) values ('   ')`)).toMatch(/check/)
+      const ids = (await rows(`select id from expenses order by id limit 2`)).map((r) => r.id)
+      await db.query(`update expenses set shop_id = $1 where id = any($2)`, [zalando, ids])
+      expect((await rows(`select count(*)::int as n from expenses where shop_id = $1`, [zalando]))[0].n).toBe(2)
+      await db.query(`delete from shops where id = $1`, [zalando])
+      expect((await rows(`select count(*)::int as n from expenses where shop_id is not null`))[0].n).toBe(0)
+      expect(await snapshot()).toEqual(before)
+    })
+  })
+
+  it('holds an order linked to one expense; the status, price and date range are checked', async () => {
+    await as('authenticated', MEMBER, async () => {
+      const shop = (await rows(`insert into shops (name, is_online) values ('Vinted', true) returning id`))[0].id
+      const expense = (await rows(`insert into expenses (amount, description, paid_by, expense_date, shop_id) values (55, 'Winter jacket', 'irene', '2026-10-01', $1) returning id`, [shop]))[0].id
+      const order = (await rows(
+        `insert into orders (item_name, shop_id, order_date, price, paid_by, expected_date, expected_until, expense_id) values ('Winter jacket', $1, '2026-10-01', 55, 'irene', '2026-10-10', '2026-10-15', $2) returning id, status`,
+        [shop, expense]
+      ))[0]
+      expect(order.status).toBe('on_the_way')
+      expect(await fails(`insert into orders (item_name, price, expense_id) values ('Twin', 1, $1)`, [expense])).toMatch(/orders_expense_id_key|duplicate/)
+      expect(await fails(`update orders set status = 'lost' where id = $1`, [order.id])).toMatch(/check/)
+      expect(await fails(`update orders set price = -1 where id = $1`, [order.id])).toMatch(/check/)
+      expect(await fails(`update orders set expected_until = '2026-10-05' where id = $1`, [order.id])).toMatch(/check/)
+      // Deleting the expense keeps the order, with no expense; deleting the store keeps the order too.
+      await db.query(`delete from expenses where id = $1`, [expense])
+      expect((await rows(`select expense_id from orders where id = $1`, [order.id]))[0].expense_id).toBeNull()
+      await db.query(`delete from shops where id = $1`, [shop])
+      expect((await rows(`select shop_id, status from orders where id = $1`, [order.id]))[0]).toEqual({ shop_id: null, status: 'on_the_way' })
+      await db.query(`delete from orders where id = $1`, [order.id])
+      expect(await snapshot()).toEqual(before)
     })
   })
 })

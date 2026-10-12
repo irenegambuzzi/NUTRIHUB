@@ -201,9 +201,45 @@ export const expenseUsageStore = createTableStore({
   columns: 'id, category_id',
 })
 
+// Stores ("Bought at", supabase/019); until it has been run these are
+// missing and the Money page says so where they would be used.
+export const shopStore = createTableStore({
+  name: 'shops',
+  table: 'shops',
+  persist: 'shops',
+  optional: true,
+  query: (q) => q.order('name'),
+  compare: (a, b) => a.name.localeCompare(b.name),
+})
+
+// Just which store each expense that has one is in, for the "most used"
+// stores and the store manager's counts (all years). Only started where
+// stores are known to exist: before supabase/019 the column isn't there.
+export const shopUsageStore = createTableStore({
+  name: 'expenses',
+  table: 'expenses',
+  columns: 'id, shop_id',
+  query: (q) => q.not('shop_id', 'is', null).order('id'),
+  paginate: true,
+  accept: (row) => row.shop_id != null,
+})
+
+// Online orders (supabase/019), newest first; all of them are loaded (an
+// order stays until it is deleted) and kept on the phone, so the
+// reminders work without signal.
+export const orderStore = createTableStore({
+  name: 'orders',
+  table: 'orders',
+  persist: 'orders',
+  optional: true,
+  query: (q) => q.order('order_date', { ascending: false }).order('id'),
+  paginate: true,
+  compare: newestFirst('order_date'),
+})
+
 // Every expense store in use, so a write can update all of them.
 export const allExpenseStores = () =>
-  [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore, tripExpenseStore].filter((s) => s.isStarted())
+  [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore, shopUsageStore, tripExpenseStore].filter((s) => s.isStarted())
 
 export const recipeStore = createTableStore({
   name: 'recipes',

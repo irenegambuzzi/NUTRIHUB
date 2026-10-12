@@ -3,10 +3,26 @@ import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
 import { updateRows } from '../lib/inventory'
 import { unitPriceFromTotal } from '../lib/pricing'
-import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore } from '../lib/stores'
-import { emptyStore } from '../lib/tableStore'
+import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore, orderStore, shopStore } from '../lib/stores'
+import { emptyStore, isMissingTable } from '../lib/tableStore'
+import { shopsAvailable } from '../lib/shops'
 
 const refreshExpenses = () => Promise.all(allExpenseStores().map((s) => s.refresh()))
+const refreshOrders = () => (orderStore.isStarted() ? orderStore.refresh() : null)
+
+// The store column is only sent once stores exist in the database
+// (supabase/019); `shopId` undefined leaves an expense's store alone.
+const shopField = (shopId) => (shopId !== undefined && shopsAvailable(shopStore.getSnapshot()) ? { shop_id: shopId || null } : {})
+
+// The orders linked to these expenses ([] before supabase/019).
+async function ordersLinkedTo(expenseIds) {
+  const { data, error } = await supabase.from('orders').select('id, expense_id').in('expense_id', expenseIds)
+  if (error) {
+    if (isMissingTable(error)) return []
+    throw error
+  }
+  return data
+}
 
 // Expense categories, and adding, renaming, moving and removing them.
 export function useExpenseCategories() {
@@ -56,11 +72,14 @@ export function useExpenseCategories() {
           const target =
             other ?? must(await supabase.from('expense_categories').insert([{ name: 'Other', type: 'parent' }]).select().single())
           must(await supabase.from('expenses').update({ category_id: target.id }).in('category_id', ids))
+          // Orders keep their category too (they are about to lose it).
+          const moved = await supabase.from('orders').update({ category_id: target.id }).in('category_id', ids)
+          if (moved.error && !isMissingTable(moved.error)) throw moved.error
           must(await supabase.from('expense_categories').delete().in('id', ids))
         },
         { retry: false, onFail: refreshAll }
       )
-      if (!result.error) await refreshAll()
+      if (!result.error) await Promise.all([refreshAll(), refreshOrders()])
       return result
     },
     [categories]
@@ -70,22 +89,27 @@ export function useExpenseCategories() {
 }
 
 // Deletes right away; Undo puts the expenses back exactly and re-links
-// the grocery entries that pointed to them (the database unlinks them).
+// the grocery entries and orders that pointed to them (the database
+// unlinks them).
 export function deleteExpenses(ids, message = ids.length === 1 ? 'Expense deleted' : `${ids.length} expenses deleted`) {
+  const refreshBoth = () => Promise.all([refreshExpenses(), refreshOrders()])
   return deleteWithUndo({
     message,
     remove: async () => {
       const links = must(await supabase.from('grocery_items').select('id, expense_id').in('expense_id', ids))
+      const orderLinks = await ordersLinkedTo(ids)
       const rows = must(await supabase.from('expenses').delete().in('id', ids).select())
       allExpenseStores().forEach((s) => s.removeLocal(ids))
-      return { rows, links }
+      if (orderLinks.length) await refreshOrders()
+      return { rows, links, orderLinks }
     },
-    restore: async ({ rows, links }) => {
+    restore: async ({ rows, links, orderLinks }) => {
       if (rows.length) must(await supabase.from('expenses').upsert(rows))
       for (const link of links) must(await supabase.from('grocery_items').update({ expense_id: link.expense_id }).eq('id', link.id))
-      await refreshExpenses()
+      for (const link of orderLinks) must(await supabase.from('orders').update({ expense_id: link.expense_id }).eq('id', link.id))
+      await refreshBoth()
     },
-    onFail: refreshExpenses,
+    onFail: refreshBoth,
   })
 }
 
@@ -96,13 +120,13 @@ export function useExpenses(since = currentExpensesSince()) {
   const { categories, addCategory, renameCategory, moveCategory, deleteCategory } = useExpenseCategories()
 
   const addExpense = useCallback(
-    ({ categoryId, amount, description, paidBy, expenseDate }) =>
+    ({ categoryId, amount, description, paidBy, expenseDate, shopId }) =>
       attempt(
         async () => {
           const rows = must(
             await supabase
               .from('expenses')
-              .insert([{ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate }])
+              .insert([{ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId) }])
               .select()
           )
           allExpenseStores().forEach((s) => s.upsertLocal(rows))
@@ -114,13 +138,13 @@ export function useExpenses(since = currentExpensesSince()) {
 
   // Saves every field of an existing expense in place (same row, same id).
   const updateExpense = useCallback(
-    (id, { categoryId, amount, description, paidBy, expenseDate }) =>
+    (id, { categoryId, amount, description, paidBy, expenseDate, shopId }) =>
       attempt(
         async () => {
           const rows = must(
             await supabase
               .from('expenses')
-              .update({ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate })
+              .update({ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId) })
               .eq('id', id)
               .select()
           )

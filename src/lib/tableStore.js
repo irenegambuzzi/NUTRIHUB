@@ -29,7 +29,7 @@ export const newestFirst =
 const PAGE_SIZE = 1000
 
 // Postgres "undefined table", or PostgREST not knowing the table.
-const isMissingTable = (error) => error?.code === '42P01' || error?.code === 'PGRST205'
+export const isMissingTable = (error) => error?.code === '42P01' || error?.code === 'PGRST205'
 
 const DISCONNECTED = ['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']
 

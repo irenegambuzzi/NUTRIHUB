@@ -6,7 +6,8 @@ import { getDurableExpenseCategoryId, getGroceriesCategoryId, syncShoppingForIte
 import { newVariantFields } from '../lib/groups'
 import { confirmationPayload } from '../lib/purchase'
 import { money } from '../lib/pricing'
-import { groceryStore, pantryStore, tripItemStore, tripStore } from '../lib/stores'
+import { groceryStore, pantryStore, shopStore, tripItemStore, tripStore } from '../lib/stores'
+import { shopsAvailable } from '../lib/shops'
 import { refreshStartedStores } from '../lib/tableStore'
 
 // Every list that a confirmation or reopen changes, reloaded afterwards.
@@ -47,7 +48,9 @@ export async function reopenTrip(tripId, note = null) {
 // `patches` ([{ id, patch }]) are the edits made on the confirm screen:
 // saved to the grocery entries first, so the entries and everything the
 // confirmation writes use the same values as `lines` and `totalOf`.
-export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map() }) {
+// `shopId`: the store the purchase was made in (optional), put on the
+// expenses it made once it is saved.
+export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map(), shopId = null }) {
   const result = await attempt(
     async () => {
       for (const { id: itemId, patch } of patches) {
@@ -74,7 +77,7 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
     duration: UNDO_FOR,
     action: { label: 'Undo', onClick: () => reopenTrip(id) },
   })
-  afterConfirm(lines)
+  afterConfirm(lines, shopId ? { tripId: id, shopId } : null)
   return result
 }
 
@@ -124,11 +127,19 @@ async function removeEmptyVariants(ids) {
 
 const UNDO_FOR = 10000
 
-// Reload the lists, then give items still low after the purchase their
-// automatic list entry. Failures show their own toast.
-function afterConfirm(lines) {
+// Puts the store on the expenses the purchase made. The purchase stays
+// saved if this fails; the toast offers Retry.
+function saveShop({ tripId, shopId }) {
+  if (!shopsAvailable(shopStore.getSnapshot())) return Promise.resolve(false)
+  return followUp('the store', async () => must(await supabase.from('expenses').update({ shop_id: shopId }).eq('trip_id', tripId)))
+}
+
+// Save the store, reload the lists, then give items still low after the
+// purchase their automatic list entry. Failures show their own toast.
+function afterConfirm(lines, shop) {
   const restocked = new Set(lines.map((l) => l.pantry?.id).filter(Boolean))
-  reloadAll()
+  Promise.resolve(shop ? saveShop(shop) : null)
+    .then(() => reloadAll())
     .then(() =>
       followUp('the shopping list', async () => {
         for (const item of pantryStore.getSnapshot().rows) if (restocked.has(item.id)) await syncShoppingForItem(item)

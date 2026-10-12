@@ -35,6 +35,32 @@ describe('chart filters', () => {
   })
 })
 
+describe('store filter', () => {
+  const stored = [
+    { ...entries[0], shop_id: 'lidl' },
+    { ...entries[1], shop_id: 'zalando' },
+    { ...entries[2], shop_id: 'lidl' },
+    { ...entries[3], shop_id: null },
+    { ...entries[4], shop_id: 'lidl' },
+  ]
+  const shopKeyOf = (e) => e.shop_id ?? 'none'
+  const withShops = { ...acc, shopKeyOf, period: 'month' }
+
+  it('keeps only the store clicked, or the expenses with no store', () => {
+    expect(applyChartFilters(stored, { store: 'lidl' }, withShops).map((e) => e.id)).toEqual(['a', 'c', 'e'])
+    expect(applyChartFilters(stored, { store: 'none' }, withShops).map((e) => e.id)).toEqual(['d'])
+  })
+  it('combines with the category and the time bucket, exactly like they combine with each other', () => {
+    expect(applyChartFilters(stored, { store: 'lidl', category: 'food' }, withShops).map((e) => e.id)).toEqual(['a', 'e'])
+    expect(applyChartFilters(stored, { store: 'lidl', category: 'food', bucket: '2026-10-05' }, withShops).map((e) => e.id)).toEqual(['e'])
+    expect(applyChartFilters(stored, { store: 'zalando', category: 'fun' }, withShops)).toEqual([])
+  })
+  it('changes nothing when no store is picked, or the screen has no stores (income)', () => {
+    expect(applyChartFilters(stored, { store: null }, withShops)).toHaveLength(5)
+    expect(applyChartFilters(entries, { bucket: '2026-10-05', category: 'food' }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'e'])
+  })
+})
+
 describe('grouping', () => {
   it('by category: subtotals, biggest first, newest entries first inside', () => {
     const g = groupEntries(entries, 'category', acc)

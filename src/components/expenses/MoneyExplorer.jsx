@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import { Card } from '../ui/Card'
+import { ShopIcon } from '../ui/ShopIcon'
 import { MoneyCharts } from './MoneyCharts'
 import { categoryTotals } from '../../lib/moneySummary'
+import { NO_STORE, onlineSplit, shopKeyFor, shopTotals } from '../../lib/shops'
 import { applyChartFilters, bucketChipLabel, entriesTotal, groupEntries } from '../../lib/moneyList'
 import { getPeriodBuckets, bucketKeyForDate } from '../../lib/expensePeriods'
 import { cn } from '../../lib/cn'
@@ -23,9 +25,14 @@ const chipClasses = 'min-h-10 pl-3 pr-2 rounded-full inline-flex items-center ga
 //   categoryOf     – (categoryId) => its main category ({ id, name }) or null
 //   renderDefault  – (entries) => the list as it was before sorting
 //   renderEntry    – (entry) => one row, for the sorted lists
-export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, plural, renderDefault, renderEntry }) {
+//   shopById       – expenses only: the stores by id, which adds the
+//                    "By store" view and its filter (null = no stores
+//                    here, as for income)
+//   shopsMissing   – stores aren't in the database yet (supabase/019)
+export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, plural, renderDefault, renderEntry, shopById = null, shopsMissing = false }) {
   const [bucket, setBucket] = useState(null)
   const [category, setCategory] = useState(null)
+  const [store, setStore] = useState(null)
   const [sort, setSort] = useState(null)
 
   // A new period (or person) starts with no chart filter.
@@ -35,6 +42,7 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sco
     setSeenPeriod(periodKey)
     setBucket(null)
     setCategory(null)
+    setStore(null)
   }
 
   const buckets = useMemo(() => getPeriodBuckets(period, new Date(), offset), [period, offset])
@@ -51,15 +59,21 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sco
   const totals = useMemo(() => categoryTotals(entries, categoryOf), [entries, categoryOf])
   const pieData = useMemo(() => totals.map((c) => ({ key: c.key, name: c.name, value: c.total, hex: styleFor(c.id).hex })), [totals, styleFor])
 
-  const accessors = useMemo(() => ({ dateOf, mainOf: (e) => categoryOf(e.category_id), period }), [dateOf, categoryOf, period])
-  const visible = useMemo(() => applyChartFilters(entries, { bucket, category }, accessors), [entries, bucket, category, accessors])
+  const shopKeyOf = useMemo(() => (shopById ? shopKeyFor(shopById) : null), [shopById])
+  const storeTotals = useMemo(() => (shopById ? shopTotals(entries, shopById) : []), [entries, shopById])
+  const storeSplit = useMemo(() => (shopById ? onlineSplit(entries, shopById) : null), [entries, shopById])
+
+  const accessors = useMemo(() => ({ dateOf, mainOf: (e) => categoryOf(e.category_id), period, shopKeyOf }), [dateOf, categoryOf, period, shopKeyOf])
+  const visible = useMemo(() => applyChartFilters(entries, { bucket, category, store }, accessors), [entries, bucket, category, store, accessors])
   const groups = useMemo(() => (sort ? groupEntries(visible, sort, accessors) : []), [visible, sort, accessors])
 
   const toggle = (current, set) => (key) => set(current === key ? null : key)
   const bucketLabel = barData.find((b) => b.key === bucket)?.label
   const categoryName = pieData.find((c) => c.key === category)?.name
   const categoryHex = pieData.find((c) => c.key === category)?.hex
-  const filtered = !!(bucket || category)
+  const storeShop = store && store !== NO_STORE ? shopById?.get(store) : null
+  const storeName = store === NO_STORE ? 'No store' : storeShop?.name ?? 'Store'
+  const filtered = !!(bucket || category || store)
 
   return (
     <div className="space-y-4">
@@ -71,6 +85,9 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sco
         selectedBucket={bucket}
         onCategory={toggle(category, setCategory)}
         onBucket={toggle(bucket, setBucket)}
+        stores={
+          shopById ? { missing: shopsMissing, totals: storeTotals, split: storeSplit, selected: store, onSelect: toggle(store, setStore) } : null
+        }
       />
 
       <div className="space-y-2">
@@ -94,10 +111,22 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sco
                 <X size={14} />
               </button>
             )}
+            {store && (
+              <button
+                onClick={() => setStore(null)}
+                aria-label={`Remove filter ${storeName}`}
+                className={cn(chipClasses, 'bg-[var(--color-surface-soft)] text-[var(--color-text)] border-[var(--color-border)]')}
+              >
+                {storeShop && <ShopIcon online={storeShop.is_online} size={12} />}
+                {storeName}
+                <X size={14} />
+              </button>
+            )}
             <button
               onClick={() => {
                 setBucket(null)
                 setCategory(null)
+                setStore(null)
               }}
               className="min-h-10 px-3 rounded-full text-xs font-bold text-[var(--color-text-muted)] underline underline-offset-2"
             >

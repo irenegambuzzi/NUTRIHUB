@@ -1,6 +1,6 @@
 # Home & Nutri Hub
 
-A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, a grocery list, a home inventory (stock levels, minimum stock, expiry reminders, auto shopping list, CSV/JSON export), and an expense tracker with customizable categories. No login — everything is saved to a shared Supabase project and visible to both profiles at once.
+A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, a grocery list, a home inventory (stock levels, minimum stock, expiry reminders, auto shopping list, CSV/JSON export), an expense tracker with customizable categories and a "Bought at" store for every expense, and online orders tracked until they arrive (with in-app reminders). No login — everything is saved to a shared Supabase project and visible to both profiles at once.
 
 ## Stack
 
@@ -11,7 +11,7 @@ A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, 
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in the Supabase URL/anon key.
-2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql` and `supabase/006_backfill_inventory_data.sql`. (An existing database only needs the numbered files it hasn't run yet — they keep and convert current pantry/grocery data.)
+2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql` and `supabase/006_backfill_inventory_data.sql`. (An existing database only needs the numbered files it hasn't run yet — they keep and convert current pantry/grocery data. `019_stores_and_orders.sql` adds the stores and orders; until it has been run the app works as before and says so where they would be.)
 3. `npm install`
 4. `npm run dev`
 

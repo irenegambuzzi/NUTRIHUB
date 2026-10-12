@@ -1,5 +1,6 @@
 import { Pencil, Trash2 } from 'lucide-react'
 import { PAID_BY_OPTIONS } from '../../data/constants'
+import { ShopTag } from '../ui/ShopIcon'
 import { parseLocalDate } from '../../lib/week'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
@@ -25,15 +26,18 @@ function Row({ title, detail, amount, tone, before, actions }) {
   )
 }
 
-// `names(categoryId)` → { main, sub } category names.
+// `names(categoryId)` → { main, sub } category names; `shopOf(shopId)` →
+// the store (shown next to the category), or nothing.
 // The edit button sits before the amount and the delete button after it,
 // so a tap meant for one doesn't land on the other.
-export function ExpenseRow({ expense, names, onEdit, onDelete }) {
+export function ExpenseRow({ expense, names, shopOf, onEdit, onDelete }) {
   const { main, sub } = names(expense.category_id)
+  const shop = shopOf?.(expense.shop_id)
+  const parts = [dateLabel(expense.expense_date), sub && main ? `${main} › ${sub}` : null, shop ? <ShopTag key="shop" shop={shop} /> : null, paidByLabel(expense.paid_by)].filter(Boolean)
   return (
     <Row
       title={expense.description || sub || main || 'Expense'}
-      detail={[dateLabel(expense.expense_date), sub && main ? `${main} › ${sub}` : null, paidByLabel(expense.paid_by)].filter(Boolean).join(' · ')}
+      detail={parts.flatMap((part, i) => (i ? [' · ', part] : [part]))}
       amount={`€${Number(expense.amount).toFixed(2)}`}
       tone="text-[var(--color-text-soft)]"
       before={

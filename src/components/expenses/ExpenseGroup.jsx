@@ -2,18 +2,22 @@ import { useState } from 'react'
 import { ChevronDown, Pencil, Trash2 } from 'lucide-react'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseLocalDate } from '../../lib/week'
+import { ShopTag } from '../ui/ShopIcon'
 import { cn } from '../../lib/cn'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 
 // A main category's expenses for one day. Collapsed: one line with the
-// total. Opened: the expenses grouped by sub-category.
-export function ExpenseGroup({ group, color, styleFor, subName, onEdit, onDelete }) {
+// total. Opened: the expenses grouped by sub-category. `shopOf(shopId)` →
+// the store of an expense (shown in the header when they all share one).
+export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, onDelete }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
   const single = items.length === 1 ? items[0] : null
   const subtitle = single?.description || `${items.length} expense${items.length === 1 ? '' : 's'}`
+  const stores = new Set(items.map((e) => e.shop_id ?? null))
+  const sharedShop = stores.size === 1 ? shopOf?.([...stores][0]) : null
 
   // Sub-category sections, with expenses filed directly under the main
   // category first (no header).
@@ -35,7 +39,14 @@ export function ExpenseGroup({ group, color, styleFor, subName, onEdit, onDelete
           <div className="min-w-0">
             <p className="font-bold text-[var(--color-text)]">{main?.name || 'Uncategorized'}</p>
             <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
-              {parseLocalDate(date).toLocaleDateString('en-GB')} · {subtitle} · {payers.join(', ')}
+              {parseLocalDate(date).toLocaleDateString('en-GB')} · {subtitle}
+              {sharedShop && (
+                <>
+                  {' · '}
+                  <ShopTag shop={sharedShop} />
+                </>
+              )}{' '}
+              · {payers.join(', ')}
             </span>
           </div>
         </div>
@@ -62,7 +73,15 @@ export function ExpenseGroup({ group, color, styleFor, subName, onEdit, onDelete
                 <div key={e.id} className="flex justify-between items-center gap-2 py-1 pl-2 border-l-2 border-[var(--color-border)]">
                   <div className="min-w-0">
                     <p className="text-[var(--color-text)] truncate">{e.description || section.name || main?.name || 'Expense'}</p>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">{paidByLabel(e.paid_by)}</span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      {paidByLabel(e.paid_by)}
+                      {shopOf?.(e.shop_id) && (
+                        <>
+                          {' · '}
+                          <ShopTag shop={shopOf(e.shop_id)} />
+                        </>
+                      )}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button

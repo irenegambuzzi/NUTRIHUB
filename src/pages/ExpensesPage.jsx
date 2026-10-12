@@ -6,10 +6,12 @@ import { ExpenseGroup } from '../components/expenses/ExpenseGroup'
 import { CategoryTotals } from '../components/expenses/CategoryTotals'
 import { IncomeSection } from '../components/expenses/IncomeSection'
 import { MoneySummary } from '../components/expenses/MoneySummary'
+import { OrdersSection } from '../components/expenses/OrdersSection'
 import { PeriodPicker } from '../components/expenses/PeriodPicker'
 import { useExpenses } from '../hooks/useExpenses'
 import { useIncome } from '../hooks/useIncome'
 import { useCategoryColors } from '../hooks/useCategoryColors'
+import { useShops } from '../hooks/useShops'
 import { incomeCategoryColorStore } from '../lib/stores'
 import { categoryTree } from '../lib/moneyList'
 import { reopenTrip } from '../hooks/usePurchase'
@@ -42,6 +44,8 @@ export function ExpensesPage() {
     deleteCategory: deleteIncomeCategory,
   } = useIncome(since)
   const styleFor = useCategoryColors(categories)
+  const { byId: shopById, missing: shopsMissing } = useShops()
+  const shopOf = (shopId) => (shopId ? shopById.get(shopId) : undefined)
   const incomeStyleFor = useCategoryColors(incomeCategories, { store: incomeCategoryColorStore, table: 'income_category_colors' })
 
   // An expense from a confirmed purchase: deleting it alone would leave the
@@ -130,6 +134,7 @@ export function ExpensesPage() {
           group={g}
           color={styleFor(g.main?.id)}
           styleFor={styleFor}
+          shopOf={shopOf}
           subName={(categoryId) => (categoryId && categoryId !== g.main?.id ? categories.find((c) => c.id === categoryId)?.name : null)}
           onEdit={setEditingExpense}
           onDelete={removeExpense}
@@ -144,6 +149,21 @@ export function ExpensesPage() {
 
         <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} />
       </div>
+
+      <OrdersSection
+        person={paidByFilter}
+        onPerson={setPaidByFilter}
+        shopById={shopById}
+        categories={categories}
+        mainCategories={mainCategories}
+        subsOf={subsOf}
+        namesOf={namesOf}
+        addCategory={addCategory}
+        renameCategory={renameCategory}
+        moveCategory={moveCategory}
+        deleteCategory={deleteCategory}
+        styleFor={styleFor}
+      />
 
       <IncomeSection
         entries={filteredIncome}
@@ -208,8 +228,10 @@ export function ExpensesPage() {
           scope={paidByFilter}
           styleFor={styleFor}
           plural="expenses"
+          shopById={shopById}
+          shopsMissing={shopsMissing}
           renderDefault={expenseGroups}
-          renderEntry={(e) => <ExpenseRow key={e.id} expense={e} names={namesOf} onEdit={setEditingExpense} onDelete={removeExpense} />}
+          renderEntry={(e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} onEdit={setEditingExpense} onDelete={removeExpense} />}
         />
 
         {editingExpense && (

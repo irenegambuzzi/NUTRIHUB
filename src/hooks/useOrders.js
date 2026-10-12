@@ -1,0 +1,160 @@
+import { useMemo } from 'react'
+import { supabase } from '../lib/supabaseClient'
+import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
+import { allExpenseStores, orderStore, shopStore } from '../lib/stores'
+import { expensePatchForOrder, expenseRowForOrder, normalizeUrl } from '../lib/orders'
+import { shopsAvailable } from '../lib/shops'
+import { deleteExpenses } from './useExpenses'
+
+const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
+const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => s.upsertLocal(rows))
+
+// The order's own columns from the form's values. Dates are YYYY-MM-DD,
+// '' means none; a last expected date only makes sense with a first one.
+export function orderRowFrom(values) {
+  return {
+    item_name: values.itemName.trim(),
+    details: values.details?.trim() || null,
+    shop_id: values.shopId || null,
+    order_date: values.orderDate,
+    price: Number(values.price),
+    paid_by: values.paidBy,
+    category_id: values.categoryId || null,
+    expected_date: values.expectedDate || null,
+    expected_until: values.expectedDate && values.expectedUntil ? values.expectedUntil : null,
+    order_url: normalizeUrl(values.url),
+  }
+}
+
+const originalOf = (order, row) => Object.fromEntries(Object.keys(row).map((k) => [k, order[k] ?? null]))
+
+// A new order and the expense it creates (the money is spent when
+// ordering), saved together or not at all. `ids` ({ orderId, expenseId })
+// are made once per form, so pressing Save again after a dropped
+// connection can't make a second expense or order.
+export function createOrder(values, { orderId, expenseId }) {
+  const row = { id: orderId, ...orderRowFrom(values), status: 'on_the_way', expense_id: expenseId }
+  const expense = { id: expenseId, ...expenseRowForOrder(row, shopsAvailable(shopStore.getSnapshot())) }
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        const expenseRows = must(await supabase.from('expenses').upsert([expense], { onConflict: 'id', ignoreDuplicates: true }).select())
+        onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
+        const orderRows = must(await supabase.from('orders').upsert([row], { onConflict: 'id' }).select())
+        // A retry finds the expense already there: nothing new to show.
+        if (expenseRows.length) showExpenses(expenseRows)
+        else await Promise.all(allExpenseStores().map((s) => s.refresh()))
+        orderStore.upsertLocal(orderRows)
+      }),
+    { retry: false, onFail: refreshOrdersAndExpenses }
+  )
+}
+
+// Saves an edited order. The linked expense follows what changed in its
+// price, date, category, payer or store (and the name, when the expense
+// still carries the old one); nothing else of it is touched.
+export function editOrder(order, values) {
+  const row = orderRowFrom(values)
+  const patch = order.expense_id ? expensePatchForOrder(order, { ...order, ...row }, shopsAvailable(shopStore.getSnapshot())) : {}
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        const orderRows = must(await supabase.from('orders').update(row).eq('id', order.id).select())
+        onFail(async () => must(await supabase.from('orders').update(originalOf(order, row)).eq('id', order.id)))
+        if (order.expense_id) {
+          if (row.item_name !== order.item_name) {
+            const current = must(await supabase.from('expenses').select('description').eq('id', order.expense_id).maybeSingle())
+            if (current?.description === order.item_name) patch.description = row.item_name
+          }
+          if (Object.keys(patch).length) showExpenses(must(await supabase.from('expenses').update(patch).eq('id', order.expense_id).select()))
+        }
+        orderStore.upsertLocal(orderRows)
+      }),
+    { retry: false, onFail: refreshOrdersAndExpenses }
+  )
+}
+
+// The order arrived. Only the order changes: its expense was made when
+// ordering and is never made again.
+export function markArrived(order, date) {
+  return attempt(
+    async () => {
+      const rows = must(await supabase.from('orders').update({ status: 'arrived', arrived_date: date }).eq('id', order.id).select())
+      orderStore.upsertLocal(rows)
+    },
+    { onFail: () => orderStore.refresh() }
+  )
+}
+
+// Cancelled or returned. The expense stays, or is deleted (with Undo,
+// which also links it to the order again).
+export async function markCancelled(order, { deleteExpense }) {
+  const result = await attempt(
+    async () => {
+      const rows = must(await supabase.from('orders').update({ status: 'cancelled', arrived_date: null }).eq('id', order.id).select())
+      orderStore.upsertLocal(rows)
+    },
+    { onFail: () => orderStore.refresh() }
+  )
+  if (result.error || !deleteExpense || !order.expense_id) return result
+  const deleted = await deleteExpenses([order.expense_id], 'Order cancelled — its expense is deleted')
+  if (!deleted?.error) orderStore.patchLocal([order.id], { expense_id: null })
+  return deleted?.error ? deleted : result
+}
+
+// A finished order goes back on the way. If its expense was deleted, a
+// new one can be made (one only: the order is linked to it).
+export function putBackOnTheWay(order, { createExpense, expenseId = crypto.randomUUID() }) {
+  const makeExpense = createExpense && !order.expense_id
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        if (makeExpense) {
+          const rows = must(
+            await supabase.from('expenses').upsert([{ id: expenseId, ...expenseRowForOrder(order, shopsAvailable(shopStore.getSnapshot())) }], { onConflict: 'id', ignoreDuplicates: true }).select()
+          )
+          onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
+          showExpenses(rows)
+        }
+        const patch = { status: 'on_the_way', arrived_date: null, ...(makeExpense ? { expense_id: expenseId } : {}) }
+        orderStore.upsertLocal(must(await supabase.from('orders').update(patch).eq('id', order.id).select()))
+      }),
+    { onFail: refreshOrdersAndExpenses }
+  )
+}
+
+// Deletes right away; Undo puts the order (and its expense, if that was
+// deleted too) back exactly.
+export function removeOrder(order, { alsoExpense }) {
+  return deleteWithUndo({
+    message: alsoExpense && order.expense_id ? 'Order and its expense deleted' : 'Order deleted',
+    remove: async () => {
+      const [row] = must(await supabase.from('orders').delete().eq('id', order.id).select())
+      orderStore.removeLocal([order.id])
+      let expense = null
+      if (alsoExpense && order.expense_id) {
+        expense = must(await supabase.from('expenses').delete().eq('id', order.expense_id).select())[0] ?? null
+        allExpenseStores().forEach((s) => s.removeLocal([order.expense_id]))
+      }
+      return { row, expense }
+    },
+    restore: async ({ row, expense }) => {
+      if (expense) must(await supabase.from('expenses').upsert(expense))
+      if (row) must(await supabase.from('orders').upsert(row))
+      await refreshOrdersAndExpenses()
+    },
+    onFail: refreshOrdersAndExpenses,
+  })
+}
+
+// The orders. `ready` once they are loaded and the database has them and
+// the stores (supabase/019); `missing` while it hasn't been run.
+export function useOrders() {
+  const { rows: orders, loaded, missing } = orderStore.useRows()
+  const shops = shopStore.useRows()
+  return useMemo(
+    () => ({ orders, loaded, missing: Boolean(missing) || Boolean(shops.missing), ready: loaded && !missing && shopsAvailable(shops) }),
+    [orders, loaded, missing, shops]
+  )
+}
+

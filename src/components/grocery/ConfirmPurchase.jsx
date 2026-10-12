@@ -4,6 +4,7 @@ import { Input, Label, Select } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
+import { ShopPicker } from '../expenses/ShopPicker'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseNumber } from '../../lib/feedback'
@@ -28,6 +29,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // can't save it twice.
   const [tripId] = useState(() => crypto.randomUUID())
   const [date, setDate] = useState(localDateString)
+  const [shopId, setShopId] = useState('')
   const [answers, setAnswers] = useState({})
   // Ids of the new variants made for group lines, fixed for this screen.
   const variantIds = useRef(new Map())
@@ -69,7 +71,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (confirmedLines.some((l) => !l.ready)) return
     const patches = cartItems.map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     setBusy(true)
-    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches, variantIds: variantIds.current })
+    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches, variantIds: variantIds.current, shopId: shopId || null })
     setBusy(false)
     if (!error) onClose()
   }
@@ -114,6 +116,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
             </div>
           </div>
         </div>
+
+        <ShopPicker value={shopId} onChange={setShopId} />
 
         <section className="space-y-2">
           {lines.map((line) => (

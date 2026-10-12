@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { Plus, Check, Settings2, X } from 'lucide-react'
+import { Plus, Check, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Label, Input, Select } from '../ui/Field'
-import { CategoryManager } from './CategoryManager'
+import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
+import { ShopPicker } from './ShopPicker'
+import { useShops } from '../../hooks/useShops'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
@@ -34,6 +36,9 @@ export function ExpenseForm({
   const [description, setDescription] = useState(initial?.description ?? '')
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
   const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
+  const [shopId, setShopId] = useState(initial?.shop_id ?? '')
+  // Stores are only saved once the database has them (supabase/019).
+  const { ready: shopsReady } = useShops()
 
   const handleAddExpense = async (e) => {
     e.preventDefault()
@@ -44,45 +49,35 @@ export function ExpenseForm({
       description,
       paidBy,
       expenseDate,
+      ...(shopsReady ? { shopId: shopId || null } : {}),
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
     if (!initial) {
       setAmount('')
       setDescription('')
+      setShopId('')
     }
     onClose?.()
   }
 
-  const handleDeleteCategory = async (id) => {
-    const result = await deleteCategory(id)
-    if (!result.error && (mainId === id || subId === id)) {
-      setMainId('')
-      setSubId('')
-    }
-    return result
-  }
-
-  // Moving the category on screen takes it (or its parent) out of the picker.
-  const handleMoveCategory = async (id, parentId) => {
-    const result = await moveCategory(id, parentId)
-    if (!result.error && (mainId === id || subId === id)) {
-      setMainId('')
-      setSubId('')
-    }
-    return result
+  const pickCategory = ({ mainId: main, subId: sub }) => {
+    setMainId(main)
+    setSubId(sub)
   }
 
   return (
     <>
       {managingCategories && (
-        <CategoryManager
+        <ExpenseCategoryManager
+          value={{ mainId, subId }}
+          onChange={pickCategory}
           categories={categories}
           styleFor={styleFor}
-          onAdd={addCategory}
-          onDelete={handleDeleteCategory}
-          onRename={renameCategory}
-          onMove={handleMoveCategory}
+          addCategory={addCategory}
+          renameCategory={renameCategory}
+          moveCategory={moveCategory}
+          deleteCategory={deleteCategory}
           onClose={() => setManagingCategories(false)}
         />
       )}
@@ -109,40 +104,9 @@ export function ExpenseForm({
             </div>
           </div>
 
-          <div>
-            <Label>Category</Label>
-            <div className="flex gap-2">
-              <Select
-                value={mainId}
-                onChange={(e) => {
-                  setMainId(e.target.value)
-                  setSubId('')
-                }}
-                className="flex-1"
-                aria-label="Category"
-              >
-                <option value="">Uncategorized</option>
-                {mainCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-              <Button type="button" variant="ghost" onClick={() => setManagingCategories(true)} className="px-3" title="Add or delete categories">
-                <Settings2 size={14} /> Manage
-              </Button>
-            </div>
-            {mainId && subsOf(mainId).length > 0 && (
-              <Select value={subId} onChange={(e) => setSubId(e.target.value)} className="mt-2" aria-label="Subcategory">
-                <option value="">No subcategory</option>
-                {subsOf(mainId).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </div>
+          <ExpenseCategoryPicker value={{ mainId, subId }} onChange={pickCategory} mainCategories={mainCategories} subsOf={subsOf} onManage={() => setManagingCategories(true)} />
+
+          <ShopPicker value={shopId} onChange={setShopId} />
 
           <div>
             <Label>Description</Label>

@@ -1,6 +1,8 @@
-import { Wallet, ChartColumn, ChartLine } from 'lucide-react'
+import { useState } from 'react'
+import { Wallet, ChartColumn, ChartLine, Store } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ReferenceLine } from 'recharts'
 import { Card } from '../ui/Card'
+import { StoreTotals } from './StoreTotals'
 import { setTrendStyle, useTrendStyle } from '../../lib/trendStyle'
 import { cn } from '../../lib/cn'
 
@@ -12,6 +14,32 @@ const money = (value) => `€${Number(value).toFixed(2)}`
 const indexOf = (state) => {
   const i = Number(state?.activeTooltipIndex ?? state?.activeIndex)
   return Number.isInteger(i) && i >= 0 ? i : null
+}
+
+// "By category" or "By store": which breakdown the first card shows.
+function BreakdownToggle({ value, onChange }) {
+  const options = [
+    { value: 'category', label: 'By category', Icon: Wallet },
+    { value: 'store', label: 'By store', Icon: Store },
+  ]
+  return (
+    <div className="flex gap-0.5 bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-full p-0.5" role="group" aria-label="Breakdown">
+      {options.map(({ value: v, label, Icon }) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onChange(v)}
+          aria-pressed={value === v}
+          className={cn(
+            'min-h-8 px-2.5 rounded-full inline-flex items-center gap-1.5 text-[11px] font-bold transition-all duration-200',
+            value === v ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]'
+          )}
+        >
+          <Icon size={12} /> {label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // Bars or a line, remembered on this device.
@@ -46,8 +74,12 @@ function TrendStyleToggle() {
 // or a line). Clicking a slice, a legend entry or a column picks it as a
 // filter for the list; clicking it again lets go.
 //   pieData: [{ key, name, value, hex }]   barData: [{ key, label, amount }]
-export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, selectedBucket, onCategory, onBucket }) {
+// `stores` (expenses only) adds a "By store" view next to "By category":
+//   { missing, totals, split, selected, onSelect } (see StoreTotals).
+export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, selectedBucket, onCategory, onBucket, stores = null }) {
   const trendStyle = useTrendStyle()
+  const [breakdown, setBreakdown] = useState('category')
+  const showStores = Boolean(stores) && breakdown === 'store'
   const bucketIndex = barData.findIndex((b) => b.key === selectedBucket)
   const selectedLabel = bucketIndex >= 0 ? barData[bucketIndex].label : null
   const onTrendClick = (state) => {
@@ -58,10 +90,18 @@ export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, sel
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Card>
-        <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1.5 mb-2">
-          <Wallet size={14} /> By category
-        </p>
-        {pieData.length === 0 ? (
+        {stores ? (
+          <div className="mb-2">
+            <BreakdownToggle value={breakdown} onChange={setBreakdown} />
+          </div>
+        ) : (
+          <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1.5 mb-2">
+            <Wallet size={14} /> By category
+          </p>
+        )}
+        {showStores ? (
+          <StoreTotals {...stores} emptyText={emptyText} />
+        ) : pieData.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)] py-8 text-center">{emptyText}</p>
         ) : (
           <>

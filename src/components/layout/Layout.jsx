@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn'
 import { Feedback } from '../ui/Feedback'
 import { SyncStatus } from './SyncStatus'
 import { UpdateBanner } from './UpdateBanner'
+import { OrderReminders } from './OrderReminders'
 
 // Four sections; Plan also holds Recipes and Profiles as its own tabs.
 const SECTIONS = [
@@ -83,6 +84,7 @@ export function Layout() {
       </aside>
 
       <main className="flex-1 w-full max-w-4xl mx-auto p-4 md:p-8 pb-[calc(env(safe-area-inset-bottom)+7rem)] md:pb-8">
+        <OrderReminders />
         {/* A section with several pages (Plan) gets tabs on phones. */}
         {section.pages.length > 1 && (
           <div className="md:hidden flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 mb-4 text-sm font-bold">

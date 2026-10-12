@@ -14,11 +14,13 @@ export const categoryKeyOf = (main) => main?.id ?? NO_CATEGORY
 const amountOf = (entry) => Number(entry.amount || 0)
 const sum = (entries) => entries.reduce((total, e) => total + amountOf(e), 0)
 
-// Only what the chart clicks picked: a time bucket and/or a category.
-export function applyChartFilters(entries, { bucket, category }, { dateOf, mainOf, period }) {
+// Only what the chart clicks picked: a time bucket, a category and/or a
+// store (`shopKeyOf(entry)` gives the key a store is filed under).
+export function applyChartFilters(entries, { bucket, category, store }, { dateOf, mainOf, period, shopKeyOf }) {
   return entries.filter((e) => {
     if (bucket && bucketKeyForDate(dateOf(e), period) !== bucket) return false
     if (category && categoryKeyOf(mainOf(e)) !== category) return false
+    if (store && shopKeyOf?.(e) !== store) return false
     return true
   })
 }
