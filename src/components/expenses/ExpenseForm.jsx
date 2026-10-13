@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus, Check, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
+import { DateField } from '../ui/DateField'
 import { Label, Input, Select } from '../ui/Field'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
@@ -37,12 +38,15 @@ export function ExpenseForm({
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
   const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
   const [shopId, setShopId] = useState(initial?.shop_id ?? '')
+  const [dateOk, setDateOk] = useState(true)
+  const [dateError, setDateError] = useState('')
   // Stores are only saved once the database has them (supabase/019).
   const { ready: shopsReady } = useShops()
 
   const handleAddExpense = async (e) => {
     e.preventDefault()
     if (!amount || Number(amount) <= 0) return
+    if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
     const { error } = await onSubmit({
       categoryId: subId || mainId || null,
       amount: Number(amount),
@@ -100,7 +104,7 @@ export function ExpenseForm({
             </div>
             <div>
               <Label>Date</Label>
-              <Input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+              <DateField label="Date" required value={expenseDate} onChange={(v) => { setExpenseDate(v); setDateError('') }} onValidity={setDateOk} />
             </div>
           </div>
 
@@ -123,6 +127,8 @@ export function ExpenseForm({
               ))}
             </Select>
           </div>
+
+          {dateError && <p className="text-xs text-red-400">{dateError}</p>}
 
           <div className="flex gap-2">
             {onCancel && (

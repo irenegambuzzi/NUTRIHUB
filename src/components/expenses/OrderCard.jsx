@@ -1,7 +1,7 @@
 import { Check, ChevronDown, ExternalLink, Pencil, Trash2, Undo2, X } from 'lucide-react'
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { ORDER_STATUS, agoLabel, expectedLabel, normalizeUrl, orderState } from '../../lib/orders'
+import { ORDER_STATUS, agoLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderState } from '../../lib/orders'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
 
@@ -20,7 +20,9 @@ const TONE = {
 // One order. On the way it shows how long ago it was ordered and when it
 // is expected (overdue ones are red), with the Arrived and Cancelled /
 // Returned buttons. Tapping the top opens its details. In the history
-// (arrived or cancelled) it can go back on the way.
+// (arrived, cancelled or returned) it shows the status, the day of it and,
+// for cancelled and returned ones, whether the expense was kept or deleted,
+// and it can go back on the way.
 export function OrderCard({ order, shop, names, today, open, highlighted, onToggle, onArrived, onCancelled, onBackOnTheWay, onEdit, onDelete }) {
   const onTheWay = order.status === 'on_the_way'
   const state = onTheWay ? orderState(order, today) : null
@@ -58,7 +60,8 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
           ) : (
             <span className="text-[11px] font-bold block mt-0.5 text-[var(--color-text-soft)]">
               {ORDER_STATUS[order.status]}
-              {order.status === 'arrived' && order.arrived_date ? ` · ${dateLabel(order.arrived_date)}` : ''}
+              {order.arrived_date ? ` · ${dateLabel(order.arrived_date)}` : ''}
+              {expenseOutcomeLabel(order) && <span className="font-normal text-[var(--color-text-muted)]"> · {expenseOutcomeLabel(order)}</span>}
             </span>
           )}
         </div>

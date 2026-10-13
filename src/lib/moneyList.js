@@ -5,6 +5,7 @@
 
 import { getWeekStart, parseLocalDate } from './week'
 import { bucketKeyForDate } from './expensePeriods'
+import { newestFirst, newestGroupFirst } from './recency'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -23,11 +24,6 @@ export function applyChartFilters(entries, { bucket, category, store }, { dateOf
     if (store && shopKeyOf?.(e) !== store) return false
     return true
   })
-}
-
-// Newest day first; the same day newest added first.
-function newestFirst(dateOf) {
-  return (a, b) => dateOf(b).localeCompare(dateOf(a)) || String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''))
 }
 
 // "5 Oct – 11 Oct 2026" for the week starting `weekStart`.
@@ -61,7 +57,9 @@ function byCategory(entries, { dateOf, mainOf }) {
     g.items.push(e)
     g.total += amountOf(e)
   }
-  return [...map.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+  // The category with the most recent entry first.
+  const newest = newestGroupFirst(dateOf, (g) => g.items)
+  return [...map.values()].sort((a, b) => newest(a, b) || b.total - a.total || a.name.localeCompare(b.name))
 }
 
 // The three ways of sorting the list shown:

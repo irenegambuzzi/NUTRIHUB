@@ -42,7 +42,7 @@ export function OrderForm({
   const [expectedDate, setExpectedDate] = useState(initial?.expected_date ?? '')
   const [expectedUntil, setExpectedUntil] = useState(initial?.expected_until ?? '')
   const [url, setUrl] = useState(initial?.order_url ?? '')
-  const [datesValid, setDatesValid] = useState({ expected: true, until: true })
+  const [datesValid, setDatesValid] = useState({ order: true, expected: true, until: true })
   const [managingCategories, setManagingCategories] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -55,7 +55,7 @@ export function OrderForm({
   const problem = () => {
     if (!itemName.trim()) return 'Give the order a name.'
     if (!(Number(price) > 0)) return 'Enter the price (more than 0).'
-    if (!orderDate) return 'Pick the order date.'
+    if (!orderDate || !datesValid.order) return 'Fix the order date first (DD/MM/YYYY).'
     if (!datesValid.expected || !datesValid.until) return 'Fix the expected date first (DD/MM/YYYY), or remove it.'
     if (expectedUntil && !expectedDate) return 'Add the expected arrival date too, or remove the latest date.'
     if (expectedUntil && expectedUntil < expectedDate) return "The latest date can't be before the expected arrival date."
@@ -120,7 +120,7 @@ export function OrderForm({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <Label>Order date</Label>
-            <Input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} aria-label="Order date" required />
+            <DateField label="Order date" required value={orderDate} onChange={setOrderDate} onValidity={(ok) => setDatesValid((v) => (v.order === ok ? v : { ...v, order: ok }))} />
           </div>
           <div>
             <Label>Price (€)</Label>

@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
+import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { PayerPicker, UnitOptions } from './shared'
@@ -29,6 +30,21 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // can't save it twice.
   const [tripId] = useState(() => crypto.randomUUID())
   const [date, setDate] = useState(localDateString)
+  // Typed dates that aren't real dates yet (the shopping day, or the new
+  // expiry date of an item, by key): confirming waits until they are fixed.
+  const [badDates, setBadDates] = useState(() => new Set())
+  const reportDate = useCallback(
+    (key, ok) =>
+      setBadDates((prev) => {
+        if (prev.has(key) === !ok) return prev
+        const next = new Set(prev)
+        if (ok) next.delete(key)
+        else next.add(key)
+        return next
+      }),
+    []
+  )
+  const reportTripDate = useCallback((ok) => reportDate('trip', ok), [reportDate])
   const [shopId, setShopId] = useState('')
   const [answers, setAnswers] = useState({})
   // Ids of the new variants made for group lines, fixed for this screen.
@@ -92,7 +108,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label htmlFor="trip-date">Shopping day</Label>
-            <Input id="trip-date" type="date" value={date} onChange={(e) => setDate(e.target.value || localDateString())} />
+            <DateField id="trip-date" label="Shopping day" required value={date} onChange={setDate} onValidity={reportTripDate} />
           </div>
           <div>
             <Label>Paid by (everything)</Label>
@@ -128,6 +144,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               total={totalOf(line.item)}
               categoryName={categoryName}
               onAnswer={(patch) => answer(line.item.id, patch)}
+              onDateValidity={(ok) => reportDate(line.item.id, ok)}
               onEdit={(patch) => edit(line.item.id, patch)}
               updatePricing={updatePricing}
               updatePayer={updatePayer}
@@ -171,6 +188,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
             </span>
             <span className="text-lg font-mono font-extrabold text-[var(--color-accent)]">{money(total)}</span>
           </div>
+          {badDates.size > 0 && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> Fix the date (DD/MM/YYYY) above to confirm.
+            </p>
+          )}
           {open > 0 && (
             <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
@@ -179,7 +201,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || lines.length === 0}
+            disabled={busy || open > 0 || badDates.size > 0 || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
@@ -194,7 +216,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // its questions. Every change goes to the screen's edits at once (that's
 // what Confirm uses) and is also saved to the grocery entry when the field
 // is left, so the other phone sees it.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, updatePricing, updatePayer, onRemove }) {
+function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
@@ -367,10 +389,10 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onEdit, upd
           ) : (
             <p className="text-[11px] text-purple-200">"{pantry.name}" had expired.</p>
           )}
-          <label className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-            New expiry date (optional)
-            <Input type="date" value={answer.expiryDate ?? ''} onChange={(e) => onAnswer({ expiryDate: e.target.value || null })} className="text-xs p-1.5 w-auto" />
-          </label>
+          <div className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
+            <span>New expiry date (optional)</span>
+            <DateField label="New expiry date" value={answer.expiryDate ?? ''} onChange={(iso) => onAnswer({ expiryDate: iso || null })} onValidity={onDateValidity} />
+          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { ChevronDown, History, Plus, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { OrderForm } from './OrderForm'
@@ -8,9 +8,9 @@ import { OrderCard } from './OrderCard'
 import { ArrivedDialog } from './ArrivedDialog'
 import { PersonSelector } from './PersonSelector'
 import { useOrders, createOrder, editOrder, markArrived, markCancelled, putBackOnTheWay, removeOrder } from '../../hooks/useOrders'
-import { askDialog, confirmDialog } from '../../lib/feedback'
+import { askDialog } from '../../lib/feedback'
 import { localDateString } from '../../lib/expensePeriods'
-import { splitOrders } from '../../lib/orders'
+import { outcomeSupported, splitOrders } from '../../lib/orders'
 import { cn } from '../../lib/cn'
 
 export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/019_stores_and_orders.sql). Until then everything else works as before.'
@@ -19,8 +19,8 @@ const money = (value) => `€${Number(value).toFixed(2)}`
 
 // Online purchases waiting to arrive: a header with how many are on the
 // way, "+ Add order" (the form opens on demand), the orders on the way by
-// expected date, and a collapsed history of the arrived and cancelled
-// ones. A new order makes its expense at once; Arrived never makes one.
+// expected date, and a "History (N)" list of the arrived, cancelled
+// and returned ones. A new order makes its expense at once; Arrived never makes one.
 // `person` filters by who paid. Before supabase/019 it says so instead.
 export function OrdersSection({ person, onPerson, shopById, categories, mainCategories, subsOf, namesOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor }) {
   const { orders, ready, missing } = useOrders()
@@ -46,6 +46,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
   if (wanted && ready && wanted !== seenWanted) {
     setSeenWanted(wanted)
     if (wantedOrder) {
+      if (wantedOrder.status !== 'on_the_way') setHistoryOpen(true)
       setOpenIds((ids) => new Set(ids).add(wantedOrder.id))
       setHighlight(wantedOrder.id)
     }
@@ -76,28 +77,48 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
     if (!error) setArrived(order)
   }
 
+  // Cancel / Return: nothing happens until the question is answered. It
+  // says where the order goes, what becomes of its expense, and offers
+  // Undo afterwards. "Returned" is only offered once the database knows it.
   const cancel = async (order) => {
-    if (!order.expense_id) {
-      if (!(await confirmDialog({ title: `Mark "${order.item_name}" as cancelled / returned?`, message: 'It has no expense linked.', confirmLabel: 'Cancelled / Returned' }))) return
-      return markCancelled(order, { deleteExpense: false })
+    const returnedKnown = outcomeSupported(orders)
+    const fields = []
+    if (returnedKnown) {
+      fields.push({
+        name: 'kind',
+        type: 'choice',
+        label: 'Mark it as',
+        value: 'cancelled',
+        options: [
+          { value: 'cancelled', label: 'Cancelled', hint: 'It never arrived, or the order was called off.' },
+          { value: 'returned', label: 'Returned', hint: 'It arrived and was sent back.' },
+        ],
+      })
+    }
+    if (order.expense_id) {
+      fields.push({
+        name: 'how',
+        type: 'choice',
+        label: `What about the expense? (${money(order.price)}, ${new Date(`${order.order_date}T00:00:00`).toLocaleDateString('en-GB')})`,
+        value: 'keep',
+        options: [
+          { value: 'delete', label: 'Delete the expense (I got my money back / was never charged)', hint: 'It is taken out of your expenses.' },
+          { value: 'keep', label: 'Keep the expense', hint: 'The money stays in your expenses, e.g. a refund has not arrived yet.' },
+        ],
+      })
     }
     const answer = await askDialog({
-      title: `"${order.item_name}" cancelled or returned`,
-      message: `This order was paid ${money(order.price)} when it was placed. What should happen to that expense?`,
-      fields: [
-        {
-          name: 'how',
-          type: 'choice',
-          value: 'keep',
-          options: [
-            { value: 'keep', label: 'Keep the expense', hint: 'The money stays in your expenses (e.g. a refund has not arrived yet).' },
-            { value: 'delete', label: 'Delete the expense', hint: 'The money came back or was never spent. Undo is offered.' },
-          ],
-        },
-      ],
-      confirmLabel: 'Mark as cancelled / returned',
+      title: `Cancel or return "${order.item_name}"?`,
+      message: `${order.expense_id ? '' : 'It has no expense linked, so no money changes. '}It moves to History under the orders on the way, and no longer shows in the reminders. Nothing changes until you confirm, and you can Undo afterwards.${returnedKnown ? '' : ' (Returned needs a one-time database update, supabase/020_order_returned.sql; until then it is saved as Cancelled.)'}`,
+      fields,
+      confirmLabel: 'Move to History',
     })
-    if (answer) await markCancelled(order, { deleteExpense: answer.how === 'delete' })
+    if (!answer) return
+    const result = await markCancelled(order, { kind: answer.kind ?? 'cancelled', deleteExpense: answer.how === 'delete', today, outcomeKnown: returnedKnown })
+    if (!result?.error) {
+      setHistoryOpen(true)
+      setHighlight(order.id)
+    }
   }
 
   const backOnTheWay = async (order) => {
@@ -214,20 +235,27 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
             )}
           </div>
 
-          {history.length > 0 && (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => setHistoryOpen((v) => !v)}
-                aria-expanded={historyOpen}
-                className="w-full min-h-10 px-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] flex justify-between items-center text-xs font-bold text-[var(--color-text-muted)]"
-              >
-                <span>History · {history.length}</span>
-                <ChevronDown size={14} className={cn('transition-transform', historyOpen && 'rotate-180')} />
-              </button>
-              {historyOpen && history.map(card)}
-            </div>
-          )}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              aria-expanded={historyOpen}
+              className="w-full min-h-10 px-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] flex justify-between items-center text-xs font-bold text-[var(--color-text-soft)]"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <History size={14} /> History ({history.length})
+              </span>
+              <ChevronDown size={14} className={cn('transition-transform', historyOpen && 'rotate-180')} />
+            </button>
+            {historyOpen &&
+              (history.length > 0 ? (
+                history.map(card)
+              ) : (
+                <Card className="text-center">
+                  <p className="text-xs text-[var(--color-text-muted)]">Arrived, cancelled and returned orders will be listed here.</p>
+                </Card>
+              ))}
+          </div>
         </>
       )}
 

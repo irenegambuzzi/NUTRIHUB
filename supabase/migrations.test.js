@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 019 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019')).sort()
+  // 015 (the login lock) and 016 to 020 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -710,5 +710,95 @@ describe('019: stores ("Bought at") and orders', () => {
       await db.query(`delete from orders where id = $1`, [order.id])
       expect(await snapshot()).toEqual(before)
     })
+  })
+})
+
+describe('020: orders can be returned, and remember what happened to the expense', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const file = '020_order_returned.sql'
+  const read = () => fs.readFileSync(path.join(dir, file), 'utf8')
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const orderSnapshot = () => rows(`select id, item_name, price::float as price, status, order_date::text as date, expected_date::text as expected, expense_id, arrived_date::text as arrived from orders order by id`)
+  const expenseSnapshot = () => rows(`select id, amount::float as amount, category_id, description, paid_by, expense_date::text as date from expenses order by id`)
+  let ordersBefore
+  let expensesBefore
+  let incomeCount
+
+  beforeAll(async () => {
+    await db.exec(`
+      insert into orders (item_name, price, status, order_date, arrived_date) values
+        ('Lamp', 25, 'on_the_way', '2026-10-01', null), ('Book', 15, 'arrived', '2026-09-01', '2026-09-10'), ('Shirt', 30, 'cancelled', '2026-08-01', null);
+      insert into income (amount, income_date, income_type, received_by) values (1500, '2026-10-01', 'salary', 'irene');
+    `)
+    ordersBefore = await orderSnapshot()
+    expensesBefore = await expenseSnapshot()
+    incomeCount = (await rows(`select count(*)::int as n from income`))[0].n
+  })
+
+  it('changes no existing order, expense or income, and is safe to re-run', async () => {
+    await db.exec(read())
+    await db.exec(read())
+    expect(await orderSnapshot()).toEqual(ordersBefore)
+    expect(await expenseSnapshot()).toEqual(expensesBefore)
+    expect((await rows(`select count(*)::int as n from orders where expense_outcome is not null`))[0].n).toBe(0)
+  })
+
+  it('ends with a check that says nothing changed, returned is allowed and nothing is open to anon', async () => {
+    const result = (await db.exec(read())).at(-1).rows[0]
+    expect(result).toMatchObject({
+      orders_before: ordersBefore.length,
+      orders_now: ordersBefore.length,
+      orders_changed: 0,
+      orders_lost: 0,
+      expenses_before: expensesBefore.length,
+      expenses_now: expensesBefore.length,
+      expenses_changed: 0,
+      expenses_lost: 0,
+      income_before: incomeCount,
+      income_now: incomeCount,
+      income_changed: 0,
+      income_lost: 0,
+      returned_allowed: true,
+      outcome_column: true,
+      open_to_anon: 'none',
+      locked_to_household: true,
+    })
+    expect(Number(result.expenses_total_before)).toBe(Number(result.expenses_total_now))
+    expect(Number(result.income_total_before)).toBe(Number(result.income_total_now))
+  })
+
+  it('accepts returned and the two outcomes, still refuses anything else', async () => {
+    const id = (await rows(`select id from orders where item_name = 'Lamp'`))[0].id
+    expect(await fails(`update orders set status = 'returned', arrived_date = '2026-10-13', expense_outcome = 'deleted' where id = $1`, [id])).toBeNull()
+    expect(await fails(`update orders set expense_outcome = 'kept' where id = $1`, [id])).toBeNull()
+    expect(await fails(`update orders set status = 'lost' where id = $1`, [id])).toMatch(/check/)
+    expect(await fails(`update orders set expense_outcome = 'maybe' where id = $1`, [id])).toMatch(/check/)
+    await db.query(`update orders set status = 'on_the_way', arrived_date = null, expense_outcome = null where id = $1`, [id])
+    expect(await orderSnapshot()).toEqual(ordersBefore)
+  })
+
+  it('keeps orders locked to the household', async () => {
+    await db.query(`select set_config('request.jwt.claim.sub', '', false)`)
+    await db.exec('set role anon')
+    try {
+      expect(await fails('select * from orders')).toMatch(/permission denied/)
+    } finally {
+      await db.exec('reset role')
+    }
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await db.exec('set role authenticated')
+    try {
+      expect((await rows('select count(*)::int as n from orders'))[0].n).toBe(ordersBefore.length)
+    } finally {
+      await db.exec('reset role')
+    }
   })
 })

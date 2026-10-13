@@ -150,14 +150,16 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const stockValue = parseFloat(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
 
-  // A batch / lot that looks like a date has to be a real one (checked
-  // for what was typed, not for lots saved earlier).
-  const batchProblem =
-    looksLikeDate(form.batch_lot) && form.batch_lot !== (item?.batch_lot ?? '') && parseTypedDate(form.batch_lot).error
-      ? parseTypedDate(form.batch_lot).error
-      : ''
+  // A batch / lot that looks like a date (day, month and year split by
+  // "/", "-" or ".") has to be a real one, checked for what was typed, not
+  // for lots saved earlier. Like any date, it is only called wrong once the
+  // field has lost focus. Plain numbers stay as typed: they are lot codes.
+  const [batchLeft, setBatchLeft] = useState(false)
+  const batchDateError =
+    looksLikeDate(form.batch_lot) && form.batch_lot !== (item?.batch_lot ?? '') ? parseTypedDate(form.batch_lot).error ?? '' : ''
+  const batchProblem = batchLeft ? batchDateError : ''
   const batchAsDate = (text) => {
-    const { iso } = parseTypedDate(text)
+    const { iso } = looksLikeDate(text) ? parseTypedDate(text) : {}
     return iso ? formatTypedDate(iso) : text
   }
 
@@ -167,7 +169,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (!form.category_id) return setCategoryError('Pick a category (or add a new one).')
     if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
     if (!expiryValid) return setError('Fix the expiry date first (DD/MM/YYYY), or remove it.')
-    if (batchProblem) return setError(batchProblem)
+    if (batchDateError) return setError(batchDateError)
     setSaving(true)
     setError('')
 
@@ -398,8 +400,14 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             <div className="relative">
               <Input
                 value={form.batch_lot}
-                onChange={set('batch_lot')}
-                onBlur={() => setForm((f) => ({ ...f, batch_lot: batchAsDate(f.batch_lot.trim()) }))}
+                onChange={(e) => {
+                  setBatchLeft(false)
+                  set('batch_lot')(e)
+                }}
+                onBlur={() => {
+                  setBatchLeft(true)
+                  setForm((f) => ({ ...f, batch_lot: batchAsDate(f.batch_lot.trim()) }))
+                }}
                 aria-invalid={Boolean(batchProblem)}
                 className={`pr-16 ${batchProblem ? 'border-red-400' : ''}`}
               />
@@ -416,7 +424,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
                   </button>
                 )}
                 <CalendarPick
-                  value={parseTypedDate(form.batch_lot).iso}
+                  value={looksLikeDate(form.batch_lot) ? parseTypedDate(form.batch_lot).iso : ''}
                   onPick={(iso) => setForm((f) => ({ ...f, batch_lot: formatTypedDate(iso) }))}
                   label="Batch / lot date"
                 />

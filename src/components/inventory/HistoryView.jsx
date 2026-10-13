@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { CheckSquare, Square, Trash2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
-import { Input, Select } from '../ui/Field'
+import { DateField } from '../ui/DateField'
+import { Select } from '../ui/Field'
 import { cn } from '../../lib/cn'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { deleteStockLogs, useStockLogs } from '../../hooks/usePantryItems'
@@ -71,14 +72,14 @@ export function HistoryView() {
               </option>
             ))}
           </Select>
-          <label className="text-[10px] text-[var(--color-text-muted)]">
-            From
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="text-xs mt-0.5" />
-          </label>
-          <label className="text-[10px] text-[var(--color-text-muted)]">
-            To
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="text-xs mt-0.5" />
-          </label>
+          <div className="text-[10px] text-[var(--color-text-muted)] space-y-0.5">
+            <span>From</span>
+            <DateField label="From date" value={from} onChange={setFrom} />
+          </div>
+          <div className="text-[10px] text-[var(--color-text-muted)] space-y-0.5">
+            <span>To</span>
+            <DateField label="To date" value={to} onChange={setTo} />
+          </div>
         </div>
         {anyFilter && (
           <button

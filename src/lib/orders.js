@@ -3,11 +3,33 @@
 // { id, item_name, details, shop_id, order_date, price, paid_by,
 //   category_id, expected_date, expected_until, order_url, status,
 //   arrived_date, expense_id }, with status 'on_the_way' | 'arrived' |
-// 'cancelled'. Dates are YYYY-MM-DD strings in local time.
+// 'cancelled' | 'returned' (returned and expense_outcome need
+// supabase/020). arrived_date is the day it arrived, or was cancelled or
+// returned. expense_outcome is 'kept' | 'deleted': what was done with the
+// expense when it was cancelled or returned. Dates are YYYY-MM-DD strings
+// in local time.
 
 import { parseLocalDate } from './week'
+import { newestFirst } from './recency'
 
-export const ORDER_STATUS = { on_the_way: 'On the way', arrived: 'Arrived', cancelled: 'Cancelled / Returned' }
+export const ORDER_STATUS = { on_the_way: 'On the way', arrived: 'Arrived', cancelled: 'Cancelled', returned: 'Returned' }
+
+// Whether the database knows "Returned" and the expense outcome yet
+// (supabase/020): every order it sends has the expense_outcome column.
+export const outcomeSupported = (orders) => orders.some((o) => 'expense_outcome' in o)
+
+// The day an order arrived, was cancelled or returned; '' when it isn't known
+// (orders cancelled before the day was kept).
+export const closedDate = (order) => order.arrived_date || ''
+
+// What was done with the expense of a cancelled or returned order, for the
+// history; null for the others.
+export function expenseOutcomeLabel(order) {
+  if (order.status !== 'cancelled' && order.status !== 'returned') return null
+  if (order.expense_outcome === 'deleted') return 'Expense deleted'
+  if (order.expense_outcome === 'kept') return 'Expense kept'
+  return order.expense_id ? 'Expense kept' : 'No expense'
+}
 
 // An order with no expected date is brought up this long after ordering.
 export const NO_DATE_REMINDER_DAYS = 14
@@ -79,11 +101,12 @@ export function sortOnTheWay(orders) {
   })
 }
 
-// The orders on the way, and the finished ones (arrived or cancelled,
-// the most recent first) for the history.
+// The orders on the way, and the finished ones (arrived, cancelled or
+// returned) for the history: the latest change first, and on the same day
+// the one entered last.
 export function splitOrders(orders) {
   const finished = orders.filter((o) => o.status !== 'on_the_way')
-  finished.sort((a, b) => (b.arrived_date || b.order_date).localeCompare(a.arrived_date || a.order_date) || String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+  finished.sort(newestFirst((o) => closedDate(o) || o.order_date))
   return { onTheWay: sortOnTheWay(orders.filter((o) => o.status === 'on_the_way')), history: finished }
 }
 

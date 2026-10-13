@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agoLabel, dayDiff, expectedLabel, expensePatchForOrder, expenseRowForOrder, normalizeUrl, orderState, reminders, sortOnTheWay, splitOrders } from './orders'
+import { agoLabel, dayDiff, expectedLabel, expenseOutcomeLabel, expensePatchForOrder, expenseRowForOrder, normalizeUrl, orderState, outcomeSupported, reminders, sortOnTheWay, splitOrders } from './orders'
 
 const TODAY = '2026-10-12'
 const day = (offset) => {
@@ -143,5 +143,34 @@ describe('the expense an order creates and updates', () => {
       category_id: null,
       shop_id: 'zal',
     })
+  })
+})
+
+describe('cancelled and returned orders', () => {
+  it('lists Returned like Cancelled in the history, the latest change first, and never in the reminders', () => {
+    const arrived = order({ status: 'arrived', arrived_date: day(-3) })
+    const cancelled = order({ status: 'cancelled', arrived_date: day(-1), expected_date: day(-9) })
+    const returned = order({ status: 'returned', arrived_date: day(0), expected_date: day(-9) })
+    const sameDayLater = order({ status: 'cancelled', arrived_date: day(0), created_at: '2026-10-13T20:00:00+00:00' })
+    const sameDayEarlier = order({ status: 'returned', arrived_date: day(0), created_at: '2026-10-13T08:00:00+00:00' })
+    const { history, onTheWay } = splitOrders([arrived, cancelled, sameDayEarlier, sameDayLater, returned])
+    expect(onTheWay).toEqual([])
+    expect(history.map((o) => o.id)).toEqual([sameDayLater.id, sameDayEarlier.id, returned.id, cancelled.id, arrived.id])
+    expect(reminders([cancelled, returned, sameDayLater], TODAY, () => null)).toEqual([])
+  })
+
+  it('says whether the expense was kept or deleted', () => {
+    expect(expenseOutcomeLabel(order({ status: 'returned', expense_outcome: 'deleted' }))).toBe('Expense deleted')
+    expect(expenseOutcomeLabel(order({ status: 'cancelled', expense_outcome: 'kept', expense_id: 'e' }))).toBe('Expense kept')
+    expect(expenseOutcomeLabel(order({ status: 'cancelled', expense_id: 'e' }))).toBe('Expense kept')
+    expect(expenseOutcomeLabel(order({ status: 'cancelled', expense_id: null }))).toBe('No expense')
+    expect(expenseOutcomeLabel(order({ status: 'arrived' }))).toBeNull()
+    expect(expenseOutcomeLabel(order({ status: 'on_the_way' }))).toBeNull()
+  })
+
+  it('knows when the database has Returned (an order has the outcome column)', () => {
+    expect(outcomeSupported([order(), order({ expense_outcome: null })])).toBe(true)
+    expect(outcomeSupported([order()])).toBe(false)
+    expect(outcomeSupported([])).toBe(false)
   })
 })

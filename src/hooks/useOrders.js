@@ -4,7 +4,6 @@ import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
 import { allExpenseStores, orderStore, shopStore } from '../lib/stores'
 import { expensePatchForOrder, expenseRowForOrder, normalizeUrl } from '../lib/orders'
 import { shopsAvailable } from '../lib/shops'
-import { deleteExpenses } from './useExpenses'
 
 const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
 const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => s.upsertLocal(rows))
@@ -86,20 +85,47 @@ export function markArrived(order, date) {
   )
 }
 
-// Cancelled or returned. The expense stays, or is deleted (with Undo,
-// which also links it to the order again).
-export async function markCancelled(order, { deleteExpense }) {
-  const result = await attempt(
-    async () => {
-      const rows = must(await supabase.from('orders').update({ status: 'cancelled', arrived_date: null }).eq('id', order.id).select())
-      orderStore.upsertLocal(rows)
+// Cancelled or returned, as of `today`: the order goes to History, and its
+// expense is kept or deleted. Said with "Order moved to History" and Undo,
+// which puts everything back exactly (the order on the way, and the
+// expense, if it was deleted, with its links). `outcomeKnown`: the database
+// has "Returned" and the expense outcome (supabase/020); before that a
+// returned order is saved as cancelled and no outcome is stored.
+export function markCancelled(order, { kind = 'cancelled', deleteExpense, today, outcomeKnown }) {
+  const removing = Boolean(deleteExpense && order.expense_id)
+  const status = kind === 'returned' && outcomeKnown ? 'returned' : 'cancelled'
+  const patch = {
+    status,
+    arrived_date: today,
+    ...(outcomeKnown ? { expense_outcome: order.expense_id ? (removing ? 'deleted' : 'kept') : null } : {}),
+  }
+  const before = { ...originalOf(order, patch), expense_id: order.expense_id ?? null }
+  return deleteWithUndo({
+    message: 'Order moved to History',
+    duration: 8000,
+    remove: () =>
+      inSteps(async (onFail) => {
+        const rows = must(await supabase.from('orders').update(patch).eq('id', order.id).select())
+        onFail(async () => must(await supabase.from('orders').update(before).eq('id', order.id)))
+        let expense = null
+        let links = []
+        if (removing) {
+          links = must(await supabase.from('grocery_items').select('id, expense_id').eq('expense_id', order.expense_id))
+          expense = must(await supabase.from('expenses').delete().eq('id', order.expense_id).select())[0] ?? null
+          allExpenseStores().forEach((s) => s.removeLocal([order.expense_id]))
+        }
+        // The database unlinks an order from an expense that is deleted.
+        orderStore.upsertLocal(rows.map((row) => (removing ? { ...row, expense_id: null } : row)))
+        return { expense, links }
+      }),
+    restore: async ({ expense, links }) => {
+      if (expense) must(await supabase.from('expenses').upsert(expense))
+      for (const link of links) must(await supabase.from('grocery_items').update({ expense_id: link.expense_id }).eq('id', link.id))
+      must(await supabase.from('orders').update(before).eq('id', order.id))
+      await refreshOrdersAndExpenses()
     },
-    { onFail: () => orderStore.refresh() }
-  )
-  if (result.error || !deleteExpense || !order.expense_id) return result
-  const deleted = await deleteExpenses([order.expense_id], 'Order cancelled — its expense is deleted')
-  if (!deleted?.error) orderStore.patchLocal([order.id], { expense_id: null })
-  return deleted?.error ? deleted : result
+    onFail: refreshOrdersAndExpenses,
+  })
 }
 
 // A finished order goes back on the way. If its expense was deleted, a
@@ -116,7 +142,7 @@ export function putBackOnTheWay(order, { createExpense, expenseId = crypto.rando
           onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
           showExpenses(rows)
         }
-        const patch = { status: 'on_the_way', arrived_date: null, ...(makeExpense ? { expense_id: expenseId } : {}) }
+        const patch = { status: 'on_the_way', arrived_date: null, ...('expense_outcome' in order ? { expense_outcome: null } : {}), ...(makeExpense ? { expense_id: expenseId } : {}) }
         orderStore.upsertLocal(must(await supabase.from('orders').update(patch).eq('id', order.id).select()))
       }),
     { onFail: refreshOrdersAndExpenses }

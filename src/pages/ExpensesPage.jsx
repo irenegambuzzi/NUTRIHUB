@@ -21,6 +21,7 @@ import { Button } from '../components/ui/Button'
 import { usePersonFilter } from '../lib/personFilter'
 import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
+import { newestFirst, newestGroupFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
 import { Plus, X } from 'lucide-react'
 
@@ -115,10 +116,12 @@ export function ExpensesPage() {
 
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
   // One row per main category per day (e.g. one "Groceries" row for a
-  // shopping trip), newest day first, biggest total first within a day.
+  // shopping trip). The group with the most recent entry comes first (the
+  // newest day, and within a day the one entered last), and the expenses
+  // inside a group are newest first too.
   const expenseGroups = (entries) => {
     const map = new Map()
-    for (const e of entries) {
+    for (const e of [...entries].sort(newestFirst(expenseDate))) {
       const main = mainOf(e.category_id)
       const key = `${e.expense_date}|${main?.id ?? 'none'}`
       if (!map.has(key)) map.set(key, { key, date: e.expense_date, main, items: [], total: 0 })
@@ -127,7 +130,7 @@ export function ExpensesPage() {
       g.total += Number(e.amount || 0)
     }
     return [...map.values()]
-      .sort((a, b) => b.date.localeCompare(a.date) || b.total - a.total)
+      .sort(newestGroupFirst(expenseDate, (g) => g.items))
       .map((g) => (
         <ExpenseGroup
           key={g.key}
@@ -150,21 +153,6 @@ export function ExpensesPage() {
         <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} />
       </div>
 
-      <OrdersSection
-        person={paidByFilter}
-        onPerson={setPaidByFilter}
-        shopById={shopById}
-        categories={categories}
-        mainCategories={mainCategories}
-        subsOf={subsOf}
-        namesOf={namesOf}
-        addCategory={addCategory}
-        renameCategory={renameCategory}
-        moveCategory={moveCategory}
-        deleteCategory={deleteCategory}
-        styleFor={styleFor}
-      />
-
       <IncomeSection
         entries={filteredIncome}
         total={incomeTotal}
@@ -183,6 +171,21 @@ export function ExpensesPage() {
         renameCategory={renameIncomeCategory}
         moveCategory={moveIncomeCategory}
         deleteCategory={deleteIncomeCategory}
+      />
+
+      <OrdersSection
+        person={paidByFilter}
+        onPerson={setPaidByFilter}
+        shopById={shopById}
+        categories={categories}
+        mainCategories={mainCategories}
+        subsOf={subsOf}
+        namesOf={namesOf}
+        addCategory={addCategory}
+        renameCategory={renameCategory}
+        moveCategory={moveCategory}
+        deleteCategory={deleteCategory}
+        styleFor={styleFor}
       />
 
       <section className="space-y-4">

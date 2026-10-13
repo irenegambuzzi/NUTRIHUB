@@ -74,15 +74,16 @@ export async function followUp(what, fn) {
 // Deletes right away, then shows "Deleted" with Undo for 5 seconds.
 // `remove()` deletes and returns a snapshot of exactly what it removed;
 // `restore(snapshot)` puts it back and must be safe to repeat (upsert).
-// `onFail` runs after any failure (usually a reload).
-export async function deleteWithUndo({ remove, restore, message = 'Deleted', onFail }) {
+// `onFail` runs after any failure (usually a reload). `duration` is how
+// long Undo stays (milliseconds).
+export async function deleteWithUndo({ remove, restore, message = 'Deleted', onFail, duration = 5000 }) {
   if (isOffline()) return refuseOffline()
   let snapshot
   try {
     snapshot = await remove()
   } catch (error) {
     await settle(onFail)
-    toastSaveError(error, () => deleteWithUndo({ remove, restore, message, onFail }))
+    toastSaveError(error, () => deleteWithUndo({ remove, restore, message, onFail, duration }))
     return { error }
   }
   const undo = async () => {
@@ -94,7 +95,7 @@ export async function deleteWithUndo({ remove, restore, message = 'Deleted', onF
       toastSaveError(error, undo, "Couldn't undo — check your connection.")
     }
   }
-  showToast({ message, duration: 5000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message, duration, action: { label: 'Undo', onClick: undo } })
   return { error: null, snapshot }
 }
 

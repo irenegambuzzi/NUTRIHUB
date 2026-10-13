@@ -62,10 +62,21 @@ describe('store filter', () => {
 })
 
 describe('grouping', () => {
-  it('by category: subtotals, biggest first, newest entries first inside', () => {
+  it('by category: subtotals, the category with the newest entry first, newest entries first inside', () => {
     const g = groupEntries(entries, 'category', acc)
-    expect(g.map((x) => [x.name, x.total])).toEqual([['Groceries', 33], ['Uncategorized', 7], ['Going out', 5]])
-    expect(g[0].items.map((e) => e.id)).toEqual(['e', 'b', 'a'])
+    expect(g.map((x) => [x.name, x.total])).toEqual([['Uncategorized', 7], ['Going out', 5], ['Groceries', 33]])
+    expect(g[2].items.map((e) => e.id)).toEqual(['e', 'b', 'a'])
+  })
+  it('by category: on the same day, the category entered last comes first', () => {
+    const sameDay = [
+      { id: 'x', date: '2026-10-12', category_id: 'food', amount: 50, created_at: '2026-10-12T09:00:00+00:00' },
+      { id: 'y', date: '2026-10-12', category_id: 'fun', amount: 5, created_at: '2026-10-12T20:00:00+00:00' },
+      { id: 'z', date: '2026-10-12', category_id: 'food', amount: 1, created_at: '2026-10-12T21:00:00+00:00' },
+      { id: 'w', date: '2026-10-12', category_id: 'food', amount: 1, created_at: null },
+    ]
+    const g = groupEntries(sameDay, 'category', acc)
+    expect(g.map((x) => x.name)).toEqual(['Groceries', 'Going out'])
+    expect(g[0].items.map((e) => e.id)).toEqual(['z', 'x', 'w'])
   })
   it('by week (Monday start): date range, subtotal, newest week first', () => {
     const g = groupEntries(entries, 'week', acc)
@@ -78,7 +89,7 @@ describe('grouping', () => {
   })
   it('category & week: subtotals at both levels, adding up', () => {
     const g = groupEntries(entries, 'categoryWeek', acc)
-    const groceries = g[0]
+    const groceries = g.find((c) => c.name === 'Groceries')
     expect(groceries.total).toBe(33)
     expect(groceries.weeks.map((w) => [w.key, w.total])).toEqual([['2026-10-05', 23], ['2026-09-28', 10]])
     expect(groceries.weeks[0].items.map((e) => e.id)).toEqual(['e', 'b'])

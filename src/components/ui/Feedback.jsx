@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import { Button } from './Button'
+import { DateField } from './DateField'
 import { Input, Label, Select } from './Field'
 import { cn } from '../../lib/cn'
 import { closeDialog, dialogErrors, dismissToast, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
@@ -73,11 +74,24 @@ function Dialog() {
 function DialogForm({ dialog }) {
   const [values, setValues] = useState(() => initialDialogValues(dialog.fields))
   const [showErrors, setShowErrors] = useState(false)
+  // Date fields whose typed text isn't a real date yet, and how often a
+  // refused submit asked them to say so.
+  const [badDates, setBadDates] = useState(() => new Set())
+  const [dateChecks, setDateChecks] = useState(0)
+  const reportDate = (name, ok) =>
+    setBadDates((prev) => {
+      if (prev.has(name) === !ok) return prev
+      const next = new Set(prev)
+      if (ok) next.delete(name)
+      else next.add(name)
+      return next
+    })
   const errors = dialogErrors(dialog.fields, values)
   const set = (name, value) => setValues((v) => ({ ...v, [name]: value }))
 
   const submit = (e) => {
     e.preventDefault()
+    if (badDates.size) return setDateChecks((n) => n + 1)
     if (Object.keys(errors).length) return setShowErrors(true)
     closeDialog(values)
   }
@@ -89,7 +103,7 @@ function DialogForm({ dialog }) {
       aria-labelledby="dialog-title"
       onSubmit={submit}
       onClick={(e) => e.stopPropagation()}
-      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:pb-5 space-y-4"
+      className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:pb-5 space-y-4"
     >
       <div className="space-y-1.5">
         <p id="dialog-title" className="text-sm font-extrabold text-[var(--color-primary)]">
@@ -136,12 +150,22 @@ function DialogForm({ dialog }) {
                 </option>
               ))}
             </Select>
+          ) : f.type === 'date' ? (
+            <DateField
+              id={`dialog-${f.name}`}
+              label={f.label ?? 'Date'}
+              required={f.required}
+              autoFocus={i === 0}
+              value={values[f.name]}
+              onChange={(iso) => set(f.name, iso)}
+              onValidity={(ok) => reportDate(f.name, ok)}
+              checkSignal={dateChecks}
+            />
           ) : (
             <div className="flex items-center gap-2">
               <Input
                 id={`dialog-${f.name}`}
-                type={f.type === 'number' ? 'text' : 'date'}
-                inputMode={f.type === 'number' ? 'decimal' : undefined}
+                inputMode="decimal"
                 autoFocus={i === 0}
                 placeholder={f.placeholder}
                 value={values[f.name]}

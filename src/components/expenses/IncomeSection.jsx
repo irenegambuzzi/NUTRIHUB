@@ -10,6 +10,7 @@ import { PersonSelector } from './PersonSelector'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { categoryTree } from '../../lib/moneyList'
 import { incomeUsageStore } from '../../lib/stores'
+import { sortNewestFirst } from '../../lib/recency'
 import { parseLocalDate } from '../../lib/week'
 
 const receivedByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
@@ -92,7 +93,7 @@ export function IncomeSection({
         styleFor={styleFor}
         plural="income entries"
         renderDefault={(visible) =>
-          visible.map((entry) => {
+          sortNewestFirst(visible, incomeDate).map((entry) => {
             const { main, sub } = tree.namesOf(entry.category_id)
             const style = styleFor(tree.mainOf(entry.category_id)?.id)
             return (

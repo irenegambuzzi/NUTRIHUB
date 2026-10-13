@@ -19,8 +19,9 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
   const stores = new Set(items.map((e) => e.shop_id ?? null))
   const sharedShop = stores.size === 1 ? shopOf?.([...stores][0]) : null
 
-  // Sub-category sections, with expenses filed directly under the main
-  // category first (no header).
+  // Sub-category sections (expenses filed directly under the main category
+  // have no header), the one with the most recent expense first. `items`
+  // arrive newest first, so a section is placed where its newest one is.
   const sections = []
   for (const e of items) {
     const name = subName(e.category_id)
@@ -29,7 +30,6 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
     section.items.push(e)
     section.total += Number(e.amount || 0)
   }
-  sections.sort((a, b) => (a.name === null ? -1 : b.name === null ? 1 : b.total - a.total))
 
   return (
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
