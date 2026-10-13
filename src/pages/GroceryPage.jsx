@@ -20,6 +20,19 @@ import { restockReason, syncShoppingForItem } from '../lib/inventory'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
 import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
+import { OnTheWay } from '../components/grocery/OnTheWay'
+import { OrderOnlineDialog } from '../components/grocery/OrderOnlineDialog'
+import { LinkedArrivedDialog } from '../components/expenses/LinkedArrivedDialog'
+import { ArrivedDialog } from '../components/expenses/ArrivedDialog'
+import { WhereToRecord } from '../components/ui/WhereToRecord'
+import { FLOW_NOTICE, useFlow } from '../hooks/useFlow'
+import { useShops } from '../hooks/useShops'
+import { markArrived } from '../hooks/useOrders'
+import { askCancelOrder } from '../hooks/orderActions'
+import { askDialog, showToast } from '../lib/feedback'
+import { expectedLabel } from '../lib/orders'
+import { orderStore } from '../lib/stores'
+import { localDateString, parseLocalDate } from '../lib/week'
 
 // List or shopping mode, remembered on this phone (Receipts isn't).
 const VIEW_KEY = 'nutrihub-grocery-view'
@@ -75,8 +88,16 @@ export function GroceryPage() {
     budgetActive,
     overBudget,
     budgetPlan,
-    checkOff,
+    checkOff: toggleCart,
+    onTheWay,
+    openOrderOf,
   } = useGroceryList()
+  const flow = useFlow()
+  const { byId: shopById } = useShops()
+  const { rows: orders } = orderStore.useRows()
+  const [ordering, setOrdering] = useState(null) // a list entry
+  const [arriving, setArriving] = useState(null) // { order, item } | { order }
+  const today = localDateString()
   const { parents, subsByParent, categoryName, addCategory, addSubcategory } = useInventoryCategories()
 
   const [view, setViewState] = useState(readView)
@@ -87,6 +108,62 @@ export function GroceryPage() {
   const [bulkScope, setBulkScope] = useState('restock')
   const [syncing, setSyncing] = useState(false)
   const [search, setSearch] = useState('')
+
+  // An entry ordered online can't go in the cart without a clear warning:
+  // buying it here too would record it twice. Cancelling the order (with
+  // its expense question) lets it be bought after all.
+  const checkOff = async (item) => {
+    const order = openOrderOf(item)
+    if (!order || item.in_cart) return toggleCart(item)
+    const answer = await askDialog({
+      title: `"${item.name}" is already ordered`,
+      message: `Already ordered on ${parseLocalDate(order.order_date).toLocaleDateString('en-GB')}, ${expectedLabel(order, today)}. Buying it here too would record it twice.`,
+      fields: [
+        {
+          name: 'how',
+          type: 'choice',
+          value: 'keep',
+          options: [
+            { value: 'keep', label: 'Keep the order', hint: "Don't buy it here; it stays under On the way." },
+            { value: 'cancel', label: 'Cancel the order and buy it here', hint: 'You choose what happens to its expense next.' },
+          ],
+        },
+      ],
+      confirmLabel: 'Continue',
+    })
+    if (answer?.how !== 'cancel') return
+    const result = await askCancelOrder(order, { orders, today })
+    if (result && !result.error) toggleCart({ ...item, in_cart: false })
+  }
+
+  // An ordered entry stays until its order arrives or is cancelled.
+  const removeItem = (item) => {
+    if (openOrderOf(item)) return showToast({ message: `"${item.name}" is on the way — cancel the order first (On the way → Cancel / Return).`, tone: 'error' })
+    return deleteItem(item)
+  }
+
+  const arrive = async (order, pantry) => {
+    if (pantry) return setArriving({ order, item: pantry })
+    const { error } = await markArrived(order, today)
+    if (!error) setArriving({ order })
+  }
+
+  const shopOf = (item) => {
+    const id = pantryFor(item)?.usual_shop_id
+    return id ? shopById.get(id) ?? null : null
+  }
+  const onTheWayEntries = onTheWay.map((entry) => ({ entry, order: openOrderOf(entry), pantry: pantryFor(entry) ?? null }))
+  const onTheWaySection = flow.ready ? (
+    <OnTheWay
+      entries={onTheWayEntries}
+      shopById={shopById}
+      today={today}
+      onArrived={arrive}
+      onCancel={(order) => askCancelOrder(order, { orders, today })}
+    />
+  ) : null
+  const orderProps = (item) =>
+    flow.ready ? { onOrderOnline: () => setOrdering(item), orderFirst: Boolean(shopOf(item)?.is_online), usualShop: shopOf(item) } : {}
 
   const query = search.trim().toLowerCase()
   // The names of a group's variants, so searching "Lays" finds the
@@ -178,6 +255,11 @@ export function GroceryPage() {
 
       {view !== 'receipts' && (
         <SearchBox value={search} onChange={setSearch} placeholder="Search the list and the cart…" />
+      )}
+
+      {view === 'list' && <WhereToRecord here="shop" />}
+      {view === 'list' && flow.missing && (
+        <Card className="text-xs text-yellow-300">"Order online", "On the way", one store per shopping trip and budget categories by item category: {FLOW_NOTICE}</Card>
       )}
 
       {view === 'list' ? (
@@ -329,13 +411,16 @@ export function GroceryPage() {
                   budgetMark={overBudget ? budgetPlan?.marks.get(item.id) : undefined}
                   categoryName={categoryName}
                   onToggle={checkOff}
-                  onDelete={deleteItem}
+                  onDelete={removeItem}
                   onUpdatePricing={updatePricing}
                   onUpdatePayer={updatePayer}
+                  {...orderProps(item)}
                 />
               ))}
             </div>
           )}
+
+          {onTheWaySection}
 
           {filteredDurables.length > 0 && (
             <div className="space-y-2 pt-2">
@@ -359,9 +444,10 @@ export function GroceryPage() {
                     total={totalOf(item)}
                     categoryName={categoryName}
                     onToggle={checkOff}
-                    onDelete={deleteItem}
+                    onDelete={removeItem}
                     onUpdatePricing={updatePricing}
                     onUpdatePayer={updatePayer}
+                    {...orderProps(item)}
                   />
                 ))}
               </div>
@@ -384,6 +470,7 @@ export function GroceryPage() {
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
           />
+          {onTheWaySection}
         </>
       ) : (
         <ReceiptsView />
@@ -396,10 +483,16 @@ export function GroceryPage() {
           totalOf={totalOf}
           updatePricing={updatePricing}
           updatePayer={updatePayer}
-          toggleCart={checkOff}
+          toggleCart={toggleCart}
+          openOrderOf={flow.ready ? openOrderOf : () => null}
+          onCancelOrder={(order) => askCancelOrder(order, { orders, today })}
+          splitTrips={flow.ready}
           onClose={() => setConfirming(false)}
         />
       )}
+      {ordering && <OrderOnlineDialog entry={ordering} pantry={pantryFor(ordering) ?? null} total={totalOf(ordering)} onClose={() => setOrdering(null)} />}
+      {arriving?.item && <LinkedArrivedDialog order={arriving.order} item={arriving.item} onClose={() => setArriving(null)} />}
+      {arriving && !arriving.item && <ArrivedDialog order={arriving.order} onClose={() => setArriving(null)} />}
     </div>
   )
 }

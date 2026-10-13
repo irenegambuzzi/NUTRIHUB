@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
-import { getDurableExpenseCategoryId, getGroceriesCategoryId, insertRows, isDurable, updateRows } from '../lib/inventory'
+import { insertRows, updateRows } from '../lib/inventory'
+import { budgetResolver } from '../lib/budgetContext'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { groceryStore } from '../lib/stores'
 import { localDateString } from '../lib/week'
@@ -9,7 +10,8 @@ import { isOffline } from '../lib/connection'
 import { queueCart, queueQuantity } from '../lib/offlineActions'
 
 async function createExpense(item, amount, when = new Date()) {
-  const categoryId = isDurable(item) ? await getDurableExpenseCategoryId(item.subcategory_id) : await getGroceriesCategoryId()
+  // The budget category from the item category (see lib/budgetMap.js).
+  const categoryId = (await budgetResolver()).budgetFor(item)
   // Dated today in local time: the database default (current_date) is UTC.
   const data = must(
     await supabase

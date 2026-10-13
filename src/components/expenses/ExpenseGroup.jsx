@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Pencil, Trash2 } from 'lucide-react'
+import { ChevronDown, Pencil, ShoppingCart, Store, Trash2 } from 'lucide-react'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseLocalDate } from '../../lib/week'
 import { ShopTag } from '../ui/ShopIcon'
@@ -10,7 +10,11 @@ const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.l
 // A main category's expenses for one day. Collapsed: one line with the
 // total. Opened: the expenses grouped by sub-category. `shopOf(shopId)` →
 // the store of an expense (shown in the header when they all share one).
-export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, onDelete }) {
+// For a shopping trip (`trip`: the trip, `tripShop`: its store) the row is
+// that trip's part in this budget category — "Conad · 16/10/2026 · 10
+// items" — and the store can be changed for the whole trip
+// (`onChangeTripStore`).
+export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, onDelete, trip = null, tripShop = null, onChangeTripStore = null }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
@@ -36,6 +40,19 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full p-3 flex justify-between items-center gap-3 text-left">
         <div className="flex items-center gap-3 min-w-0">
           <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color.hex }} />
+          {trip ? (
+            <div className="min-w-0">
+              <p className="font-bold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
+                <ShoppingCart size={12} className="shrink-0 text-[var(--color-primary)]" />
+                <span className="truncate">
+                  {tripShop?.name ?? 'Shopping trip'} · {parseLocalDate(date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })} · {items.length} item{items.length === 1 ? '' : 's'}
+                </span>
+              </p>
+              <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
+                {main?.name || 'Uncategorized'} · {parseLocalDate(date).toLocaleDateString('en-GB')} · {payers.join(', ')}
+              </span>
+            </div>
+          ) : (
           <div className="min-w-0">
             <p className="font-bold text-[var(--color-text)]">{main?.name || 'Uncategorized'}</p>
             <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
@@ -49,6 +66,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
               · {payers.join(', ')}
             </span>
           </div>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
@@ -105,6 +123,15 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
               ))}
             </div>
           ))}
+          {trip && onChangeTripStore && (
+            <button
+              type="button"
+              onClick={() => onChangeTripStore(trip)}
+              className="mt-2 min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]"
+            >
+              <Store size={12} /> Change the store of the whole trip
+            </button>
+          )}
         </div>
       )}
     </div>

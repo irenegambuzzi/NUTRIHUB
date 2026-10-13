@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ExternalLink, Pencil, Trash2, Undo2, X } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, Link2, Pencil, Trash2, Undo2, X } from 'lucide-react'
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ORDER_STATUS, agoLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderState } from '../../lib/orders'
@@ -23,7 +23,9 @@ const TONE = {
 // (arrived, cancelled or returned) it shows the status, the day of it and,
 // for cancelled and returned ones, whether the expense was kept or deleted,
 // and it can go back on the way.
-export function OrderCard({ order, shop, names, today, open, highlighted, onToggle, onArrived, onCancelled, onBackOnTheWay, onEdit, onDelete }) {
+// `linkedItem`: the HOME item (or group) it was ordered for from the SHOP
+// list, shown as a tag; Arrived then adds its stock.
+export function OrderCard({ order, shop, names, today, open, highlighted, onToggle, onArrived, onCancelled, onBackOnTheWay, onEdit, onDelete, linkedItem = null }) {
   const onTheWay = order.status === 'on_the_way'
   const state = onTheWay ? orderState(order, today) : null
   const overdue = state === 'overdue'
@@ -52,6 +54,12 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
             )}
             ordered {agoLabel(order.order_date, today)}
           </span>
+          {linkedItem && (
+            <span className="mt-0.5 flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)]">
+              <Link2 size={10} /> HOME: {linkedItem.name}
+              {Number(order.quantity) > 0 ? ` · ${Number(order.quantity)} ${order.unit ?? ''}` : ''}
+            </span>
+          )}
           {onTheWay ? (
             <span className={cn('text-[11px] font-bold block mt-0.5', TONE[state])}>
               {overdue && <span className="mr-1.5 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] uppercase">Overdue</span>}
@@ -85,6 +93,12 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
             </p>
           )}
           {!order.expense_id && <p className="text-[var(--color-text-muted)]">No expense is linked to this order.</p>}
+          {linkedItem && (
+            <p className="text-[var(--color-text-muted)]">
+              Ordered from the SHOP list for "{linkedItem.name}" in HOME: Arrived adds it to the stock.
+              {order.status === 'arrived' && Number(order.stock_added) > 0 ? ` Added ${Number(order.stock_added)} ${linkedItem.unit} when it arrived.` : ''}
+            </p>
+          )}
           {link && (
             <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] break-all">
               <ExternalLink size={11} /> Open the order page

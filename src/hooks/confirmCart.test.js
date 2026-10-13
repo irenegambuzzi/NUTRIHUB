@@ -19,7 +19,7 @@ function fakeDb() {
   client.supabase = {
     from: (table) => ({
       update: (patch) => (sent.push({ op: 'update', table, patch }), answer([{ id: 'g1', ...patch }])),
-      select: () => answer(table === 'expense_categories' ? { id: 'cat-groceries' } : []),
+      select: () => answer(table === 'expense_categories' ? [{ id: 'cat-groceries', name: 'Groceries', parent_id: null }] : []),
     }),
     rpc: (name, args) => (sent.push({ op: 'rpc', name, args }), answer({ id: 'trip', total: args.payload?.items?.[0]?.line_total ?? 0 })),
     channel: () => ({ on() { return this }, subscribe() { return this } }),
@@ -48,7 +48,7 @@ describe('confirming with a price changed on the confirm screen (€1 → €2)'
     expect(update).toBeGreaterThanOrEqual(0)
     expect(update).toBeLessThan(rpc)
     expect(sent[update].patch).toEqual({ price: 2, payer: 'akbar' })
-    expect(sent[rpc].args.payload).toMatchObject({ trip_date: '2026-10-05', items: [{ grocery_item_id: 'g1', line_total: 2, payer: 'akbar', add: 1 }] })
+    expect(sent[rpc].args.payload).toMatchObject({ trip_date: '2026-10-05', items: [{ grocery_item_id: 'g1', line_total: 2, payer: 'akbar', add: 1, expense_category_id: 'cat-groceries' }] })
   })
 })
 
@@ -59,7 +59,7 @@ describe('Undo after confirming', () => {
     const never = new Promise(() => {})
     const from = client.supabase.from
     client.supabase.from = (table) =>
-      table === 'expense_categories' ? from(table) : { ...from(table), select: () => ({ order: () => never, eq: () => never, then: (r) => never.then(r) }) }
+      ['expense_categories', 'inventory_categories', 'category_budget_map'].includes(table) ? from(table) : { ...from(table), select: () => ({ order: () => never, eq: () => never, then: (r) => never.then(r) }) }
     const milk = { id: 'g1', name: 'Milk', quantity: 1, unit: 'btl', price: 2, price_qty: 1, price_unit: 'btl', payer: 'shared', category_id: 'dairy' }
     const done = confirmCart({ id: 'trip-2', date: '2026-10-05', lines: [purchaseLine(milk, [])], answers: {}, totalOf: (i) => lineTotal(i), photoIds: [] })
     const result = await Promise.race([done, new Promise((r) => setTimeout(() => r('timeout'), 1000))])

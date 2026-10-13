@@ -7,15 +7,17 @@ import { OrderForm } from './OrderForm'
 import { OrderCard } from './OrderCard'
 import { ArrivedDialog } from './ArrivedDialog'
 import { PersonSelector } from './PersonSelector'
-import { useOrders, createOrder, editOrder, markArrived, markCancelled, putBackOnTheWay, removeOrder } from '../../hooks/useOrders'
-import { askDialog } from '../../lib/feedback'
+import { LinkedArrivedDialog } from './LinkedArrivedDialog'
+import { WhereToRecord } from '../ui/WhereToRecord'
+import { useOrders, createOrder, editOrder, linkedItemOf, markArrived } from '../../hooks/useOrders'
+import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/orderActions'
+import { useFlow } from '../../hooks/useFlow'
+import { pantryStore } from '../../lib/stores'
 import { localDateString } from '../../lib/expensePeriods'
-import { outcomeSupported, splitOrders } from '../../lib/orders'
+import { splitOrders } from '../../lib/orders'
 import { cn } from '../../lib/cn'
 
 export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/019_stores_and_orders.sql). Until then everything else works as before.'
-
-const money = (value) => `€${Number(value).toFixed(2)}`
 
 // Online purchases waiting to arrive: a header with how many are on the
 // way, "+ Add order" (the form opens on demand), the orders on the way by
@@ -29,6 +31,9 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState(null)
   const [arrived, setArrived] = useState(null)
+  const [arrivedLinked, setArrivedLinked] = useState(null) // { order, item }
+  const flow = useFlow()
+  const { rows: pantryRows } = pantryStore.useRows()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [openIds, setOpenIds] = useState(() => new Set())
   const [highlight, setHighlight] = useState(null)
@@ -72,96 +77,24 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       return next
     })
 
+  // An order linked to a HOME item asks how much arrived and adds it in
+  // one step; any other order is marked arrived, then HOME is offered.
   const arrive = async (order) => {
+    const item = flow.ready ? linkedItemOf(order, pantryRows) : null
+    if (item) return setArrivedLinked({ order, item })
     const { error } = await markArrived(order, localDateString())
     if (!error) setArrived(order)
   }
 
-  // Cancel / Return: nothing happens until the question is answered. It
-  // says where the order goes, what becomes of its expense, and offers
-  // Undo afterwards. "Returned" is only offered once the database knows it.
   const cancel = async (order) => {
-    const returnedKnown = outcomeSupported(orders)
-    const fields = []
-    if (returnedKnown) {
-      fields.push({
-        name: 'kind',
-        type: 'choice',
-        label: 'Mark it as',
-        value: 'cancelled',
-        options: [
-          { value: 'cancelled', label: 'Cancelled', hint: 'It never arrived, or the order was called off.' },
-          { value: 'returned', label: 'Returned', hint: 'It arrived and was sent back.' },
-        ],
-      })
-    }
-    if (order.expense_id) {
-      fields.push({
-        name: 'how',
-        type: 'choice',
-        label: `What about the expense? (${money(order.price)}, ${new Date(`${order.order_date}T00:00:00`).toLocaleDateString('en-GB')})`,
-        value: 'keep',
-        options: [
-          { value: 'delete', label: 'Delete the expense (I got my money back / was never charged)', hint: 'It is taken out of your expenses.' },
-          { value: 'keep', label: 'Keep the expense', hint: 'The money stays in your expenses, e.g. a refund has not arrived yet.' },
-        ],
-      })
-    }
-    const answer = await askDialog({
-      title: `Cancel or return "${order.item_name}"?`,
-      message: `${order.expense_id ? '' : 'It has no expense linked, so no money changes. '}It moves to History under the orders on the way, and no longer shows in the reminders. Nothing changes until you confirm, and you can Undo afterwards.${returnedKnown ? '' : ' (Returned needs a one-time database update, supabase/020_order_returned.sql; until then it is saved as Cancelled.)'}`,
-      fields,
-      confirmLabel: 'Move to History',
-    })
-    if (!answer) return
-    const result = await markCancelled(order, { kind: answer.kind ?? 'cancelled', deleteExpense: answer.how === 'delete', today, outcomeKnown: returnedKnown })
-    if (!result?.error) {
+    const result = await askCancelOrder(order, { orders, today })
+    if (result && !result.error) {
       setHistoryOpen(true)
       setHighlight(order.id)
     }
   }
 
-  const backOnTheWay = async (order) => {
-    if (order.expense_id) return putBackOnTheWay(order, { createExpense: false })
-    const answer = await askDialog({
-      title: `Put "${order.item_name}" back on the way?`,
-      message: 'Its expense was deleted. Add the expense again (one, for the order date and price)?',
-      fields: [
-        {
-          name: 'how',
-          type: 'choice',
-          value: 'add',
-          options: [
-            { value: 'add', label: 'Add the expense again', hint: `${money(order.price)} on ${new Date(`${order.order_date}T00:00:00`).toLocaleDateString('en-GB')}.` },
-            { value: 'none', label: 'Without an expense' },
-          ],
-        },
-      ],
-      confirmLabel: 'Put back on the way',
-    })
-    if (answer) await putBackOnTheWay(order, { createExpense: answer.how === 'add' })
-  }
-
-  const remove = async (order) => {
-    if (!order.expense_id) return removeOrder(order, { alsoExpense: false })
-    const answer = await askDialog({
-      title: `Delete "${order.item_name}"?`,
-      message: 'This order has an expense. Delete that too?',
-      fields: [
-        {
-          name: 'how',
-          type: 'choice',
-          value: 'order',
-          options: [
-            { value: 'order', label: 'Delete the order only', hint: 'The expense stays in your expenses.' },
-            { value: 'both', label: 'Delete the order and its expense', hint: `The ${money(order.price)} is taken out of your expenses.` },
-          ],
-        },
-      ],
-      confirmLabel: 'Delete',
-    })
-    if (answer) await removeOrder(order, { alsoExpense: answer.how === 'both' })
-  }
+  const backOnTheWay = (order) => askBackOnTheWay(order, { unit: linkedItemOf(order, pantryRows)?.unit })
 
   const card = (order) => (
     <OrderCard
@@ -177,7 +110,8 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       onCancelled={cancel}
       onBackOnTheWay={backOnTheWay}
       onEdit={setEditing}
-      onDelete={remove}
+      onDelete={askRemoveOrder}
+      linkedItem={linkedItemOf(order, pantryRows)}
     />
   )
 
@@ -200,6 +134,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       </div>
 
       {missing && <Card className="text-xs text-yellow-300">{ORDERS_NOTICE}</Card>}
+      <WhereToRecord here="orders" />
 
       {ready && (
         <>
@@ -288,6 +223,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       )}
 
       {arrived && <ArrivedDialog order={arrived} onClose={() => setArrived(null)} />}
+      {arrivedLinked && <LinkedArrivedDialog order={arrivedLinked.order} item={arrivedLinked.item} onClose={() => setArrivedLinked(null)} />}
     </section>
   )
 }

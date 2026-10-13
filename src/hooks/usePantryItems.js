@@ -27,6 +27,7 @@ export const ITEM_FIELDS = [
   'last_purchased_at',
   'is_group',
   'group_id',
+  'usual_shop_id',
 ]
 
 function pickFields(source) {

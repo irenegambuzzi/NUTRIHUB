@@ -11,7 +11,7 @@ A shared web app for two people (Irene & Akbar): weekly meal planning, recipes, 
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in the Supabase URL/anon key.
-2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql` and `supabase/006_backfill_inventory_data.sql`. (An existing database only needs the numbered files it hasn't run yet — they keep and convert current pantry/grocery data. `019_stores_and_orders.sql` adds the stores and orders; until it has been run the app works as before and says so where they would be. `020_order_returned.sql` adds the "Returned" status and remembers whether a cancelled or returned order's expense was kept or deleted; until it has been run, Cancel / Return saves "Cancelled" and says so.)
+2. Run the database migration once: open the Supabase Dashboard → SQL Editor and run `supabase/schema.sql`, then `supabase/005_home_inventory.sql` and `supabase/006_backfill_inventory_data.sql`. (An existing database only needs the numbered files it hasn't run yet — they keep and convert current pantry/grocery data. `019_stores_and_orders.sql` adds the stores and orders; until it has been run the app works as before and says so where they would be. `020_order_returned.sql` adds the "Returned" status and remembers whether a cancelled or returned order's expense was kept or deleted; until it has been run, Cancel / Return saves "Cancelled" and says so. `021_connected_flow.sql` connects HOME, SHOP, Orders and MONEY (one store per shopping trip, "Order online" from the SHOP list, budget categories by item category); until it has been run the app works as before and says so where those features would be.)
 3. `npm install`
 4. `npm run dev`
 

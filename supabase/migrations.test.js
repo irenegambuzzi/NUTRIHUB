@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 020 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020')).sort()
+  // 015 (the login lock) and 016 to 021 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -800,5 +800,177 @@ describe('020: orders can be returned, and remember what happened to the expense
     } finally {
       await db.exec('reset role')
     }
+  })
+})
+
+describe('021: one flow for HOME, SHOP, Orders and MONEY', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const file = '021_connected_flow.sql'
+  const read = () => fs.readFileSync(path.join(dir, file), 'utf8')
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  const row = async (sql, params) => (await rows(sql, params))[0]
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  async function asMember(fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await db.exec('set role authenticated')
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const snapshot = async () => ({
+    expenses: await rows(`select id, amount::float as amount, category_id, description, paid_by, expense_date::text as date, shop_id, trip_id from expenses order by id`),
+    orders: await rows(`select id, item_name, price::float as price, status, expense_id from orders order by id`),
+    stock: await rows(`select id, current_stock::float as stock from pantry_items order by id`),
+    income: await rows(`select id, amount::float as amount from income order by id`),
+  })
+  let before
+
+  beforeAll(async () => {
+    before = await snapshot()
+  })
+
+  it('changes no existing expense, income, order or stock, and is safe to re-run', async () => {
+    await db.exec(read())
+    await db.exec(read())
+    expect(await snapshot()).toEqual(before)
+    expect((await row(`select count(*)::int as n from category_budget_map`)).n).toBe(0)
+    expect((await row(`select count(*)::int as n from pantry_items where usual_shop_id is not null`)).n).toBe(0)
+    expect((await row(`select count(*)::int as n from shopping_trips where shop_id is not null or paid_by is not null`)).n).toBe(0)
+  })
+
+  it('ends with a check that says nothing changed and nothing is open to anon', async () => {
+    const result = (await db.exec(read())).at(-1).rows[0]
+    expect(result).toMatchObject({
+      expenses_before: before.expenses.length,
+      expenses_now: before.expenses.length,
+      expenses_changed: 0,
+      expenses_lost: 0,
+      income_before: before.income.length,
+      income_now: before.income.length,
+      income_changed: 0,
+      orders_before: before.orders.length,
+      orders_now: before.orders.length,
+      orders_changed: 0,
+      items_before: before.stock.length,
+      items_now: before.stock.length,
+      stock_changed: 0,
+      new_columns: true,
+      open_to_anon: 'none',
+      locked_to_household: true,
+      realtime_on: true,
+    })
+    expect(Number(result.expenses_total_before)).toBe(Number(result.expenses_total_now))
+    expect(Number(result.income_total_before)).toBe(Number(result.income_total_now))
+    expect(Number(result.orders_total_before)).toBe(Number(result.orders_total_now))
+    // 015's own check still finds nothing open, the new functions included.
+    const lock = await db.query(fs.readFileSync(path.join(dir, '015_lock_to_household.sql'), 'utf8').split('-- ── 5. Check')[1].replace(/^[^\n]*\n/, ''))
+    expect(lock.rows[0]).toMatchObject({ tables_open_to_anon: 'none', functions_open_to_anon: 'none', tables_without_rls: 'none' })
+  })
+
+  it('keeps the new table and functions away from anon', async () => {
+    await db.query(`select set_config('request.jwt.claim.sub', '', false)`)
+    await db.exec('set role anon')
+    try {
+      expect(await fails('select * from category_budget_map')).toMatch(/permission denied/)
+      expect(await fails(`select arrive_order(gen_random_uuid(), null, 1, current_date)`)).toMatch(/permission denied/)
+      expect(await fails(`select unarrive_order(gen_random_uuid())`)).toMatch(/permission denied/)
+    } finally {
+      await db.exec('reset role')
+    }
+  })
+
+  describe('as the household', () => {
+    let shop, online, groceries, catFood, cheese, cheeseEntry, foodEntry
+
+    beforeAll(async () => {
+      await asMember(async () => {
+        shop = (await row(`insert into shops (name, is_online) values ('Conad', false) returning id`)).id
+        online = (await row(`insert into shops (name, is_online) values ('Amazon', true) returning id`)).id
+        groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+        catFood = (await row(`insert into pantry_items (name, unit, current_stock, min_stock, category_id, usual_shop_id, packaging_unit, quantity_per_pack) values ('Cat Dry Food', 'kg', 1, 2, 'pet', $1, 'bag', 2) returning id`, [online])).id
+        cheese = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Cheese', 'pcs', 1, 'dairy') returning id`)).id
+        cheeseEntry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id) values ('Cheese', 2, 'pcs', 3, 1, 'pcs', $1, true, 'dairy') returning id`, [cheese])).id
+        foodEntry = (await row(`insert into grocery_items (name, quantity, unit, price, pantry_item_id, in_cart, category_id) values ('Cat Dry Food', 1, 'bag', 0, $1, true, 'pet') returning id`, [catFood])).id
+      })
+    })
+
+    it('saves the store and payer on the trip and on every expense it makes', async () => {
+      await asMember(async () => {
+        const trip = '22222222-2222-2222-2222-222222222222'
+        const payload = { id: trip, trip_date: '2026-10-16', shop_id: shop, paid_by: 'irene', items: [{ grocery_item_id: cheeseEntry, line_total: 6, payer: 'irene', expense_category_id: groceries, pantry_item_id: cheese, add: 2 }] }
+        const t = await row(`select * from confirm_shopping_trip($1)`, [payload])
+        expect({ shop: t.shop_id, paid: t.paid_by, total: Number(t.total) }).toEqual({ shop, paid: 'irene', total: 6 })
+        expect(await rows(`select shop_id, amount::float as amount from expenses where trip_id = $1`, [trip])).toEqual([{ shop_id: shop, amount: 6 }])
+        // Sent again: nothing new.
+        await db.query(`select * from confirm_shopping_trip($1)`, [payload])
+        expect((await row(`select count(*)::int as n from expenses where trip_id = $1`, [trip])).n).toBe(1)
+        expect(Number((await row(`select current_stock from pantry_items where id = $1`, [cheese])).current_stock)).toBe(3)
+      })
+    })
+
+    it('allows one open order per SHOP list entry, and refuses to buy an ordered item in a trip', async () => {
+      await asMember(async () => {
+        const expense = (await row(`insert into expenses (amount, description, paid_by, expense_date, shop_id, category_id) values (30, 'Cat Dry Food', 'shared', '2026-10-16', $1, $2) returning id`, [online, groceries])).id
+        const order = (await row(
+          `insert into orders (item_name, shop_id, order_date, price, paid_by, expense_id, pantry_item_id, grocery_item_id, quantity, unit, expected_date) values ('Cat Dry Food', $1, '2026-10-16', 30, 'shared', $2, $3, $4, 2, 'bag', '2026-10-20') returning id`,
+          [online, expense, catFood, foodEntry]
+        )).id
+        expect(await fails(`insert into orders (item_name, price, grocery_item_id) values ('Twice', 1, $1)`, [foodEntry])).toMatch(/orders_open_grocery_key|duplicate/)
+        const before = await row(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses`)
+        const trip = { id: '33333333-3333-3333-3333-333333333333', trip_date: '2026-10-16', shop_id: shop, items: [{ grocery_item_id: foodEntry, line_total: 28, expense_category_id: groceries, pantry_item_id: catFood, add: 2 }] }
+        expect(await fails(`select * from confirm_shopping_trip($1)`, [trip])).toMatch(/already ordered online/)
+        // Nothing of the refused trip is left behind.
+        expect(await row(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses`)).toEqual(before)
+        expect((await row(`select count(*)::int as n from shopping_trips where id = $1`, [trip.id])).n).toBe(0)
+        expect(Number((await row(`select current_stock from pantry_items where id = $1`, [catFood])).current_stock)).toBe(1)
+
+        // Arrived: 2 bags = 4 kg added once, the entry leaves the list, no expense made.
+        const first = (await row(`select arrive_order($1, $2, 4, '2026-10-19') as r`, [order, catFood])).r
+        expect(first.added).toBe(true)
+        const second = (await row(`select arrive_order($1, $2, 4, '2026-10-19') as r`, [order, catFood])).r
+        expect(second.added).toBe(false)
+        expect(Number((await row(`select current_stock from pantry_items where id = $1`, [catFood])).current_stock)).toBe(5)
+        expect(await row(`select status, arrived_date::text as day, stock_added::float as added from orders where id = $1`, [order])).toEqual({ status: 'arrived', day: '2026-10-19', added: 4 })
+        expect((await row(`select completed from grocery_items where id = $1`, [foodEntry])).completed).toBe(true)
+        expect(await row(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses`)).toEqual(before)
+        expect((await row(`select count(*)::int as n from stock_logs where item_id = $1 and reason = 'purchased'`, [catFood])).n).toBe(1)
+
+        // Back on the way: exactly that stock comes out again, and its history entry.
+        await db.query(`select unarrive_order($1)`, [order])
+        await db.query(`select unarrive_order($1)`, [order])
+        expect(Number((await row(`select current_stock from pantry_items where id = $1`, [catFood])).current_stock)).toBe(1)
+        expect((await row(`select count(*)::int as n from stock_logs where item_id = $1 and reason = 'purchased'`, [catFood])).n).toBe(0)
+        expect(await row(`select status, stock_added::float as added from orders where id = $1`, [order])).toEqual({ status: 'on_the_way', added: 0 })
+        expect((await row(`select completed from grocery_items where id = $1`, [foodEntry])).completed).toBe(false)
+
+        // A group needs a variant; an arrival without an item adds nothing.
+        const group = (await row(`insert into pantry_items (name, unit, is_group, category_id) values ('Cat food', 'kg', true, 'pet') returning id`)).id
+        expect(await fails(`select arrive_order($1, $2, 1, current_date)`, [order, group])).toMatch(/variant/)
+        expect((await row(`select arrive_order($1, null, 0, current_date) as r`, [order])).r.added).toBe(true)
+        expect(Number((await row(`select current_stock from pantry_items where id = $1`, [catFood])).current_stock)).toBe(1)
+        await db.query(`delete from orders where id = $1`, [order])
+        await db.query(`delete from expenses where id = $1`, [expense])
+        await db.query(`delete from pantry_items where id = $1`, [group])
+      })
+    })
+
+    it('maps an item category to a budget category, and forgets it when either is deleted', async () => {
+      await asMember(async () => {
+        const pets = (await row(`insert into expense_categories (name) values ('Pets') returning id`)).id
+        await db.query(`insert into category_budget_map (id, expense_category_id) values ('pet', $1)`, [pets])
+        expect(await fails(`insert into category_budget_map (id, expense_category_id) values ('no-such-category', $1)`, [pets])).toMatch(/foreign key/)
+        await db.query(`delete from expense_categories where id = $1`, [pets])
+        expect((await row(`select count(*)::int as n from category_budget_map`)).n).toBe(0)
+      })
+    })
   })
 })

@@ -8,7 +8,7 @@ import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
 import { ShopPicker } from '../expenses/ShopPicker'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { parseNumber } from '../../lib/feedback'
+import { parseNumber, showToast } from '../../lib/feedback'
 import { formatUnitPrice, money } from '../../lib/pricing'
 import { editPatch, editedItem, purchaseLine } from '../../lib/purchase'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
@@ -23,7 +23,14 @@ import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 // history or expenses until "Confirm purchase" — then all of it at once,
 // with exactly the values on screen: edits are kept here as typed and
 // saved to the grocery entries just before confirming.
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, toggleCart, onClose }) {
+//
+// One confirmation is one shopping trip, at one store (chosen once, for
+// every item). With `splitTrips` (supabase/021) items can be left out of
+// this trip: they stay in the cart, to confirm as another trip (e.g. the
+// second store). An entry ordered online and on the way (`openOrderOf`)
+// is never bought here: it says so, with "Cancel the order…"
+// (`onCancelOrder`) or "Take out of the cart".
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false }) {
   const { confirmPurchase } = usePurchase()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
   // One id per purchase: pressing Confirm again after a dropped connection
@@ -46,6 +53,15 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   )
   const reportTripDate = useCallback((ok) => reportDate('trip', ok), [reportDate])
   const [shopId, setShopId] = useState('')
+  // Items kept in the cart for another trip.
+  const [later, setLater] = useState(() => new Set())
+  const inTrip = (item) => !later.has(item.id) && !openOrderOf(item)
+  const toggleLater = (id) =>
+    setLater((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   const [answers, setAnswers] = useState({})
   // Ids of the new variants made for group lines, fixed for this screen.
   const variantIds = useRef(new Map())
@@ -61,11 +77,16 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
-  const items = itemsFor(edits)
-  const lines = items.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+  const allLines = itemsFor(edits).map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+  const lines = allLines.filter((l) => inTrip(l.item))
+  const items = lines.map((l) => l.item)
   const total = items.reduce((sum, i) => sum + (totalOf(i) ?? 0), 0)
   const open = lines.filter((l) => !l.ready).length
   const unknown = items.filter((i) => totalOf(i) === null).length
+  const leftInCart = allLines.length - lines.length
+  // Who paid for the whole trip; null when it was shared out differently.
+  const payers = new Set(items.map((i) => i.payer || 'shared'))
+  const tripPayer = payers.size === 1 ? [...payers][0] : null
   const attached = photos.filter((p) => photoIds.includes(p.id))
   // The receipt compared with the cart, once receipts can be read
   // automatically (lib/receiptMatch.js); empty for now.
@@ -82,14 +103,29 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 
   const confirm = async () => {
     const latest = editsRef.current
-    const confirmed = itemsFor(latest)
+    const confirmed = itemsFor(latest).filter(inTrip)
     const confirmedLines = confirmed.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
-    if (confirmedLines.some((l) => !l.ready)) return
-    const patches = cartItems.map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
+    if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
+    const ids = new Set(confirmed.map((i) => i.id))
+    const patches = cartItems.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
+    const confirmedPayers = new Set(confirmed.map((i) => i.payer || 'shared'))
     setBusy(true)
-    const { error } = await confirmPurchase({ id: tripId, date, lines: confirmedLines, answers, totalOf, photoIds, patches, variantIds: variantIds.current, shopId: shopId || null })
+    const { error } = await confirmPurchase({
+      id: tripId,
+      date,
+      lines: confirmedLines,
+      answers,
+      totalOf,
+      photoIds,
+      patches,
+      variantIds: variantIds.current,
+      shopId: shopId || null,
+      paidBy: confirmedPayers.size === 1 ? [...confirmedPayers][0] : null,
+    })
     setBusy(false)
-    if (!error) onClose()
+    if (error) return
+    if (leftInCart > 0) showToast({ message: `${leftInCart} item${leftInCart === 1 ? '' : 's'} stay in the cart — confirm ${leftInCart === 1 ? 'it' : 'them'} as another trip (e.g. the other store).`, duration: 8000 })
+    onClose()
   }
 
   return (
@@ -118,12 +154,13 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
                   key={o.value}
                   type="button"
                   onClick={() => {
-                    cartItems.forEach((i) => edit(i.id, { payer: o.value }))
-                    updatePayer(cartItems, o.value)
+                    const trip = cartItems.filter(inTrip)
+                    trip.forEach((i) => edit(i.id, { payer: o.value }))
+                    updatePayer(trip, o.value)
                   }}
                   className={cn(
                     'px-2.5 py-1.5 rounded-full text-[11px] font-bold border',
-                    items.every((i) => (i.payer || 'shared') === o.value) ? 'bg-[var(--color-accent)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text)]'
+                    tripPayer === o.value ? 'bg-[var(--color-accent)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text)]'
                   )}
                 >
                   {o.label}
@@ -133,13 +170,22 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           </div>
         </div>
 
-        <ShopPicker value={shopId} onChange={setShopId} />
+        <ShopPicker value={shopId} onChange={setShopId} label={splitTrips ? 'Store (for this whole trip)' : undefined} />
+        {splitTrips && (
+          <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
+            Shopped at two stores? Untick what you bought at the other one: it stays in the cart for a second trip.
+          </p>
+        )}
 
         <section className="space-y-2">
-          {lines.map((line) => (
+          {allLines.map((line) => (
             <PurchaseLine
               key={line.item.id}
               line={line}
+              ordered={openOrderOf(line.item)}
+              onCancelOrder={onCancelOrder}
+              inTrip={inTrip(line.item)}
+              onToggleTrip={splitTrips ? () => toggleLater(line.item.id) : null}
               answer={answers[line.item.id] ?? {}}
               total={totalOf(line.item)}
               categoryName={categoryName}
@@ -151,7 +197,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               onRemove={() => toggleCart(cartItems.find((i) => i.id === line.item.id))}
             />
           ))}
-          {lines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
+          {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
         <section className="space-y-2">
@@ -185,6 +231,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
             <span className="text-xs text-[var(--color-text-muted)]">
               {lines.length} item{lines.length === 1 ? '' : 's'} · {parseLocalDate(date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
               {unknown > 0 && ` · ${unknown} without a total`}
+              {leftInCart > 0 && ` · ${leftInCart} stay in the cart`}
             </span>
             <span className="text-lg font-mono font-extrabold text-[var(--color-accent)]">{money(total)}</span>
           </div>
@@ -216,7 +263,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // its questions. Every change goes to the screen's edits at once (that's
 // what Confirm uses) and is also saved to the grocery entry when the field
 // is left, so the other phone sees it.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove }) {
+// `ordered`: the order on the way for this entry (it can't be bought
+// here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
+function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
@@ -250,8 +299,35 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
   const unitPrice = formatUnitPrice(item)
   const needsAnswer = needsPackSize || needsVariant || (expiredStock > 0 && typeof answer.discard !== 'boolean')
 
+  if (ordered) {
+    return (
+      <div className="rounded-2xl border border-amber-400/60 bg-amber-500/10 p-3 space-y-2">
+        <p className="text-sm font-bold text-[var(--color-text)]">{item.name}</p>
+        <p className="text-[11px] text-amber-200 flex items-start gap-1.5">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          Already ordered on {parseLocalDate(ordered.order_date).toLocaleDateString('en-GB')}
+          {ordered.expected_date ? `, expected ${parseLocalDate(ordered.expected_date).toLocaleDateString('en-GB')}` : ''}. It isn't part of this trip, so it isn't recorded twice.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onRemove} className="min-h-9 px-3 rounded-xl border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]">
+            Take out of the cart
+          </button>
+          <button type="button" onClick={() => onCancelOrder(ordered)} className="min-h-9 px-3 rounded-xl border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)]">
+            Cancel the order…
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={cn('rounded-2xl border p-3 space-y-2 bg-[var(--color-surface)]', needsAnswer ? 'border-amber-400/60' : 'border-[var(--color-border)]')}>
+    <div className={cn('rounded-2xl border p-3 space-y-2 bg-[var(--color-surface)]', needsAnswer && inTrip ? 'border-amber-400/60' : 'border-[var(--color-border)]', !inTrip && 'opacity-60')}>
+      {onToggleTrip && (
+        <label className="flex items-center gap-2 text-[11px] font-bold text-[var(--color-text-soft)] cursor-pointer">
+          <input type="checkbox" checked={inTrip} onChange={onToggleTrip} className="w-4 h-4 accent-[var(--color-primary)]" />
+          {inTrip ? 'In this trip' : 'Not in this trip — stays in the cart'}
+        </label>
+      )}
       <div className="flex items-start gap-2">
         <CategoryIcon category={item.category_id} size={16} className="mt-0.5 text-[var(--color-text-muted)]" />
         <div className="flex-1 min-w-0">

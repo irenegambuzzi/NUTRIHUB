@@ -9,14 +9,23 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
 import { normalizeUrl } from '../../lib/orders'
+import { parseNumber } from '../../lib/feedback'
 
 // The order fields, for a new order or an existing one (`initial`).
 // onSubmit(values, ids) resolves to { error }; on failure the form keeps
 // what was typed. `ids` ({ orderId, expenseId }) are made once per form,
 // so saving again after a dropped connection can't make a second order or
 // expense. A store made here is an online one unless changed.
+// `prefill`: starting values for a new order (from "Order online" on the
+// SHOP list: { itemName, shopId, price, paidBy, categoryId, quantity,
+// unit }); `units`: the units the quantity can be given in, which adds
+// the quantity field (orders linked to a HOME item); `linkNote` says what
+// it is linked to.
 export function OrderForm({
   initial,
+  prefill = null,
+  units = null,
+  linkNote = null,
   submitLabel = 'Add order',
   onSubmit,
   onCancel,
@@ -29,16 +38,20 @@ export function OrderForm({
   deleteCategory,
   styleFor,
 }) {
-  const initialMain = initial ? categoryTree(categories).mainOf(initial.category_id) : null
+  const start = initial ? null : prefill
+  const startCategory = initial?.category_id ?? start?.categoryId ?? null
+  const initialMain = startCategory ? categoryTree(categories).mainOf(startCategory) : null
   const [ids] = useState(() => ({ orderId: crypto.randomUUID(), expenseId: crypto.randomUUID() }))
-  const [itemName, setItemName] = useState(initial?.item_name ?? '')
+  const [itemName, setItemName] = useState(initial?.item_name ?? start?.itemName ?? '')
   const [details, setDetails] = useState(initial?.details ?? '')
-  const [shopId, setShopId] = useState(initial?.shop_id ?? '')
+  const [shopId, setShopId] = useState(initial?.shop_id ?? start?.shopId ?? '')
   const [orderDate, setOrderDate] = useState(initial?.order_date ?? localDateString())
-  const [price, setPrice] = useState(initial ? String(initial.price) : '')
-  const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
+  const [price, setPrice] = useState(initial ? String(initial.price) : start?.price > 0 ? String(start.price) : '')
+  const [paidBy, setPaidBy] = useState(initial?.paid_by ?? start?.paidBy ?? 'shared')
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
-  const [subId, setSubId] = useState(initial && initial.category_id !== initialMain?.id ? initial.category_id ?? '' : '')
+  const [subId, setSubId] = useState(startCategory && startCategory !== initialMain?.id ? startCategory : '')
+  const [quantity, setQuantity] = useState(String(initial?.quantity ?? start?.quantity ?? 1))
+  const [unit, setUnit] = useState(initial?.unit ?? start?.unit ?? units?.[0] ?? '')
   const [expectedDate, setExpectedDate] = useState(initial?.expected_date ?? '')
   const [expectedUntil, setExpectedUntil] = useState(initial?.expected_until ?? '')
   const [url, setUrl] = useState(initial?.order_url ?? '')
@@ -60,6 +73,7 @@ export function OrderForm({
     if (expectedUntil && !expectedDate) return 'Add the expected arrival date too, or remove the latest date.'
     if (expectedUntil && expectedUntil < expectedDate) return "The latest date can't be before the expected arrival date."
     if (url.trim() && !normalizeUrl(url)) return 'That link is not a web address (e.g. https://www.vinted.it/…).'
+    if (units && !(parseNumber(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
     return ''
   }
 
@@ -71,7 +85,19 @@ export function OrderForm({
     if (found) return
     setBusy(true)
     const { error: saveError } = await onSubmit(
-      { itemName, details, shopId, orderDate, price: Number(price), paidBy, categoryId: subId || mainId || null, expectedDate, expectedUntil, url },
+      {
+        itemName,
+        details,
+        shopId,
+        orderDate,
+        price: Number(price),
+        paidBy,
+        categoryId: subId || mainId || null,
+        expectedDate,
+        expectedUntil,
+        url,
+        ...(units ? { quantity: parseNumber(quantity), unit } : {}),
+      },
       ids
     )
     setBusy(false)
@@ -105,6 +131,8 @@ export function OrderForm({
       )}
 
       <form onSubmit={submit} data-unsaved={itemName || price || details ? '' : undefined} className="space-y-3">
+        {linkNote && <p className="text-[11px] text-[var(--color-text-soft)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2.5">{linkNote}</p>}
+
         <div>
           <Label>What did you order?</Label>
           <Input placeholder="e.g. Winter jacket" value={itemName} onChange={(e) => setItemName(e.target.value)} aria-label="Item name" required />
@@ -127,6 +155,22 @@ export function OrderForm({
             <Input type="number" inputMode="decimal" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} aria-label="Price" required />
           </div>
         </div>
+
+        {units && (
+          <div>
+            <Label>Quantity ordered</Label>
+            <div className="flex gap-2">
+              <Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} aria-label="Quantity ordered" className="w-24 text-right" />
+              <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit ordered" className="w-auto">
+                {units.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        )}
 
         <ExpenseCategoryPicker value={{ mainId, subId }} onChange={pickCategory} mainCategories={mainCategories} subsOf={subsOf} onManage={() => setManagingCategories(true)} />
 

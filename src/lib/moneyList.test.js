@@ -99,3 +99,27 @@ describe('grouping', () => {
     expect(formatWeekRange('2026-12-28')).toBe('28 Dec – 3 Jan 2027')
   })
 })
+
+describe('shopping trips in the expense list', () => {
+  const list = [
+    { id: 'a', trip_id: 't1', amount: 2 },
+    { id: 'b', trip_id: null, amount: 5 },
+    { id: 'c', trip_id: 't1', amount: 3.3 },
+    { id: 'd', trip_id: 't2', amount: 1 },
+  ]
+  it('puts the expenses of one trip together, where its first one was', async () => {
+    const { bundleTrips } = await import('./moneyList')
+    const parts = bundleTrips(list)
+    expect(parts.map((p) => p.key)).toEqual(['trip:t1', 'b', 'd'])
+    expect(parts[0]).toMatchObject({ tripId: 't1', total: 5.3 })
+    expect(parts[0].items.map((e) => e.id)).toEqual(['a', 'c'])
+    // Every expense is still there exactly once, so totals add up the same.
+    expect(parts.flatMap((p) => p.items ?? [p.entry]).map((e) => e.id).sort()).toEqual(['a', 'b', 'c', 'd'])
+  })
+  it('says the store the trip expenses share, else the trip own store', async () => {
+    const { tripShopId } = await import('./moneyList')
+    expect(tripShopId([{ shop_id: 's1' }, { shop_id: 's1' }], { shop_id: null })).toBe('s1')
+    expect(tripShopId([{ shop_id: 's1' }, { shop_id: null }], { shop_id: 's2' })).toBe('s2')
+    expect(tripShopId([{ shop_id: null }], null)).toBeNull()
+  })
+})

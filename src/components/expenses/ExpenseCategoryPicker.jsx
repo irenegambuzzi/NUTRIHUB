@@ -2,17 +2,18 @@ import { Settings2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Label, Select } from '../ui/Field'
 import { CategoryManager } from './CategoryManager'
+import { CategoryKind } from '../ui/CategoryKind'
 
-// The category of an expense (or order): a main category and, once the
+// The budget category of an expense (or order): a main category and, once the
 // main one has some, a sub-category. `value` is { mainId, subId } ('' for
 // none); `onChange` gets the same; `onManage` opens the category manager.
 export function ExpenseCategoryPicker({ value, onChange, mainCategories, subsOf, onManage }) {
   const { mainId, subId } = value
   return (
     <div>
-      <Label>Category</Label>
+      <Label>Budget category</Label>
       <div className="flex gap-2">
-        <Select value={mainId} onChange={(e) => onChange({ mainId: e.target.value, subId: '' })} className="flex-1" aria-label="Category">
+        <Select value={mainId} onChange={(e) => onChange({ mainId: e.target.value, subId: '' })} className="flex-1" aria-label="Budget category">
           <option value="">Uncategorized</option>
           {mainCategories.map((c) => (
             <option key={c.id} value={c.id}>
@@ -25,7 +26,7 @@ export function ExpenseCategoryPicker({ value, onChange, mainCategories, subsOf,
         </Button>
       </div>
       {mainId && subsOf(mainId).length > 0 && (
-        <Select value={subId} onChange={(e) => onChange({ mainId, subId: e.target.value })} className="mt-2" aria-label="Subcategory">
+        <Select value={subId} onChange={(e) => onChange({ mainId, subId: e.target.value })} className="mt-2" aria-label="Budget subcategory">
           <option value="">No subcategory</option>
           {subsOf(mainId).map((c) => (
             <option key={c.id} value={c.id}>
@@ -34,6 +35,7 @@ export function ExpenseCategoryPicker({ value, onChange, mainCategories, subsOf,
           ))}
         </Select>
       )}
+      <CategoryKind kind="budget" />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { lineTotal } from '../lib/pricing'
 import { useGroceryItems } from './useGroceryItems'
 import { usePantryItems } from './usePantryItems'
 import { useBudget } from './useBudget'
+import { orderStore } from '../lib/stores'
 
 // Reason order for each sort; 'stocked' = in the pantry and fine.
 // Budget planning always uses PRIORITY, whatever the chosen sort.
@@ -20,10 +21,21 @@ const REASON_ORDERS = {
 // total, the totals and budget plan, and the cart. Tapping an item only
 // puts it in the cart; the purchase itself is confirmed separately
 // (ConfirmPurchase).
+//
+// An entry ordered online (an order on the way linked to it, supabase/021)
+// is not "to buy": it is left out of the list, totals and budget, and
+// shown apart (`onTheWay`). `openOrderOf(entry)` gives its order.
 export function useGroceryList() {
   const grocery = useGroceryItems()
-  const { items, toggleCart } = grocery
-  const cartItems = useMemo(() => items.filter((i) => i.in_cart), [items])
+  const { items: allItems, toggleCart } = grocery
+  const { rows: orders } = orderStore.useRows()
+  const openOrders = useMemo(() => new Map(orders.filter((o) => o.status === 'on_the_way' && o.grocery_item_id).map((o) => [o.grocery_item_id, o])), [orders])
+  const openOrderOf = useCallback((g) => openOrders.get(g.id) ?? null, [openOrders])
+  const items = useMemo(() => allItems.filter((i) => !openOrders.has(i.id)), [allItems, openOrders])
+  const onTheWay = useMemo(() => allItems.filter((i) => openOrders.has(i.id)), [allItems, openOrders])
+  // Everything in the cart, an entry ordered meanwhile on the other phone
+  // included: the confirm screen warns about that one.
+  const cartItems = useMemo(() => allItems.filter((i) => i.in_cart), [allItems])
   const { items: pantryItems } = usePantryItems()
   const { groceryBudget, saveGroceryBudget } = useBudget()
 
@@ -106,6 +118,9 @@ export function useGroceryList() {
 
   return {
     ...grocery,
+    items,
+    onTheWay,
+    openOrderOf,
     pantryItems,
     pantryByName,
     pantryFor,

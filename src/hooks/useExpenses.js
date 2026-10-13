@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
+import { showToast } from '../lib/feedback'
 import { updateRows } from '../lib/inventory'
 import { unitPriceFromTotal } from '../lib/pricing'
 import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore, orderStore, shopStore } from '../lib/stores'
@@ -191,3 +192,32 @@ export function setReceiptLineAmount(expense, amount, groceryItem = null, pack =
   )
 }
 
+
+// Several expenses (e.g. old ones, from before stores) get one store, or
+// none. Only their store changes. Undo puts back each one's own store.
+export async function setExpensesShop(ids, shopId) {
+  const result = await attempt(
+    async () => {
+      const before = must(await supabase.from('expenses').select('id, shop_id').in('id', ids))
+      const rows = must(await supabase.from('expenses').update({ shop_id: shopId || null }).in('id', ids).select())
+      allExpenseStores().forEach((s) => s.upsertLocal(rows))
+      return before
+    },
+    { onFail: refreshExpenses }
+  )
+  if (result.error) return result
+  const before = result.data
+  const undo = () =>
+    attempt(
+      async () => {
+        for (const shop of new Set(before.map((e) => e.shop_id ?? null))) {
+          const same = before.filter((e) => (e.shop_id ?? null) === shop).map((e) => e.id)
+          must(await supabase.from('expenses').update({ shop_id: shop }).in('id', same))
+        }
+        await refreshExpenses()
+      },
+      { onFail: refreshExpenses }
+    )
+  showToast({ message: `Store set for ${ids.length} expense${ids.length === 1 ? '' : 's'}`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  return result
+}

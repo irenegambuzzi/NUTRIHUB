@@ -2,26 +2,26 @@ import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, followUp, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
-import { getDurableExpenseCategoryId, getGroceriesCategoryId, syncShoppingForItem, updateRows } from '../lib/inventory'
+import { syncShoppingForItem, updateRows } from '../lib/inventory'
+import { budgetResolver } from '../lib/budgetContext'
 import { newVariantFields } from '../lib/groups'
 import { confirmationPayload } from '../lib/purchase'
 import { money } from '../lib/pricing'
-import { groceryStore, pantryStore, shopStore, tripItemStore, tripStore } from '../lib/stores'
+import { allExpenseStores, groceryStore, pantryStore, shopStore, tripItemStore, tripStore } from '../lib/stores'
 import { shopsAvailable } from '../lib/shops'
 import { refreshStartedStores } from '../lib/tableStore'
 
 // Every list that a confirmation or reopen changes, reloaded afterwards.
 const reloadAll = () => refreshStartedStores()
 
-// The expense category for each line: Groceries, or the matching "Home &
-// Appliances" one for durables.
+// The budget category for each line, from its item category (see
+// lib/budgetMap.js): with no mapping chosen, Groceries, or the matching
+// "Home & Appliances" one for durables, as always. `flowReady`: the
+// database has supabase/021 (the trip's store is saved by the purchase).
 async function expenseCategories(lines) {
-  const groceries = await getGroceriesCategoryId()
-  const byItem = new Map()
-  for (const { item, durable } of lines) {
-    byItem.set(item.id, durable ? await getDurableExpenseCategoryId(item.subcategory_id) : groceries)
-  }
-  return (item) => byItem.get(item.id) ?? null
+  const { ctx, budgetFor } = await budgetResolver()
+  const byItem = new Map(lines.map(({ item }) => [item.id, budgetFor(item)]))
+  return { expenseCategoryFor: (item) => byItem.get(item.id) ?? null, flowReady: ctx.flowReady }
 }
 
 // Puts a confirmed purchase back: stock, history and expenses are undone
@@ -48,18 +48,22 @@ export async function reopenTrip(tripId, note = null) {
 // `patches` ([{ id, patch }]) are the edits made on the confirm screen:
 // saved to the grocery entries first, so the entries and everything the
 // confirmation writes use the same values as `lines` and `totalOf`.
-// `shopId`: the store the purchase was made in (optional), put on the
-// expenses it made once it is saved.
-export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map(), shopId = null }) {
+// `shopId`: the store of the whole trip (optional) and `paidBy` who paid
+// for all of it (null when mixed). With supabase/021 both are saved with
+// the purchase, on the trip and its expenses; before it, the store is put
+// on the expenses once the purchase is saved.
+export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map(), shopId = null, paidBy = null }) {
+  let flowReady = false
   const result = await attempt(
     async () => {
       for (const { id: itemId, patch } of patches) {
         must(await updateRows('grocery_items', itemId, patch))
         groceryStore.patchLocal([itemId], patch)
       }
-      const expenseCategoryFor = await expenseCategories(lines)
+      const categories = await expenseCategories(lines)
+      flowReady = categories.flowReady
       const made = await makeVariants(lines, variantIds)
-      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor, photoIds, variantIds })
+      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor: categories.expenseCategoryFor, photoIds, variantIds, shopId, paidBy })
       try {
         return must(await supabase.rpc('confirm_shopping_trip', { payload }))
       } catch (error) {
@@ -77,7 +81,7 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
     duration: UNDO_FOR,
     action: { label: 'Undo', onClick: () => reopenTrip(id) },
   })
-  afterConfirm(lines, shopId ? { tripId: id, shopId } : null)
+  afterConfirm(lines, shopId && !flowReady ? { tripId: id, shopId } : null)
   return result
 }
 
@@ -146,6 +150,41 @@ function afterConfirm(lines, shop) {
       })
     )
     .catch((error) => console.error(error))
+}
+
+// A whole trip moves to another store (or to none): every expense of the
+// trip and the trip itself. Undo puts each expense's own store back.
+export async function setTripShop(tripId, shopId, { flowReady = true } = {}) {
+  const result = await attempt(
+    async () => {
+      const before = must(await supabase.from('expenses').select('id, shop_id').eq('trip_id', tripId))
+      const rows = must(await supabase.from('expenses').update({ shop_id: shopId || null }).eq('trip_id', tripId).select())
+      if (flowReady) must(await supabase.from('shopping_trips').update({ shop_id: shopId || null }).eq('id', tripId))
+      allExpenseStores().forEach((s) => s.upsertLocal(rows))
+      if (tripStore.isStarted()) tripStore.patchLocal([tripId], { shop_id: shopId || null })
+      return before
+    },
+    { onFail: reloadAll }
+  )
+  if (result.error) return result
+  const before = result.data
+  const undo = () =>
+    attempt(
+      async () => {
+        for (const shop of new Set(before.map((e) => e.shop_id ?? null))) {
+          const ids = before.filter((e) => (e.shop_id ?? null) === shop).map((e) => e.id)
+          must(await supabase.from('expenses').update({ shop_id: shop }).in('id', ids))
+        }
+        if (flowReady) {
+          const common = new Set(before.map((e) => e.shop_id ?? null))
+          must(await supabase.from('shopping_trips').update({ shop_id: common.size === 1 ? [...common][0] : null }).eq('id', tripId))
+        }
+        await reloadAll()
+      },
+      { onFail: reloadAll }
+    )
+  showToast({ message: `Store changed for ${before.length} expense${before.length === 1 ? '' : 's'} of this trip`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  return result
 }
 
 // Deletes only the record of a purchase (Receipts), with Undo: its stock,

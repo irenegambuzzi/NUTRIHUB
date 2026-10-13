@@ -14,6 +14,8 @@ import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
+import { useFlow } from '../../hooks/useFlow'
+import { ShopPicker } from '../expenses/ShopPicker'
 
 function initialState(item, group, prefill) {
   const perPack = Number(item?.quantity_per_pack) || ''
@@ -35,6 +37,7 @@ function initialState(item, group, prefill) {
     price: Number(item?.price) > 0 ? String(item.price) : '',
     price_qty: item?.price_qty ? String(item.price_qty) : '1',
     price_unit: item?.price_unit ?? '',
+    usual_shop_id: item?.usual_shop_id ?? group?.usual_shop_id ?? '',
   }
 }
 
@@ -63,6 +66,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [unitNote, setUnitNote] = useState('')
   const [expiryValid, setExpiryValid] = useState(true)
   const [groupNote, setGroupNote] = useState('')
+  // "Usually bought at" (supabase/021): for items and groups, not variants
+  // (their group's store counts).
+  const flow = useFlow()
+  const showUsualShop = flow.ready && !(form.group_id && !isGroup)
 
   // Until a category is picked, it follows the name's suggestion.
   const changeName = (name) => {
@@ -193,6 +200,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
       ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
       min_stock: roundQuantity(form.min_stock, form.unit),
       notes: form.notes.trim() || null,
+      ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
       ...(parseFloat(form.price) > 0
         ? { price: parseFloat(form.price), price_qty: parseFloat(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
         : { price: null, price_qty: null, price_unit: null }),
@@ -444,6 +452,13 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           />
           <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Used as the estimate when this item goes on the grocery list.</p>
         </div>
+
+        {showUsualShop && (
+          <div>
+            <ShopPicker value={form.usual_shop_id} onChange={(id) => setForm((f) => ({ ...f, usual_shop_id: id }))} label="Usually bought at (optional)" />
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">An online store (e.g. Amazon) means you usually order it: on the SHOP list "Order online" comes first.</p>
+          </div>
+        )}
 
         <div>
           <Label>Notes</Label>

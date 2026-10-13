@@ -1,0 +1,89 @@
+import { describe, expect, it } from 'vitest'
+import { budgetCategoryFor, defaultBudgetCategory, effectiveBudget, pastPurchaseChanges } from './budgetMap'
+import { pickDurableCategory } from './inventory'
+
+const expenseCategories = [
+  { id: 'groc', name: 'Groceries', parent_id: null },
+  { id: 'home', name: 'Home & Appliances', parent_id: null },
+  { id: 'kitchen', name: 'Kitchen Appliances', parent_id: 'home' },
+  { id: 'pets', name: 'Pets', parent_id: null },
+  { id: 'pets-food', name: 'Pet food', parent_id: 'pets' },
+  { id: 'house', name: 'Home', parent_id: null },
+]
+const inventoryCategories = [
+  { id: 'pet', name: 'Pet Supplies', parent_id: null },
+  { id: 'pet:food', name: 'Pet Food', parent_id: 'pet' },
+  { id: 'dairy', name: 'Dairy', parent_id: null },
+  { id: 'appliances', name: 'Home & Appliances', parent_id: null },
+  { id: 'appliances:kitchen', name: 'Kitchen Appliances', parent_id: 'appliances' },
+  { id: 'appliances:other', name: 'Other appliances', parent_id: 'appliances' },
+  { id: 'cleaning', name: 'Cleaning Supplies', parent_id: null },
+]
+const ctx = { expenseCategories, inventoryCategories, mapRows: [] }
+
+describe('the default: exactly what the app did before any mapping', () => {
+  it('books everything that is not an appliance under Groceries', () => {
+    for (const item of [{ category_id: 'pet', subcategory_id: 'pet:food' }, { category_id: 'dairy' }, { category_id: 'cleaning' }, { category_id: null }]) {
+      expect(budgetCategoryFor(item, ctx)).toBe('groc')
+    }
+  })
+  it('books an appliance under its Home & Appliances sub-category, else Home & Appliances', () => {
+    expect(budgetCategoryFor({ category_id: 'appliances', subcategory_id: 'appliances:kitchen' }, ctx)).toBe('kitchen')
+    expect(budgetCategoryFor({ category_id: 'appliances', subcategory_id: 'appliances:other' }, ctx)).toBe('home')
+    expect(budgetCategoryFor({ category_id: 'appliances', subcategory_id: null }, ctx)).toBe('home')
+  })
+  it('picks the appliance category from the same rows the old database lookup used', () => {
+    const rows = expenseCategories.filter((c) => ['Home & Appliances', 'Kitchen Appliances'].includes(c.name))
+    expect(pickDurableCategory(rows, 'Kitchen Appliances')).toBe(defaultBudgetCategory({ category_id: 'appliances', subcategory_id: 'appliances:kitchen' }, ctx))
+  })
+  it('without Groceries, books without a category (as before); without Home & Appliances, refuses an appliance (as before)', () => {
+    const none = { ...ctx, expenseCategories: expenseCategories.filter((c) => c.name !== 'Groceries' && c.parent_id !== 'home' && c.id !== 'home') }
+    expect(budgetCategoryFor({ category_id: 'dairy' }, none)).toBeNull()
+    expect(() => budgetCategoryFor({ category_id: 'appliances' }, none)).toThrow(/Home & Appliances/)
+  })
+})
+
+describe('a mapping chosen by hand', () => {
+  const mapRows = [
+    { id: 'pet', expense_category_id: 'pets' },
+    { id: 'cleaning', expense_category_id: 'house' },
+  ]
+  it('books the item category, and its sub-categories, under the chosen budget category', () => {
+    expect(budgetCategoryFor({ category_id: 'pet', subcategory_id: 'pet:food' }, { ...ctx, mapRows })).toBe('pets')
+    expect(budgetCategoryFor({ category_id: 'cleaning' }, { ...ctx, mapRows })).toBe('house')
+    expect(budgetCategoryFor({ category_id: 'dairy' }, { ...ctx, mapRows })).toBe('groc')
+  })
+  it('a sub-category choice wins over its main category', () => {
+    const rows = [...mapRows, { id: 'pet:food', expense_category_id: 'pets-food' }]
+    expect(budgetCategoryFor({ category_id: 'pet', subcategory_id: 'pet:food' }, { ...ctx, mapRows: rows })).toBe('pets-food')
+  })
+  it('a choice whose budget category was deleted falls back to the default', () => {
+    expect(budgetCategoryFor({ category_id: 'pet' }, { ...ctx, mapRows: [{ id: 'pet', expense_category_id: 'gone' }] })).toBe('groc')
+  })
+  it('says where each category is booked, and why', () => {
+    const rows = [...mapRows]
+    expect(effectiveBudget(inventoryCategories[0], { ...ctx, mapRows: rows })).toEqual({ target: 'pets', source: 'own' })
+    expect(effectiveBudget(inventoryCategories[1], { ...ctx, mapRows: rows })).toEqual({ target: 'pets', source: 'main' })
+    expect(effectiveBudget(inventoryCategories[2], { ...ctx, mapRows: rows })).toEqual({ target: 'groc', source: 'default' })
+    expect(effectiveBudget(inventoryCategories[4], { ...ctx, mapRows: rows })).toEqual({ target: 'kitchen', source: 'default' })
+  })
+})
+
+describe('applying the mapping to past purchases', () => {
+  const expenses = [
+    { id: 'e1', category_id: 'groc', amount: 30 },
+    { id: 'e2', category_id: 'groc', amount: 12.5 },
+    { id: 'e3', category_id: 'groc', amount: 4 },
+    { id: 'e4', category_id: 'groc', amount: 99 }, // typed by hand, not from a purchase
+    { id: 'e5', category_id: 'pets', amount: 8 }, // already right
+  ]
+  const items = { e1: { category_id: 'pet' }, e2: { category_id: 'pet', subcategory_id: 'pet:food' }, e3: { category_id: 'dairy' }, e5: { category_id: 'pet' } }
+  it('lists only purchases whose category would change, grouped from → to', () => {
+    const { changes, summary } = pastPurchaseChanges(expenses, (id) => items[id] ?? null, { ...ctx, mapRows: [{ id: 'pet', expense_category_id: 'pets' }] })
+    expect(changes.map((c) => c.expense.id)).toEqual(['e1', 'e2'])
+    expect(summary).toEqual([{ from: 'groc', to: 'pets', count: 2, total: 42.5 }])
+  })
+  it('with the default mapping changes nothing that was booked as before', () => {
+    expect(pastPurchaseChanges(expenses.slice(0, 4), (id) => items[id] ?? null, ctx).changes).toEqual([])
+  })
+})

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Layers, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History } from 'lucide-react'
+import { Plus, Layers, Boxes, AlertTriangle, PackageX, CalendarClock, CalendarX, ShoppingCart, Download, History, Wallet } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Select } from '../components/ui/Field'
@@ -11,6 +11,8 @@ import { GroupTile } from '../components/inventory/GroupTile'
 import { StatTile } from '../components/inventory/StatTile'
 import { HistoryView } from '../components/inventory/HistoryView'
 import { DataView } from '../components/inventory/DataView'
+import { BudgetMappingView } from '../components/inventory/BudgetMappingView'
+import { WhereToRecord } from '../components/ui/WhereToRecord'
 import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
 import { SORTS, matchesExpiryDeep, matchesStatus, searchRank } from '../lib/pantryFilters'
@@ -199,6 +201,8 @@ export function PantryPage() {
         </button>
       )}
 
+      <WhereToRecord />
+
       {expiryAlerts.length > 0 && (
         <Card className="space-y-2">
           <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Expiry reminders</p>
@@ -216,17 +220,18 @@ export function PantryPage() {
         </Card>
       )}
 
-      <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 w-fit text-xs font-bold">
+      <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 w-fit max-w-full overflow-x-auto text-xs font-bold">
         {[
           ['items', 'Items', Boxes],
           ['history', 'History', History],
+          ['budget', 'Categories', Wallet],
           ['data', 'Import / Export', Download],
         ].map(([key, label, Icon]) => (
           <button
             key={key}
             onClick={() => setView(key)}
             className={cn(
-              'px-3 py-1.5 rounded-full transition-all duration-200 flex items-center gap-1.5',
+              'px-3 py-1.5 rounded-full transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap shrink-0',
               view === key ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)]'
             )}
           >
@@ -347,6 +352,8 @@ export function PantryPage() {
       )}
 
       {view === 'history' && <HistoryView />}
+
+      {view === 'budget' && <BudgetMappingView parents={categories.filter((c) => c.type === 'parent')} subsByParent={subsByParent} />}
 
       {view === 'data' && <DataView items={items} categories={categories} categoryName={categoryName} importItems={importItems} />}
 

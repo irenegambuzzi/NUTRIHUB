@@ -173,3 +173,10 @@ export function expensePatchForOrder(before, after, shopsAvailable = true) {
   if (shopsAvailable && (before.shop_id ?? null) !== (after.shop_id ?? null)) patch.shop_id = after.shop_id ?? null
   return patch
 }
+
+// The units an order for a SHOP list entry can be counted in: the entry's
+// own unit, its HOME item's purchase unit and its stock unit.
+export function orderUnits(entry, pantry) {
+  const purchase = pantry?.packaging_unit && Number(pantry.quantity_per_pack) > 0 ? pantry.packaging_unit : null
+  return [...new Set([entry.unit, purchase, pantry?.unit].filter(Boolean))]
+}

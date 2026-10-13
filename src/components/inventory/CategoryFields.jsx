@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Wand2 } from 'lucide-react'
 import { Input, Label, Select } from '../ui/Field'
+import { CategoryKind } from '../ui/CategoryKind'
 
 const NEW = '__new__'
 
@@ -30,7 +31,7 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          {labels && <Label>Category</Label>}
+          {labels && <Label>Item category</Label>}
           <Select
             value={adding === 'category' ? NEW : categoryId}
             onChange={(e) => {
@@ -38,7 +39,7 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
               setAdding(null)
               onChange({ categoryId: e.target.value, subcategoryId: '' })
             }}
-            aria-label="Category"
+            aria-label="Item category"
             aria-invalid={Boolean(error)}
           >
             <option value="" disabled>
@@ -100,6 +101,8 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
           </button>
         </div>
       )}
+
+      {labels && <CategoryKind kind="item" />}
 
       {suggested && !error && (
         <p className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5">

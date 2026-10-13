@@ -1,4 +1,6 @@
-import { Pencil, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronDown, Pencil, ShoppingCart, Store, Trash2 } from 'lucide-react'
+import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ShopTag } from '../ui/ShopIcon'
 import { parseLocalDate } from '../../lib/week'
@@ -73,5 +75,45 @@ export function IncomeRow({ entry, names, onEdit, onDelete }) {
         </>
       }
     />
+  )
+}
+
+// The expenses of one shopping trip inside a sorted group: one line
+// ("Conad · 16/10 · 3 items"), opened to see and edit each expense, with
+// the store changeable for the whole trip.
+export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore }) {
+  const [open, setOpen] = useState(false)
+  const date = trip?.trip_date ?? part.items[0].expense_date
+  const payers = [...new Set(part.items.map((e) => paidByLabel(e.paid_by)))]
+  return (
+    <div className="border-t first:border-t-0 border-[var(--color-border)]">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex justify-between items-center gap-2 py-1.5 text-left">
+        <span className="min-w-0">
+          <span className="flex items-center gap-1.5 text-[var(--color-text)] min-w-0">
+            <ShoppingCart size={11} className="shrink-0 text-[var(--color-primary)]" />
+            <span className="truncate">
+              {shop?.name ?? 'Shopping trip'} · {dateLabel(date).slice(0, 5)} · {part.items.length} items
+            </span>
+          </span>
+          <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
+            {dateLabel(date)} · {payers.join(', ')}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span className="font-mono text-[var(--color-text-soft)]">€{part.total.toFixed(2)}</span>
+          <ChevronDown size={13} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
+        </span>
+      </button>
+      {open && (
+        <div className="pl-2 mb-1.5 border-l-2 border-[var(--color-border)]">
+          {part.items.map(renderEntry)}
+          {trip && onChangeTripStore && (
+            <button type="button" onClick={() => onChangeTripStore(trip)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
+              <Store size={12} /> Change the store of the whole trip
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

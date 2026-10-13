@@ -105,3 +105,35 @@ export function categoryTree(categories) {
     },
   }
 }
+
+// A list of expenses with the ones from the same shopping trip together:
+// [{ key, entry }] for an expense on its own, [{ key, tripId, items,
+// total }] for two or more expenses of one trip, placed where the trip's
+// first expense was (so a newest-first list stays newest first).
+export function bundleTrips(entries) {
+  const parts = []
+  const byTrip = new Map()
+  for (const e of entries) {
+    if (!e.trip_id) {
+      parts.push({ key: e.id, entry: e })
+      continue
+    }
+    let part = byTrip.get(e.trip_id)
+    if (!part) {
+      part = { key: `trip:${e.trip_id}`, tripId: e.trip_id, items: [], total: 0 }
+      byTrip.set(e.trip_id, part)
+      parts.push(part)
+    }
+    part.items.push(e)
+    part.total = Math.round((part.total + amountOf(e)) * 100) / 100
+  }
+  return parts.map((p) => (p.items?.length === 1 ? { key: p.items[0].id, entry: p.items[0] } : p))
+}
+
+// The store of a trip as its expenses show it: the one they all share, or
+// the trip's own (supabase/021) when they differ or have none.
+export function tripShopId(items, trip) {
+  const ids = new Set(items.map((e) => e.shop_id ?? null))
+  if (ids.size === 1 && [...ids][0]) return [...ids][0]
+  return trip?.shop_id ?? null
+}

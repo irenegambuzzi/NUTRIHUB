@@ -168,25 +168,12 @@ export function toBaseQuantity(item, quantity, rawUnit) {
   return factor === null ? null : qty * factor
 }
 
-// The Groceries expense category's id, or null if it's missing (the
-// expense is then saved without a category).
-export async function getGroceriesCategoryId() {
-  return must(await supabase.from('expense_categories').select('id').eq('name', 'Groceries').maybeSingle())?.id ?? null
-}
-
-// Expense category for a durable purchase: the "Home & Appliances"
-// sub-category named like the item's sub-category if there is one, else
-// "Home & Appliances" itself. The app never creates it (two phones
-// checking off at once could race); supabase/008_durable_category.sql does.
-export async function getDurableExpenseCategoryId(subcategoryId) {
-  const subName = subcategoryId
-    ? must(await supabase.from('inventory_categories').select('name').eq('id', subcategoryId).maybeSingle())?.name
-    : null
-  const names = [DURABLE_EXPENSE_CATEGORY, subName].filter(Boolean)
-  const rows = must(await supabase.from('expense_categories').select('id, name, parent_id').in('name', names))
-  return pickDurableCategory(rows, subName)
-}
-
+// Expense category for a durable purchase, from the expense categories
+// named "Home & Appliances" and like the item's sub-category: that
+// sub-category of Home & Appliances if there is one, else Home &
+// Appliances itself. The app never creates it (two phones checking off at
+// once could race); supabase/008_durable_category.sql does. (Used by the
+// default budget mapping, lib/budgetMap.js.)
 export function pickDurableCategory(rows, subName) {
   const parent = rows.find((c) => c.name === DURABLE_EXPENSE_CATEGORY && !c.parent_id)
   if (!parent) {
@@ -250,12 +237,12 @@ export function stockLogEntries(before, after, parts) {
   return entries.map(({ change, stock: s, reason }) => ({ change, newStock: round(Math.max(0, s + offset)), reason }))
 }
 
-// Columns added by supabase/006_backfill_inventory_data.sql and
-// 007_schema_sync.sql. Until those migrations have run, writes retry
-// without them instead of failing.
+// Columns added by supabase/006_backfill_inventory_data.sql,
+// 007_schema_sync.sql and (usual_shop_id) 021_connected_flow.sql. Until
+// those migrations have run, writes retry without them instead of failing.
 const OPTIONAL_COLUMNS = {
   grocery_items: ['payer', 'subcategory_id', 'price_qty', 'price_unit'],
-  pantry_items: ['price', 'price_qty', 'price_unit', 'payer', 'last_purchased_at'],
+  pantry_items: ['price', 'price_qty', 'price_unit', 'payer', 'last_purchased_at', 'usual_shop_id'],
 }
 
 const missingOptional = (table, error) => Boolean(error) && OPTIONAL_COLUMNS[table].some((c) => error.message?.includes(c))
@@ -304,7 +291,10 @@ export async function syncShoppingForItem(item) {
   )
 
   if (emptyGroup || !restockReason(item)) {
-    const autoIds = open.filter((g) => g.auto_generated).map((g) => g.id)
+    // An entry ordered online and on the way stays: it leaves the list
+    // when the order arrives (or goes back to "to buy" if cancelled).
+    const ordered = await orderedEntryIds(open.map((g) => g.id))
+    const autoIds = open.filter((g) => g.auto_generated && !ordered.has(g.id)).map((g) => g.id)
     if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
   }
@@ -328,11 +318,21 @@ export async function syncShoppingForItem(item) {
   must(result)
 }
 
+// The SHOP list entries among `ids` that have an order on the way
+// (supabase/021); none before that update.
+async function orderedEntryIds(ids) {
+  if (!ids.length) return new Set()
+  const { data, error } = await supabase.from('orders').select('grocery_item_id').in('grocery_item_id', ids).eq('status', 'on_the_way')
+  if (error) return new Set()
+  return new Set(data.map((o) => o.grocery_item_id))
+}
+
 // A variant never goes on the list for itself: its own automatic entries
 // are removed and the group is checked instead.
 async function syncGroupOf(variant) {
   const own = must(await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', variant.id).eq('completed', false))
-  const autoIds = own.filter((g) => g.auto_generated).map((g) => g.id)
+  const ordered = await orderedEntryIds(own.map((g) => g.id))
+  const autoIds = own.filter((g) => g.auto_generated && !ordered.has(g.id)).map((g) => g.id)
   if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
   const group = must(await supabase.from('pantry_items').select('*').eq('id', variant.group_id).maybeSingle())
   if (group) await syncShoppingForItem(normalizeItem(group))

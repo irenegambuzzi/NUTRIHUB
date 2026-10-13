@@ -75,12 +75,16 @@ export function purchaseLine(item, pantryItems, answer = {}) {
 // (null when it can't be worked out: no expense then); expenseCategoryFor
 // (item) the expense category id.
 // `variantIds`: the ids of the new variants made for group lines (item id → id).
-export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map() }) {
+// `shopId` / `paidBy`: the trip's store and payer (supabase/021; an older
+// database ignores them).
+export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null }) {
   return {
     id,
     trip_date: date,
     at,
     photo_ids: photoIds,
+    shop_id: shopId || null,
+    paid_by: paidBy || null,
     items: lines.map(({ item, target, durable, add, expired }) => {
       const answer = answers[item.id] ?? {}
       const row = {

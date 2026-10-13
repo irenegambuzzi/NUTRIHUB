@@ -25,11 +25,14 @@ const chipClasses = 'min-h-10 pl-3 pr-2 rounded-full inline-flex items-center ga
 //   categoryOf     – (categoryId) => its main category ({ id, name }) or null
 //   renderDefault  – (entries) => the list as it was before sorting
 //   renderEntry    – (entry) => one row, for the sorted lists
+//   renderEntries  – (entries) => the rows of a sorted group (optional; e.g.
+//                    a shopping trip's expenses as one row)
 //   shopById       – expenses only: the stores by id, which adds the
 //                    "By store" view and its filter (null = no stores
 //                    here, as for income)
 //   shopsMissing   – stores aren't in the database yet (supabase/019)
-export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, plural, renderDefault, renderEntry, shopById = null, shopsMissing = false }) {
+export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, plural, renderDefault, renderEntry, renderEntries = null, shopById = null, shopsMissing = false }) {
+  const rowsOf = (items) => (renderEntries ? renderEntries(items) : items.map(renderEntry))
   const [bucket, setBucket] = useState(null)
   const [category, setCategory] = useState(null)
   const [store, setStore] = useState(null)
@@ -188,11 +191,11 @@ export function MoneyExplorer({ entries, dateOf, categoryOf, period, offset, sco
                       <span>{w.label}</span>
                       <span className="font-mono">€{w.total.toFixed(2)}</span>
                     </p>
-                    <div className="px-3 pb-1">{w.items.map(renderEntry)}</div>
+                    <div className="px-3 pb-1">{rowsOf(w.items)}</div>
                   </div>
                 ))
               ) : (
-                <div className="px-3 pb-1 border-t border-[var(--color-border)]">{g.items.map(renderEntry)}</div>
+                <div className="px-3 pb-1 border-t border-[var(--color-border)]">{rowsOf(g.items)}</div>
               )}
             </div>
           ))

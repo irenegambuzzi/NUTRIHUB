@@ -237,6 +237,17 @@ export const orderStore = createTableStore({
   compare: newestFirst('order_date'),
 })
 
+// Item category → budget category chosen by hand (supabase/021). Until it
+// has been run the table is missing: purchases are booked as before and
+// the new features say they need the update.
+export const budgetMapStore = createTableStore({
+  name: 'category_budget_map',
+  table: 'category_budget_map',
+  persist: 'category_budget_map',
+  optional: true,
+  compare: (a, b) => a.id.localeCompare(b.id),
+})
+
 // Every expense store in use, so a write can update all of them.
 export const allExpenseStores = () =>
   [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore, shopUsageStore, tripExpenseStore].filter((s) => s.isStarted())

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Minus, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Check, Globe, Minus, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Input } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { PriceFields } from '../inventory/PriceFields'
@@ -12,7 +12,10 @@ import { formatPurchaseQuantity, quantityStep, roundQuantity, stepQuantity } fro
 import { RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 import { formatStockUnitPrice, formatUnitPrice, lineTotal, money, priceUnitOptions } from '../../lib/pricing'
 
-export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer }) {
+// `onOrderOnline` (supabase/021) adds "Order online"; it is the main
+// action when the item's usual store is online (`orderFirst`,
+// `usualShop`).
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onOrderOnline = null, orderFirst = false, usualShop = null }) {
   const c = inventoryCategoryColor(item.category_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
@@ -206,6 +209,20 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
       <div className="mt-1.5" title={`Paid by ${payerLabel(item.payer)}`}>
         <PayerPicker value={item.payer || 'shared'} onChange={(value) => onUpdatePayer(item, value)} size="sm" />
       </div>
+
+      {onOrderOnline && !item.in_cart && (
+        <button
+          type="button"
+          onClick={onOrderOnline}
+          title={usualShop ? `Usually bought at ${usualShop.name}` : 'Order it online: the expense is added now, the stock when it arrives'}
+          className={cn(
+            'mt-2 w-full min-h-9 px-2 rounded-xl text-[11px] font-bold inline-flex items-center justify-center gap-1.5',
+            orderFirst ? 'bg-[var(--color-accent)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-muted)]'
+          )}
+        >
+          <Globe size={12} /> {orderFirst && usualShop ? `Order at ${usualShop.name}` : 'Order online'}
+        </button>
+      )}
     </div>
   )
 }

@@ -94,9 +94,10 @@ function fakeDb(tables) {
   client.supabase = {
     from: (table) => {
       const filters = []
-      const result = () => ({ data: tables[table].filter((r) => filters.every(([k, v]) => r[k] === v)), error: null })
+      const result = () => ({ data: (tables[table] ?? []).filter((r) => filters.every(([k, v]) => (Array.isArray(v) ? v.includes(r[k]) : r[k] === v))), error: null })
       const q = {
         eq: (k, v) => (filters.push([k, v]), q),
+        in: (k, v) => (filters.push([k, v]), q),
         select: () => q,
         maybeSingle: () => Promise.resolve({ data: result().data[0] ?? null, error: null }),
         then: (resolve, reject) => Promise.resolve(result()).then(resolve, reject),
@@ -140,6 +141,30 @@ describe('the shopping list works at group level', () => {
     })
     await syncShoppingForItem(chips)
     expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['auto'] }])
+  })
+
+  it('an automatic line ordered online stays when the item is fine again (it leaves when the order arrives)', async () => {
+    const full = [chips, { ...lays, current_stock: 20 }]
+    const writes = fakeDb({
+      pantry_items: full,
+      grocery_items: [
+        { id: 'auto', pantry_item_id: 'g', auto_generated: true, completed: false },
+        { id: 'ordered', pantry_item_id: 'g', auto_generated: true, completed: false },
+      ],
+      orders: [{ id: 'o', grocery_item_id: 'ordered', status: 'on_the_way' }],
+    })
+    await syncShoppingForItem(chips)
+    expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['auto'] }])
+  })
+
+  it('a low item with a line on the way gets no second line', async () => {
+    const writes = fakeDb({
+      pantry_items: [chips, lays, pringles],
+      grocery_items: [{ id: 'ordered', pantry_item_id: 'g', auto_generated: true, completed: false }],
+      orders: [{ id: 'o', grocery_item_id: 'ordered', status: 'on_the_way' }],
+    })
+    await syncShoppingForItem(chips)
+    expect(writes).toEqual([])
   })
 
   it('a group with no variants yet is not "out of stock"', async () => {
