@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { supabase } from './supabaseClient'
 import { isNetworkError } from './connection'
+import { dismissToastsByKey } from './feedback'
 
 // Login with the household's one shared Supabase account. The email is
 // fixed (not a real address); only the password is asked for.
@@ -16,13 +17,16 @@ export const MIN_PASSWORD_LENGTH = 12
 const UNLOCKED_KEY = 'nutrihub-unlocked'
 const PREFIX = 'nutrihub-'
 
-let state = { status: 'checking', session: null } // checking | in | out
+export const SESSION_ENDED = 'Your session has ended. Log in again.'
+
+let state = { status: 'checking', session: null, notice: null } // checking | in | out; notice: why the login shows
 const listeners = new Set()
 const set = (next) => {
   state = next
   listeners.forEach((l) => l())
 }
 let onSignIn = () => {}
+let loggingOut = false
 
 const storage = {
   get: (k) => {
@@ -49,6 +53,12 @@ export const useAuth = () =>
     () => state
   )
 
+// Opens the login screen (without logging out: nothing kept on the device
+// is deleted), e.g. once the session can't be renewed any more.
+export function showLogin(notice = SESSION_ENDED) {
+  set({ status: 'out', session: null, notice })
+}
+
 // Whether requests go out logged in (offline changes wait until they do).
 export const isSignedIn = () => state.status === 'in' && Boolean(state.session)
 
@@ -71,14 +81,16 @@ export async function startAuth() {
   supabase.auth.onAuthStateChange((event, session) => {
     if (session) {
       const wasIn = isSignedIn()
-      set({ status: 'in', session })
+      set({ status: 'in', session, notice: null })
+      dismissToastsByKey('session')
       storage.set(UNLOCKED_KEY, '1')
       // Never call Supabase from inside this callback: it runs while the
       // session is locked, and requests made here would wait on that lock
       // (supabase-js docs). Start them just after it instead.
       if (!wasIn) setTimeout(onSignIn, 0)
     } else if (event === 'SIGNED_OUT') {
-      set({ status: 'out', session: null })
+      // Signed out by the server (the session can't be renewed): say so.
+      set({ status: 'out', session: null, notice: state.status === 'in' && !loggingOut ? SESSION_ENDED : null })
     }
   })
 }
@@ -149,6 +161,7 @@ export function clearLocalData() {
 // Logs this device out (the other phone stays logged in), deletes the
 // app's data kept on it, and reloads into the login screen.
 export async function logOut() {
+  loggingOut = true
   try {
     await supabase.auth.signOut({ scope: 'local' })
   } catch {

@@ -9,9 +9,10 @@ import { normName } from './grocery'
 const MEASURE_UNITS = ['gr', 'kg', 'ml', 'L']
 
 // The pantry item a grocery entry restocks: its linked item, else the one
-// with the same name.
+// with the same name. A name never matches a group (stock is never added
+// to a group itself, only to its variants): that makes a normal item.
 export function pantryItemFor(item, pantryItems) {
-  return pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => normName(p.name) === normName(item.name)) ?? null
+  return pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => !p.is_group && normName(p.name) === normName(item.name)) ?? null
 }
 
 // The entry's quantity in the pantry item's base unit, or null when the

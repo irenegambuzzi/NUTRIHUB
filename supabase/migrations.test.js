@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 021 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021')).sort()
+  // 015 (the login lock) and 016 to 022 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -971,6 +971,101 @@ describe('021: one flow for HOME, SHOP, Orders and MONEY', () => {
         await db.query(`delete from expense_categories where id = $1`, [pets])
         expect((await row(`select count(*)::int as n from category_budget_map`)).n).toBe(0)
       })
+    })
+  })
+})
+
+describe('022: a group never receives stock directly', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const read = (file) => fs.readFileSync(path.join(dir, file), 'utf8')
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  const row = async (sql, params) => (await rows(sql, params))[0]
+  async function asMember(fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await db.exec('set role authenticated')
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const stockOf = async (id) => Number((await row(`select current_stock from pantry_items where id = $1`, [id])).current_stock)
+  let groceries
+
+  // A group with one variant, and an unlinked SHOP entry with the group's name, bought on a trip.
+  async function buyUnlinked(name, tripId) {
+    return asMember(async () => {
+      groceries ??= (await row(`select id from expense_categories where name = 'Groceries'`)).id
+      const group = (await row(`insert into pantry_items (name, unit, is_group, category_id) values ($1, 'pcs', true, 'misc') returning id`, [name])).id
+      const variant = (await row(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ($1, 'pcs', 2, $2, 'misc') returning id`, [`${name} paprika`, group])).id
+      const entry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, in_cart, category_id) values ($1, 3, 'pcs', 4, 1, 'pcs', true, 'misc') returning id`, [name])).id
+      await db.query(`select * from confirm_shopping_trip($1)`, [{ id: tripId, trip_date: '2026-10-16', items: [{ grocery_item_id: entry, line_total: 12, expense_category_id: groceries, add: 3 }] }])
+      return { group, variant, entry }
+    })
+  }
+
+  it('shows the old behaviour first: 021 added the stock to the group itself', async () => {
+    const { group } = await buyUnlinked('Chips', '44444444-4444-4444-4444-444444444444')
+    expect(await stockOf(group)).toBe(3)
+  })
+
+  let before
+  const snapshot = async () => ({
+    expenses: await rows(`select id, amount::float as amount, category_id, description, paid_by, expense_date::text as date, shop_id, trip_id from expenses order by id`),
+    orders: await rows(`select id, item_name, price::float as price, status, expense_id from orders order by id`),
+    stock: await rows(`select id, current_stock::float as stock from pantry_items order by id`),
+  })
+
+  it('changes no existing expense, order or stock, and is safe to re-run', async () => {
+    before = await snapshot()
+    await db.exec(read('022_groups_never_get_stock.sql'))
+    await db.exec(read('022_groups_never_get_stock.sql'))
+    expect(await snapshot()).toEqual(before)
+  })
+
+  it('ends with a check that says nothing changed, and the function is still closed to anon', async () => {
+    const result = (await db.exec(read('022_groups_never_get_stock.sql'))).at(-1).rows[0]
+    expect(result).toMatchObject({
+      expenses_before: before.expenses.length,
+      expenses_now: before.expenses.length,
+      expenses_changed: 0,
+      expenses_lost: 0,
+      orders_before: before.orders.length,
+      orders_now: before.orders.length,
+      orders_changed: 0,
+      items_before: before.stock.length,
+      items_now: before.stock.length,
+      stock_changed: 0,
+      open_to_anon: 'none',
+      skips_groups: true,
+    })
+    expect(Number(result.expenses_total_before)).toBe(Number(result.expenses_total_now))
+    expect(Number(result.orders_total_before)).toBe(Number(result.orders_total_now))
+    const lock = await db.query(read('015_lock_to_household.sql').split('-- ── 5. Check')[1].replace(/^[^\n]*\n/, ''))
+    expect(lock.rows[0]).toMatchObject({ tables_open_to_anon: 'none', functions_open_to_anon: 'none', tables_without_rls: 'none' })
+  })
+
+  it('buys an item named like a group into a normal item, never the group or its variants', async () => {
+    const { group, variant } = await buyUnlinked('Pasta', '55555555-5555-5555-5555-555555555555')
+    expect(await stockOf(group)).toBe(0)
+    expect(await stockOf(variant)).toBe(2)
+    const made = await rows(`select id, current_stock::float as stock, is_group, group_id from pantry_items where lower(name) = 'pasta'`)
+    expect(made.filter((p) => !p.is_group)).toEqual([{ id: expect.any(String), stock: 3, is_group: false, group_id: null }])
+    // Bought again: the normal item is restocked, no second one is made.
+    await asMember(async () => {
+      const entry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, in_cart, category_id) values ('Pasta', 1, 'pcs', 2, 1, 'pcs', true, 'misc') returning id`)).id
+      await db.query(`select * from confirm_shopping_trip($1)`, [{ id: '66666666-6666-6666-6666-666666666666', trip_date: '2026-10-17', items: [{ grocery_item_id: entry, line_total: 2, expense_category_id: groceries, add: 1 }] }])
+    })
+    expect((await rows(`select current_stock::float as stock from pantry_items where lower(name) = 'pasta' and not is_group`)).map((r) => r.stock)).toEqual([4])
+    expect(await stockOf(group)).toBe(0)
+  })
+
+  it('still adds to an item linked to a normal pantry item, as before', async () => {
+    await asMember(async () => {
+      const item = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Rice', 'pcs', 1, 'misc') returning id`)).id
+      const entry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id) values ('Rice', 2, 'pcs', 2, 1, 'pcs', $1, true, 'misc') returning id`, [item])).id
+      await db.query(`select * from confirm_shopping_trip($1)`, [{ id: '77777777-7777-7777-7777-777777777777', trip_date: '2026-10-17', items: [{ grocery_item_id: entry, line_total: 4, expense_category_id: groceries, pantry_item_id: item, add: 2 }] }])
+      expect(await stockOf(item)).toBe(3)
     })
   })
 })

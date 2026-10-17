@@ -7,12 +7,18 @@ import { startOfflineSync } from './lib/offlineActions'
 import { startAppUpdates } from './pwa'
 import { isSignedIn, startAuth, whenSignedIn } from './lib/auth'
 import { flush, setFlushGate } from './lib/offlineQueue'
+import { startSession, whenRenewed } from './lib/session'
+import { refreshStartedStores } from './lib/tableStore'
 
 // Login first: offline changes are sent only with a session, as soon as
 // one starts (and changes made offline last time, if any).
 setFlushGate(isSignedIn)
 whenSignedIn(() => flush())
 startAuth()
+// Renews the login when the page comes back or the device wakes, and
+// reloads what was missed meanwhile.
+startSession()
+whenRenewed(refreshStartedStores)
 startOfflineSync()
 // Watches for new versions of the app.
 startAppUpdates()

@@ -40,7 +40,8 @@ export function useGroceryList() {
   const { groceryBudget, saveGroceryBudget } = useBudget()
 
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
-  const pantryByName = useMemo(() => new Map(pantryItems.map((p) => [normName(p.name), p])), [pantryItems])
+  // By name, never a group (see pantryItemFor): only a link by id points to one.
+  const pantryByName = useMemo(() => new Map(pantryItems.filter((p) => !p.is_group).map((p) => [normName(p.name), p])), [pantryItems])
 
   const pantryFor = useCallback((g) => pantryById.get(g.pantry_item_id) || pantryByName.get(normName(g.name)), [pantryById, pantryByName])
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, Globe, Minus, Pencil, Plus, Trash2 } from 'lucide-react'
-import { Input } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker } from './shared'
@@ -8,7 +9,7 @@ import { payerLabel } from '../../lib/grocery'
 import { GROCERY_LIST_LABELS, listOf } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { formatPurchaseQuantity, quantityStep, roundQuantity, stepQuantity } from '../../lib/inventory'
+import { formatPurchaseQuantity, roundQuantity, stepQuantity } from '../../lib/inventory'
 import { RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 import { formatStockUnitPrice, formatUnitPrice, lineTotal, money, priceUnitOptions } from '../../lib/pricing'
 
@@ -28,7 +29,7 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
   const startEditing = () => {
     setDraft({
       quantity: String(item.quantity ?? 1),
-      price: Number(item.price) > 0 ? String(item.price) : '',
+      price: Number(item.price) > 0 ? moneyText(item.price) : '',
       price_qty: String(item.price_qty || 1),
       price_unit: item.price_unit || item.unit,
     })
@@ -47,11 +48,12 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
   }
 
   const save = async () => {
-    const price = parseFloat(draft.price) || 0
+    if (firstDecimalProblem(draft.quantity, draft.price, draft.price_qty)) return
+    const price = parseDecimal(draft.price) || 0
     const patch = {
       quantity: roundQuantity(draft.quantity, item.unit) || 1,
       price,
-      price_qty: price > 0 ? parseFloat(draft.price_qty) || 1 : null,
+      price_qty: price > 0 ? parseDecimal(draft.price_qty) || 1 : null,
       price_unit: price > 0 ? draft.price_unit : null,
     }
     const { error } = await onUpdatePricing(item, patch, lineTotal({ ...item, ...patch }, pack))
@@ -150,10 +152,7 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
         <div className="mt-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-[var(--color-text-muted)]">Qty</span>
-            <Input
-              type="number"
-              min="0"
-              step={quantityStep(item.unit)}
+            <DecimalInput
               value={draft.quantity}
               onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
               autoFocus
@@ -162,6 +161,7 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
             />
             <span className="text-[10px] text-[var(--color-text-muted)]">{item.unit}</span>
           </div>
+          <DecimalHint value={draft.quantity} />
           <PriceFields
             compact
             value={draft}

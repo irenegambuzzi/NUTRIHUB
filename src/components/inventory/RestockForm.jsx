@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Input, Select } from '../ui/Field'
-import { parseNumber } from '../../lib/feedback'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { parseDecimal } from '../../lib/decimal'
 import { toBaseQuantity } from '../../lib/inventory'
 
 // Adding bought stock by hand: a quantity in the stock unit or, when the
@@ -18,7 +19,7 @@ export function RestockForm({ item, variants = null, onSubmit, onClose, initial 
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const quantity = parseNumber(text)
+  const quantity = parseDecimal(text)
   const delta = quantity > 0 ? toBaseQuantity(item, quantity, unit) : null
   const base = delta === null ? null : Math.round(delta * 100) / 100
   const needsName = variants && target === 'new' && !newName.trim()
@@ -49,13 +50,14 @@ export function RestockForm({ item, variants = null, onSubmit, onClose, initial 
         </>
       )}
       <div className="flex items-center gap-1.5">
-        <Input inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} className="w-16 text-sm p-2 text-right" aria-label="Quantity bought" autoFocus />
+        <DecimalInput value={text} onChange={(e) => setText(e.target.value)} className="w-16 text-sm p-2 text-right" aria-label="Quantity bought" autoFocus />
         <Select value={unit} onChange={(e) => setUnit(e.target.value)} className="w-auto text-xs p-2" aria-label="Unit">
           {purchaseUnit && <option value={purchaseUnit}>{purchaseUnit}</option>}
           <option value={item.unit}>{item.unit}</option>
           {extraUnit && <option value={extraUnit}>{extraUnit}</option>}
         </Select>
       </div>
+      <DecimalHint value={text} />
       {base > 0 && unit !== item.unit && (
         <p className="text-[10px] text-[var(--color-text-muted)]">
           = {base} {item.unit} added to the stock

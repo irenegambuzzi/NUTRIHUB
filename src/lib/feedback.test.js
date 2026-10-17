@@ -9,8 +9,10 @@ import {
   getToasts,
   parseNumber,
   runToastAction,
+  setSessionErrorHandler,
   showToast,
   toastLoadError,
+  toastSaveError,
 } from './feedback'
 
 beforeEach(() => vi.useFakeTimers())
@@ -38,14 +40,36 @@ describe('toasts', () => {
     expect(getToasts()).toHaveLength(0)
   })
 
-  it('replace a toast with the same key instead of piling up', () => {
+  it('show the same load error once, however many lists fail, and Retry reloads them all', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    const retry = vi.fn()
-    toastLoadError(new Error('offline'), retry, 'grocery_items')
-    toastLoadError(new Error('offline'), retry, 'grocery_items')
-    toastLoadError(new Error('offline'), retry, 'expenses')
-    expect(getToasts()).toHaveLength(2)
+    const grocery = vi.fn()
+    const expenses = vi.fn()
+    toastLoadError(new Error('offline'), grocery, 'grocery_items')
+    toastLoadError(new Error('offline'), grocery, 'grocery_items')
+    toastLoadError(new Error('offline'), expenses, 'expenses')
+    expect(getToasts()).toHaveLength(1)
     expect(getToasts()[0].action.label).toBe('Retry')
+    runToastAction(getToasts()[0].id)
+    expect(grocery).toHaveBeenCalledTimes(1)
+    expect(expenses).toHaveBeenCalledTimes(1)
+    toastLoadError(new Error('offline'), grocery, 'grocery_items')
+    toastLoadError(new Error('boom'), expenses, 'expenses')
+    expect(getToasts()).toHaveLength(2)
+  })
+
+  it('never show the same message twice at once', () => {
+    showToast({ message: 'Saved offline', duration: 0 })
+    showToast({ message: 'Saved offline', duration: 0 })
+    expect(getToasts()).toHaveLength(1)
+  })
+
+  it('leave an expired login to the session instead of a connection error', () => {
+    setSessionErrorHandler((error) => /jwt expired/i.test(error.message))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    toastLoadError({ message: 'JWT expired' }, vi.fn(), 'expenses')
+    toastSaveError({ message: 'JWT expired' }, vi.fn())
+    expect(getToasts()).toHaveLength(0)
+    setSessionErrorHandler(() => false)
   })
 })
 

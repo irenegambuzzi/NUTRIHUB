@@ -3,6 +3,8 @@ import { Plus, Check, Settings2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Label, Input, Select } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { moneyText, parseDecimal } from '../../lib/decimal'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 
@@ -11,7 +13,7 @@ import { localDateString } from '../../lib/expensePeriods'
 // typed. `tree` is the income categories' tree (see categoryTree);
 // `onManage` opens the category manager (not offered until it can work).
 export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onManage }) {
-  const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [amount, setAmount] = useState(initial ? moneyText(initial.amount) : '')
   const [incomeDate, setIncomeDate] = useState(initial?.income_date ?? localDateString())
   // A new entry starts on "Salary", as before.
   const initialMain = initial ? tree.mainOf(initial.category_id) : tree.mainCategories.find((c) => c.name === 'Salary') ?? tree.mainCategories[0]
@@ -24,9 +26,10 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!amount || Number(amount) <= 0) return
+    const value = parseDecimal(amount)
+    if (!(value > 0)) return setDateError(amount.trim() ? 'Enter an amount above 0, like 13,60.' : 'Enter the amount.')
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
-    const { error } = await onSubmit({ amount: Number(amount), incomeDate, categoryId: subId || mainId || null, receivedBy, source: source.trim() })
+    const { error } = await onSubmit({ amount: value, incomeDate, categoryId: subId || mainId || null, receivedBy, source: source.trim() })
     if (error) return
     if (!initial) {
       setAmount('')
@@ -39,7 +42,8 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
       <div className="grid grid-cols-2 gap-2">
         <div>
           <Label>Amount (€)</Label>
-          <Input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          <DecimalInput value={amount} onChange={(e) => { setAmount(e.target.value); setDateError('') }} aria-label="Amount (€)" placeholder="0.00" required />
+          <DecimalHint value={amount} />
         </div>
         <div>
           <Label>Date</Label>

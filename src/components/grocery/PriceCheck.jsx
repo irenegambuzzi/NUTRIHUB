@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
-import { Input } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { PhotoView } from './ReceiptPhoto'
 import { money } from '../../lib/pricing'
-import { parseNumber } from '../../lib/feedback'
+import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { parseLocalDate } from '../../lib/week'
 
 // "Check prices": a receipt photo next to that day's items and prices
@@ -71,7 +71,9 @@ function PriceLine({ expense, linked, onSave }) {
 
   const save = async () => {
     if (draft === null) return
-    const amount = Math.round(parseNumber(draft) * 100) / 100
+    // Text that isn't a number stays as typed (and red) until it is fixed.
+    if (decimalProblem(draft)) return
+    const amount = Math.round(parseDecimal(draft) * 100) / 100
     if (!(amount >= 0) || amount === Number(expense.amount)) return setDraft(null)
     setSaving(true)
     const { error } = await onSave(expense, amount)
@@ -80,25 +82,27 @@ function PriceLine({ expense, linked, onSave }) {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="flex-1 min-w-0">
-        <span className="block text-sm text-[var(--color-text)] truncate">{expense.description || 'Item'}</span>
-        {!linked && <span className="block text-[10px] text-[var(--color-text-muted)]">Only the expense changes (no longer on the list)</span>}
-      </span>
-      <span className="text-xs text-[var(--color-text-muted)]">€</span>
-      <Input
-        inputMode="decimal"
-        value={shown}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') setDraft(null)
-        }}
-        disabled={saving}
-        aria-label={`Price of ${expense.description || 'item'}`}
-        className="w-24 text-right font-mono text-sm p-2"
-      />
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm text-[var(--color-text)] truncate">{expense.description || 'Item'}</span>
+          {!linked && <span className="block text-[10px] text-[var(--color-text-muted)]">Only the expense changes (no longer on the list)</span>}
+        </span>
+        <span className="text-xs text-[var(--color-text-muted)]">€</span>
+        <DecimalInput
+          value={shown}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') setDraft(null)
+          }}
+          disabled={saving}
+          aria-label={`Price of ${expense.description || 'item'}`}
+          className="w-24 text-right font-mono text-sm p-2"
+        />
+      </div>
+      <DecimalHint value={draft} className="text-right" />
     </div>
   )
 }

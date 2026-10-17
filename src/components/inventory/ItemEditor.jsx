@@ -4,12 +4,14 @@ import { DateField, CalendarPick } from '../ui/DateField'
 import { formatTypedDate, looksLikeDate, parseTypedDate } from '../../lib/dateInput'
 import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { decimalProblem, firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS } from '../../data/constants'
 import { purchaseUnitOptions } from '../../lib/units'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { checkMoveIntoGroup } from '../../lib/groups'
-import { quantityStep, roundQuantity, unitFactor } from '../../lib/inventory'
+import { roundQuantity, unitFactor } from '../../lib/inventory'
 import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
@@ -34,7 +36,7 @@ function initialState(item, group, prefill) {
     expiry_date: item?.expiry_date ?? '',
     batch_lot: item?.batch_lot ?? '',
     notes: item?.notes ?? '',
-    price: Number(item?.price) > 0 ? String(item.price) : '',
+    price: Number(item?.price) > 0 ? moneyText(item.price) : '',
     price_qty: item?.price_qty ? String(item.price_qty) : '1',
     price_unit: item?.price_unit ?? '',
     usual_shop_id: item?.usual_shop_id ?? group?.usual_shop_id ?? '',
@@ -84,7 +86,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // Quantities snap to their unit's step when the field is left (stock
   // entered in packs snaps like any count).
   const fieldUnit = (f, field) => (field === 'current_stock' && f.multipack && f.stockInPacks ? f.packaging_unit : f.unit)
-  const snap = (field) => () => setForm((f) => ({ ...f, [field]: String(roundQuantity(f[field], fieldUnit(f, field))) }))
+  const snap = (field) => () => setForm((f) => (decimalProblem(f[field]) ? f : { ...f, [field]: String(roundQuantity(f[field], fieldUnit(f, field))) }))
 
   // Changing the unit never changes a quantity by itself. For a saved item
   // the user is asked what happens to the stock and the minimum; a new
@@ -94,8 +96,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     const options = purchaseUnitOptions(next, form.packaging_unit)
     const packaging = form.packaging_unit === next ? options[0] : form.packaging_unit
     if (convert && factor !== null && factor !== 1 && !form.stockInPacks) {
-      const stock = roundQuantity((parseFloat(form.current_stock) || 0) * factor, next)
-      const min = roundQuantity((parseFloat(form.min_stock) || 0) * factor, next)
+      const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * factor, next)
+      const min = roundQuantity((parseDecimal(form.min_stock) || 0) * factor, next)
       setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min) }))
       setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.`)
     } else {
@@ -109,8 +111,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (next === form.unit) return
     if (!item || isGroup) return applyUnit(next, true)
     const factor = unitFactor(form.unit, next)
-    const stock = parseFloat(form.current_stock) || 0
-    const min = parseFloat(form.min_stock) || 0
+    const problem = firstDecimalProblem(form.current_stock, form.min_stock)
+    if (problem) return setError(`Fix the stock and minimum first. ${problem}`)
+    const stock = parseDecimal(form.current_stock) || 0
+    const min = parseDecimal(form.min_stock) || 0
     const options = [
       ...(factor !== null && factor !== 1
         ? [{ value: 'convert', label: 'Convert the numbers', hint: `${stock} ${form.unit} → ${roundQuantity(stock * factor, next)} ${next} (the same amount, counted differently)` }]
@@ -136,25 +140,25 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     const check = checkMoveIntoGroup({ ...item, name: form.name || item?.name, unit: form.unit }, target)
     if (check.blocked) return setGroupNote(check.blocked)
     if (check.convert) {
-      const stock = roundQuantity((parseFloat(form.current_stock) || 0) * check.convert.factor, target.unit)
+      const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * check.convert.factor, target.unit)
       const ok = await confirmDialog({
         title: `Move into "${target.name}"?`,
         message: `"${target.name}" counts in ${target.unit}, this item in ${form.unit}. Its stock ${form.current_stock} ${form.unit} will be converted to ${stock} ${target.unit} (the same amount). Nothing is saved until you press Save.`,
         confirmLabel: 'Convert and move',
       })
       if (!ok) return
-      const min = roundQuantity((parseFloat(form.min_stock) || 0) * check.convert.factor, target.unit)
+      const min = roundQuantity((parseDecimal(form.min_stock) || 0) * check.convert.factor, target.unit)
       return setForm((f) => ({ ...f, group_id: id, unit: target.unit, current_stock: String(stock), min_stock: String(min) }))
     }
     setForm((f) => ({ ...f, group_id: id }))
   }
 
-  const perPack = Number(form.quantity_per_pack) || 0
+  const perPack = parseDecimal(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
   const suggestedUnits = SUGGESTED_UNITS[form.category_id] || []
   const unusualUnit = suggestedUnits.length > 0 && !suggestedUnits.includes(form.unit)
-  const stockValue = parseFloat(form.current_stock) || 0
+  const stockValue = parseDecimal(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
 
   // A batch / lot that looks like a date (day, month and year split by
@@ -174,6 +178,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     e.preventDefault()
     if (!form.name.trim()) return setError('Give the item a name.')
     if (!form.category_id) return setCategoryError('Pick a category (or add a new one).')
+    const decimalError = firstDecimalProblem(form.current_stock, form.min_stock, form.price, form.price_qty, form.multipack ? form.quantity_per_pack : '')
+    if (decimalError) return setError(decimalError)
     if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
     if (!expiryValid) return setError('Fix the expiry date first (DD/MM/YYYY), or remove it.')
     if (batchDateError) return setError(batchDateError)
@@ -201,8 +207,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
       min_stock: roundQuantity(form.min_stock, form.unit),
       notes: form.notes.trim() || null,
       ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
-      ...(parseFloat(form.price) > 0
-        ? { price: parseFloat(form.price), price_qty: parseFloat(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
+      ...(parseDecimal(form.price) > 0
+        ? { price: parseDecimal(form.price), price_qty: parseDecimal(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
         : { price: null, price_qty: null, price_unit: null }),
     })
     setSaving(false)
@@ -313,7 +319,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
                 </div>
                 <div>
                   <Label>{form.unit} per {form.packaging_unit}</Label>
-                  <Input type="number" inputMode="decimal" min="0.01" step="any" value={form.quantity_per_pack} onChange={set('quantity_per_pack')} />
+                  <DecimalInput value={form.quantity_per_pack} onChange={set('quantity_per_pack')} />
+                  <DecimalHint value={form.quantity_per_pack} />
                 </div>
               </div>
               <div className="flex gap-1.5">
@@ -355,12 +362,14 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
                 </button>
               )}
             </div>
-            <Input type="number" min="0" step={quantityStep(fieldUnit(form, 'current_stock'))} value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
+            <DecimalInput value={form.current_stock} onChange={set('current_stock')} onBlur={snap('current_stock')} />
+            <DecimalHint value={form.current_stock} />
           </div>
           )}
           <div className={isGroup ? 'col-span-2' : undefined}>
             <Label>Minimum stock ({form.unit})</Label>
-            <Input type="number" min="0" step={quantityStep(form.unit)} value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
+            <DecimalInput value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
+            <DecimalHint value={form.min_stock} />
           </div>
         </div>
         {form.multipack && form.stockInPacks && (

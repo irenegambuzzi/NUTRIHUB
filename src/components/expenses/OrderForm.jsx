@@ -3,13 +3,14 @@ import { Check, Plus } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select, Textarea } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
 import { normalizeUrl } from '../../lib/orders'
-import { parseNumber } from '../../lib/feedback'
+import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 
 // The order fields, for a new order or an existing one (`initial`).
 // onSubmit(values, ids) resolves to { error }; on failure the form keeps
@@ -46,7 +47,7 @@ export function OrderForm({
   const [details, setDetails] = useState(initial?.details ?? '')
   const [shopId, setShopId] = useState(initial?.shop_id ?? start?.shopId ?? '')
   const [orderDate, setOrderDate] = useState(initial?.order_date ?? localDateString())
-  const [price, setPrice] = useState(initial ? String(initial.price) : start?.price > 0 ? String(start.price) : '')
+  const [price, setPrice] = useState(initial ? moneyText(initial.price) : start?.price > 0 ? moneyText(start.price) : '')
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? start?.paidBy ?? 'shared')
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
   const [subId, setSubId] = useState(startCategory && startCategory !== initialMain?.id ? startCategory : '')
@@ -67,13 +68,15 @@ export function OrderForm({
 
   const problem = () => {
     if (!itemName.trim()) return 'Give the order a name.'
-    if (!(Number(price) > 0)) return 'Enter the price (more than 0).'
+    if (decimalProblem(price)) return `Price: ${decimalProblem(price)}`
+    if (!(parseDecimal(price) > 0)) return 'Enter the price (more than 0).'
     if (!orderDate || !datesValid.order) return 'Fix the order date first (DD/MM/YYYY).'
     if (!datesValid.expected || !datesValid.until) return 'Fix the expected date first (DD/MM/YYYY), or remove it.'
     if (expectedUntil && !expectedDate) return 'Add the expected arrival date too, or remove the latest date.'
     if (expectedUntil && expectedUntil < expectedDate) return "The latest date can't be before the expected arrival date."
     if (url.trim() && !normalizeUrl(url)) return 'That link is not a web address (e.g. https://www.vinted.it/…).'
-    if (units && !(parseNumber(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
+    if (units && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
+    if (units && !(parseDecimal(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
     return ''
   }
 
@@ -90,13 +93,13 @@ export function OrderForm({
         details,
         shopId,
         orderDate,
-        price: Number(price),
+        price: parseDecimal(price),
         paidBy,
         categoryId: subId || mainId || null,
         expectedDate,
         expectedUntil,
         url,
-        ...(units ? { quantity: parseNumber(quantity), unit } : {}),
+        ...(units ? { quantity: parseDecimal(quantity), unit } : {}),
       },
       ids
     )
@@ -152,7 +155,8 @@ export function OrderForm({
           </div>
           <div>
             <Label>Price (€)</Label>
-            <Input type="number" inputMode="decimal" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} aria-label="Price" required />
+            <DecimalInput value={price} onChange={(e) => setPrice(e.target.value)} aria-label="Price" placeholder="0.00" required />
+            <DecimalHint value={price} />
           </div>
         </div>
 
@@ -160,7 +164,7 @@ export function OrderForm({
           <div>
             <Label>Quantity ordered</Label>
             <div className="flex gap-2">
-              <Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} aria-label="Quantity ordered" className="w-24 text-right" />
+              <DecimalInput value={quantity} onChange={(e) => setQuantity(e.target.value)} aria-label="Quantity ordered" className="w-24 text-right" />
               <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit ordered" className="w-auto">
                 {units.map((u) => (
                   <option key={u} value={u}>
@@ -169,6 +173,7 @@ export function OrderForm({
                 ))}
               </Select>
             </div>
+            <DecimalHint value={quantity} />
           </div>
         )}
 

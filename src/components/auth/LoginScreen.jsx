@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Lock } from 'lucide-react'
-import { HOUSEHOLD_EMAIL, unlock } from '../../lib/auth'
+import { HOUSEHOLD_EMAIL, unlock, useAuth } from '../../lib/auth'
 
 // Only a password and "Unlock". The household email is in a username field
 // that's hidden from view but present, so the phone's or browser's password
@@ -10,6 +10,7 @@ export function LoginScreen() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const { notice } = useAuth()
 
   const submit = async (e) => {
     e.preventDefault()
@@ -56,6 +57,11 @@ export function LoginScreen() {
           }}
           className="w-full bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-2xl p-3 text-base text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)]"
         />
+        {notice && !error && (
+          <p role="status" className="text-xs text-amber-300">
+            {notice}
+          </p>
+        )}
         {error && (
           <p role="alert" className="text-xs text-rose-400">
             {error}

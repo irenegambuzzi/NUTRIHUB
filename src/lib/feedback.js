@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { parseDecimal } from './decimal'
 
 // Toasts and the in-app confirmation dialog live in one small store, so
 // hooks and helpers can report problems without a React context. The
@@ -21,11 +22,19 @@ const subscribe = (listener) => {
 // duration 0 keeps it until dismissed.
 export function showToast({ message, detail = null, tone = 'info', action = null, duration = 5000, key = null }) {
   if (key) toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
+  // The same message is never shown twice at once.
+  const same = toasts.find((t) => t.message === message && t.detail === detail && t.tone === tone)
+  if (same) return same.id
   const id = nextId++
   toasts = [...toasts, { id, key, message, detail, tone, action }]
   if (duration) timers.set(id, setTimeout(() => dismissToast(id), duration))
   emit()
   return id
+}
+
+// Closes every toast shown with this key.
+export function dismissToastsByKey(key) {
+  toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
 }
 
 export function dismissToast(id) {
@@ -50,7 +59,15 @@ export const useToasts = () => useSyncExternalStore(subscribe, getToasts, getToa
 export const SAVE_ERROR = "Couldn't save — check your connection."
 export const LOAD_ERROR = "Couldn't load — check your connection."
 
+// An expired or refused login is reported once, by the session (see
+// session.js), not as a connection problem on every list and save.
+let sessionErrorHandler = () => false
+export const setSessionErrorHandler = (fn) => {
+  sessionErrorHandler = fn
+}
+
 export function toastSaveError(error, retry = null, message = SAVE_ERROR) {
+  if (sessionErrorHandler(error)) return null
   console.error(error)
   return showToast({
     message,
@@ -61,16 +78,27 @@ export function toastSaveError(error, retry = null, message = SAVE_ERROR) {
   })
 }
 
-// One toast per data source, however often a realtime update retries.
+// One toast per kind of failure, however many lists hit it or how often a
+// realtime update retries. Its Retry reloads every list that failed.
+const loadRetries = new Map()
 export function toastLoadError(error, retry, source) {
+  if (sessionErrorHandler(error)) return null
   console.error(error)
+  loadRetries.set(source, retry)
   return showToast({
     message: LOAD_ERROR,
     detail: error?.message ?? null,
     tone: 'error',
     duration: 8000,
-    key: `load:${source}`,
-    action: { label: 'Retry', onClick: retry },
+    key: `load:${error?.message ?? ''}`,
+    action: {
+      label: 'Retry',
+      onClick: () => {
+        const all = [...loadRetries.values()]
+        loadRetries.clear()
+        all.forEach((again) => again())
+      },
+    },
   })
 }
 
@@ -114,10 +142,7 @@ export function dialogErrors(fields, values) {
 }
 
 // "1,5" or "1.5" → 1.5; anything else → NaN.
-export function parseNumber(text) {
-  const s = String(text ?? '').trim().replace(',', '.')
-  return s && /^-?\d*\.?\d+$/.test(s) ? Number(s) : NaN
-}
+export const parseNumber = (text) => parseDecimal(text, { negative: true })
 
 // The dialog's answer: values (numbers parsed, empty dates as null), or
 // null to cancel.

@@ -54,7 +54,7 @@ export function ReceiptsView() {
   // The grocery entry a receipt line came from (if still there), and its
   // pantry item for unit conversions.
   const linkFor = (expense) => groceryItems.find((g) => g.expense_id === expense.id) ?? null
-  const packFor = (item) => pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => normName(p.name) === normName(item.name)) ?? null
+  const packFor = (item) => pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => !p.is_group && normName(p.name) === normName(item.name)) ?? null
 
   const askDate = (title, value) =>
     askDialog({

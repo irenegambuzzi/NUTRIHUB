@@ -4,6 +4,7 @@ import { DURABLE_CATEGORY_IDS, DURABLE_EXPENSE_CATEGORY } from '../data/constant
 import { priceFields } from './pricing'
 import { normalizeUnit, unitFactor } from './units'
 import { parseLocalDate } from './week'
+import { parseDecimal } from './decimal'
 
 export { normalizeUnit, unitFactor }
 
@@ -79,7 +80,7 @@ export function stepQuantity(quantity, unit, direction) {
 // Rounds a quantity to its unit's step (0.3 kg stays 0.3, 0.3 pcs → 0.5).
 // Negative or invalid values are 0.
 export function roundQuantity(value, unit) {
-  const n = Number(value)
+  const n = parseDecimal(value)
   if (!Number.isFinite(n) || n <= 0) return 0
   const step = quantityStep(unit)
   return round(Math.round(n / step) * step)

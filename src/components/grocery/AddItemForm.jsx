@@ -3,6 +3,8 @@ import { AlertTriangle, Plus } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Input, Select } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { decimalProblem, firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker, UnitOptions } from './shared'
@@ -10,7 +12,7 @@ import { EXTRA_PACKAGING_UNITS, normName } from '../../lib/grocery'
 import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
-import { quantityStep, roundQuantity } from '../../lib/inventory'
+import { roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { priceUnitOptions } from '../../lib/pricing'
 
@@ -27,7 +29,7 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
   if (known) {
     fields.unit = known.unit
     if (Number(known.price) > 0 && !priceDraft.price) {
-      fields.priceDraft = { price: String(known.price), price_qty: String(known.price_qty || 1), price_unit: known.price_unit || known.unit }
+      fields.priceDraft = { price: moneyText(known.price), price_qty: String(known.price_qty || 1), price_unit: known.price_unit || known.unit }
     }
   }
   return fields
@@ -74,14 +76,15 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     e.preventDefault()
     if (!name.trim()) return
     if (!categoryId) return setCategoryError('Pick a category (or add a new one).')
+    if (firstDecimalProblem(quantity, priceDraft.price, priceDraft.price_qty)) return
     const known = pantryByName.get(normName(name))
     const { error } = await onAdd({
       name: name.trim(),
       categoryId,
       subcategoryId: subcategoryId || null,
-      price: parseFloat(priceDraft.price) || 0,
-      priceQty: parseFloat(priceDraft.price) > 0 ? parseFloat(priceDraft.price_qty) || 1 : null,
-      priceUnit: parseFloat(priceDraft.price) > 0 ? formPriceUnit : null,
+      price: parseDecimal(priceDraft.price) || 0,
+      priceQty: parseDecimal(priceDraft.price) > 0 ? parseDecimal(priceDraft.price_qty) || 1 : null,
+      priceUnit: parseDecimal(priceDraft.price) > 0 ? formPriceUnit : null,
       quantity: formQuantity,
       unit,
       payer,
@@ -123,20 +126,18 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
           labels={false}
         />
         <div className="grid grid-cols-2 gap-2">
-          <Input
-            type="number"
-            step={quantityStep(unit)}
-            min="0"
+          <DecimalInput
             placeholder="Qty to buy"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
-            onBlur={() => setQuantity(String(roundQuantity(quantity, unit) || 1))}
+            onBlur={() => !decimalProblem(quantity) && setQuantity(String(roundQuantity(quantity, unit) || 1))}
             aria-label="Quantity"
           />
           <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit">
             <UnitOptions />
           </Select>
         </div>
+        <DecimalHint value={quantity} className="-mt-2" />
         <PriceFields
           value={{ ...priceDraft, price_unit: formPriceUnit }}
           onChange={(patch) => setPriceDraft((d) => ({ ...d, ...patch }))}

@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Input, Select } from '../ui/Field'
+import { Select } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { cn } from '../../lib/cn'
 import { lineTotal, money, priceBasis, unitPriceFromTotal } from '../../lib/pricing'
 
@@ -11,16 +13,18 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
   const [mode, setMode] = useState('unit')
   const [totalDraft, setTotalDraft] = useState('')
   const basisUnit = value.price_unit || unitOptions[0]
-  const row = { ...value, price: parseFloat(value.price) || 0, price_unit: basisUnit, price_qty: parseFloat(value.price_qty) || 1 }
+  const row = { ...value, price: parseDecimal(value.price) || 0, price_unit: basisUnit, price_qty: parseDecimal(value.price_qty) || 1 }
   const total = line ? lineTotal({ ...row, quantity: line.quantity, unit: line.unit }, pack) : 0
   const basis = priceBasis({ ...row, unit: basisUnit })
   const size = compact ? 'text-xs p-2' : ''
 
   const setTotal = (text) => {
     setTotalDraft(text)
-    const price = unitPriceFromTotal(parseFloat(text) || 0, { ...row, quantity: line.quantity, unit: line.unit }, pack)
+    // Wrong text goes to the unit price as typed, so Save can refuse it.
+    if (decimalProblem(text)) return onChange({ price: text })
+    const price = unitPriceFromTotal(parseDecimal(text) || 0, { ...row, quantity: line.quantity, unit: line.unit }, pack)
     // Units that can't be converted leave the unit price alone.
-    if (price !== null) onChange({ price: price ? String(price) : '' })
+    if (price !== null) onChange({ price: price ? moneyText(price) : '' })
   }
 
   return (
@@ -36,7 +40,7 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
               type="button"
               onClick={() => {
                 setMode(key)
-                if (key === 'total') setTotalDraft(total ? String(total) : '')
+                if (key === 'total') setTotalDraft(total ? moneyText(total) : '')
               }}
               className={cn(
                 'px-2 py-0.5 rounded-full border',
@@ -51,10 +55,7 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
 
       {mode === 'unit' || !line ? (
         <div className="flex items-center gap-1.5">
-          <Input
-            type="number"
-            min="0"
-            step="0.01"
+          <DecimalInput
             placeholder="€ 0.00"
             value={value.price}
             onChange={(e) => onChange({ price: e.target.value })}
@@ -62,10 +63,7 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
             aria-label="Unit price (€)"
           />
           <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">per</span>
-          <Input
-            type="number"
-            min="0"
-            step="any"
+          <DecimalInput
             value={value.price_qty}
             placeholder="1"
             onChange={(e) => onChange({ price_qty: e.target.value })}
@@ -81,10 +79,7 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
           </Select>
         </div>
       ) : (
-        <Input
-          type="number"
-          min="0"
-          step="0.01"
+        <DecimalInput
           placeholder={`Total for ${line.quantity} ${line.unit} (€)`}
           value={totalDraft}
           onChange={(e) => setTotal(e.target.value)}
@@ -92,6 +87,8 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
           aria-label="Total price (€)"
         />
       )}
+
+      <DecimalHint value={(mode === 'unit' || !line ? [value.price, value.price_qty] : [totalDraft]).find((t) => decimalProblem(t)) ?? ''} />
 
       {line && row.price > 0 && (
         <p className="text-[11px] text-[var(--color-text-muted)]">

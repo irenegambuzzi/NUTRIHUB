@@ -4,6 +4,8 @@ import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Label, Input, Select } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { moneyText, parseDecimal } from '../../lib/decimal'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { useShops } from '../../hooks/useShops'
@@ -33,7 +35,7 @@ export function ExpenseForm({
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
   const [subId, setSubId] = useState(initial && initial.category_id !== initialMain?.id ? initial.category_id ?? '' : '')
   const [managingCategories, setManagingCategories] = useState(false)
-  const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [amount, setAmount] = useState(initial ? moneyText(initial.amount) : '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
   const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
@@ -45,11 +47,12 @@ export function ExpenseForm({
 
   const handleAddExpense = async (e) => {
     e.preventDefault()
-    if (!amount || Number(amount) <= 0) return
+    const value = parseDecimal(amount)
+    if (!(value > 0)) return setDateError(amount.trim() ? 'Enter an amount above 0, like 13,60.' : 'Enter the amount.')
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
     const { error } = await onSubmit({
       categoryId: subId || mainId || null,
-      amount: Number(amount),
+      amount: value,
       description,
       paidBy,
       expenseDate,
@@ -100,7 +103,8 @@ export function ExpenseForm({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label>Amount (€)</Label>
-              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+              <DecimalInput value={amount} onChange={(e) => { setAmount(e.target.value); setDateError('') }} aria-label="Amount (€)" placeholder="0.00" required />
+              <DecimalHint value={amount} />
             </div>
             <div>
               <Label>Date</Label>

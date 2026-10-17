@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { AlertTriangle, Pencil, Wallet } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
-import { Input } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/pricing'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
@@ -29,7 +30,7 @@ export function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBu
         {!editing && (
           <button
             onClick={() => {
-              setDraft(budget ? String(budget) : '')
+              setDraft(budget ? moneyText(budget) : '')
               setEditing(true)
             }}
             className="text-[11px] font-bold text-[var(--color-accent)] flex items-center gap-1"
@@ -43,17 +44,19 @@ export function BudgetCard({ budget, listTotal, boughtTotal, payerTotals, overBu
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            save(parseFloat(draft) || 0)
+            if (decimalProblem(draft)) return
+            save(parseDecimal(draft) || 0)
           }}
           className="flex flex-wrap gap-2"
         >
-          <Input type="number" min="0" step="1" autoFocus placeholder="e.g. 100" value={draft} onChange={(e) => setDraft(e.target.value)} className="flex-1 min-w-24" />
+          <DecimalInput autoFocus placeholder="e.g. 100" value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Budget (€)" className="flex-1 min-w-24" />
           <Button type="submit" className="px-3">
             Save
           </Button>
           <Button type="button" variant="ghost" onClick={() => save(0)} className="px-3">
             No budget limit
           </Button>
+          <DecimalHint value={draft} className="basis-full" />
         </form>
       ) : (
         <>

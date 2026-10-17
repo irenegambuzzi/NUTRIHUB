@@ -1,14 +1,16 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
+import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
 import { ShopPicker } from '../expenses/ShopPicker'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { parseNumber, showToast } from '../../lib/feedback'
+import { showToast } from '../../lib/feedback'
+import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
 import { editPatch, editedItem, purchaseLine } from '../../lib/purchase'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
@@ -43,6 +45,20 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const reportDate = useCallback(
     (key, ok) =>
       setBadDates((prev) => {
+        if (prev.has(key) === !ok) return prev
+        const next = new Set(prev)
+        if (ok) next.delete(key)
+        else next.add(key)
+        return next
+      }),
+    []
+  )
+  // Quantities, totals and pack sizes typed as something that isn't a
+  // number (by item id): confirming waits until they are fixed.
+  const [badNumbers, setBadNumbers] = useState(() => new Set())
+  const reportNumber = useCallback(
+    (key, ok) =>
+      setBadNumbers((prev) => {
         if (prev.has(key) === !ok) return prev
         const next = new Set(prev)
         if (ok) next.delete(key)
@@ -191,6 +207,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               categoryName={categoryName}
               onAnswer={(patch) => answer(line.item.id, patch)}
               onDateValidity={(ok) => reportDate(line.item.id, ok)}
+              onNumberValidity={reportNumber}
               onEdit={(patch) => edit(line.item.id, patch)}
               updatePricing={updatePricing}
               updatePayer={updatePayer}
@@ -240,6 +257,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> Fix the date (DD/MM/YYYY) above to confirm.
             </p>
           )}
+          {badNumbers.size > 0 && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> Fix the numbers in red above to confirm.
+            </p>
+          )}
           {open > 0 && (
             <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
@@ -248,7 +270,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || badDates.size > 0 || lines.length === 0}
+            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
@@ -265,21 +287,29 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // is left, so the other phone sees it.
 // `ordered`: the order on the way for this entry (it can't be bought
 // here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null }) {
+function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
 
+  // A typed number that isn't one is kept as typed (and refused when
+  // confirming), never swapped for the old value.
+  const numbersBad = Boolean(decimalProblem(quantityText) || decimalProblem(totalText) || decimalProblem(answer.packSizeText))
+  useEffect(() => {
+    onNumberValidity(item.id, !numbersBad)
+    return () => onNumberValidity(item.id, true)
+  }, [item.id, numbersBad, onNumberValidity])
+
   const changeQuantity = (text) => {
     setQuantityText(text)
-    const quantity = parseNumber(text)
+    const quantity = parseDecimal(text)
     if (quantity > 0) onEdit({ quantity })
   }
 
   // A total typed here becomes the price for exactly this quantity.
   const changeTotal = (text) => {
     setTotalText(text)
-    const amount = Math.round(parseNumber(text) * 100) / 100
+    const amount = Math.round(parseDecimal(text) * 100) / 100
     if (amount >= 0) onEdit({ total: amount })
   }
 
@@ -291,6 +321,7 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
   }
 
   const saveToEntry = () => {
+    if (numbersBad) return
     setQuantityText(null)
     setTotalText(null)
     updatePricing(item, { quantity: item.quantity, unit: item.unit, price: item.price ?? 0, price_qty: item.price_qty ?? null, price_unit: item.price_unit ?? null }, total)
@@ -343,8 +374,7 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1">
-          <Input
-            inputMode="decimal"
+          <DecimalInput
             value={quantityText ?? String(item.quantity)}
             onChange={(e) => changeQuantity(e.target.value)}
             onBlur={saveToEntry}
@@ -358,8 +388,7 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
         </div>
         <div className="flex items-center gap-1">
           <span className="text-xs text-[var(--color-text-muted)]">€</span>
-          <Input
-            inputMode="decimal"
+          <DecimalInput
             value={totalText ?? (total === null ? '' : total.toFixed(2))}
             placeholder={total === null ? '?' : '0.00'}
             onChange={(e) => changeTotal(e.target.value)}
@@ -380,6 +409,7 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
           />
         </div>
       </div>
+      <DecimalHint value={[quantityText, totalText].find((t) => decimalProblem(t)) ?? ''} />
       {pantry && add > 0 && item.unit !== pantry.unit && (
         <p className="text-[10px] text-[var(--color-text-muted)]">
           = {add} {pantry.unit} added to the stock
@@ -422,15 +452,15 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
             "{pantry.name}" is counted in {pantry.unit} in the pantry. How many {pantry.unit} are in 1 {item.unit}?
           </p>
           <div className="flex items-center gap-1">
-            <Input
-              inputMode="decimal"
+            <DecimalInput
               value={answer.packSizeText ?? ''}
-              onChange={(e) => onAnswer({ packSizeText: e.target.value, packSize: parseNumber(e.target.value) })}
+              onChange={(e) => onAnswer({ packSizeText: e.target.value, packSize: parseDecimal(e.target.value) })}
               aria-label={`${pantry.unit} in 1 ${item.unit}`}
               className="w-24 text-sm p-2"
             />
             <span className="text-xs text-[var(--color-text-muted)]">{pantry.unit}</span>
           </div>
+          <DecimalHint value={answer.packSizeText} />
         </div>
       )}
 
