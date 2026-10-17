@@ -14,7 +14,7 @@ import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/ord
 import { useFlow } from '../../hooks/useFlow'
 import { pantryStore } from '../../lib/stores'
 import { localDateString } from '../../lib/expensePeriods'
-import { splitOrders } from '../../lib/orders'
+import { linkedOrderUnits, splitOrders } from '../../lib/orders'
 import { cn } from '../../lib/cn'
 
 export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/019_stores_and_orders.sql). Until then everything else works as before.'
@@ -206,10 +206,11 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
                 <X size={18} />
               </button>
             </div>
-            {editing.expense_id && <p className="text-[11px] text-[var(--color-text-muted)]">Changing the price, date, category, who paid or the store also updates its expense.</p>}
+            {editing.expense_id && <p className="text-[11px] text-[var(--color-text-muted)]">Changing the total price, date, category, who paid or the store also updates its expense.</p>}
             <OrderForm
               {...formProps}
               initial={editing}
+              units={editing.pantry_item_id && linkedItemOf(editing, pantryRows) ? linkedOrderUnits(editing, linkedItemOf(editing, pantryRows)) : null}
               submitLabel="Save"
               onCancel={() => setEditing(null)}
               onSubmit={async (values) => {

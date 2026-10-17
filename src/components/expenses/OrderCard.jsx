@@ -1,7 +1,7 @@
 import { Check, ChevronDown, ExternalLink, Link2, Pencil, Trash2, Undo2, X } from 'lucide-react'
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { ORDER_STATUS, agoLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderState } from '../../lib/orders'
+import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderState } from '../../lib/orders'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
 
@@ -74,7 +74,7 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-mono font-bold text-[var(--color-accent)]">€{Number(order.price).toFixed(2)}</span>
+          <span className="font-mono font-bold text-[var(--color-accent)]">{orderAmountLabel(order)}</span>
           <ChevronDown size={14} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
         </div>
       </button>

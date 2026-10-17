@@ -13,7 +13,10 @@ import { toBaseQuantity } from '../../lib/inventory'
 export function RestockForm({ item, variants = null, onSubmit, onClose, initial = null, submitLabel = 'Add to stock' }) {
   const purchaseUnit = item.packaging_unit && Number(item.quantity_per_pack) > 0 ? item.packaging_unit : null
   const extraUnit = initial?.unit && initial.unit !== purchaseUnit && initial.unit !== item.unit && toBaseQuantity(item, 1, initial.unit) !== null ? initial.unit : null
-  const [text, setText] = useState(initial?.quantity > 0 ? String(initial.quantity) : '1')
+  // The ordered quantity is only proposed in a unit that converts to the
+  // stock unit (the purchase unit, kg ↔ gr…): never a number in another unit.
+  const orderedUnitConverts = !initial?.unit || toBaseQuantity(item, 1, initial.unit) !== null
+  const [text, setText] = useState(initial?.quantity > 0 && orderedUnitConverts ? String(initial.quantity) : '1')
   const [unit, setUnit] = useState(extraUnit ?? (initial?.unit === item.unit ? item.unit : purchaseUnit ?? item.unit))
   const [target, setTarget] = useState(variants?.length ? variants[0].id : 'new')
   const [newName, setNewName] = useState('')

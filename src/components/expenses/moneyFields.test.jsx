@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
+vi.mock('../../hooks/useFlow', () => ({ useFlow: () => ({ ready: true }) }))
 vi.mock('../../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [] }) }))
 const { ExpenseForm } = await import('./ExpenseForm')
 const { IncomeForm } = await import('./IncomeForm')
@@ -30,8 +31,8 @@ const forms = [
     initial: { amount: 13.6, income_date: '2026-10-17', category_id: null, received_by: 'shared', source: '' },
   },
   {
-    name: 'an order price',
-    label: 'Price',
+    name: 'an order total price',
+    label: 'Total price',
     render: (onSubmit, initial) => {
       const view = render(<OrderForm {...picker} initial={initial} onSubmit={onSubmit} />)
       if (!initial) fireEvent.change(screen.getByLabelText('Item name'), { target: { value: 'Jacket' } })

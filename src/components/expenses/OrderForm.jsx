@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check, Plus } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
@@ -9,8 +9,10 @@ import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
-import { normalizeUrl } from '../../lib/orders'
-import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
+import { ORDER_UNITS, normalizeUrl } from '../../lib/orders'
+import { chooseTotalPrice, chooseUnitPrice, changeQuantity, emptyPrice, orderTotal, prefilledPrice, priceMismatch, savedPrice, typeTotalPrice, typeUnitPrice } from '../../lib/orderPricing'
+import { useFlow } from '../../hooks/useFlow'
+import { decimalProblem, parseDecimal } from '../../lib/decimal'
 
 // The order fields, for a new order or an existing one (`initial`).
 // onSubmit(values, ids) resolves to { error }; on failure the form keeps
@@ -19,13 +21,17 @@ import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 // expense. A store made here is an online one unless changed.
 // `prefill`: starting values for a new order (from "Order online" on the
 // SHOP list: { itemName, shopId, price, paidBy, categoryId, quantity,
-// unit }); `units`: the units the quantity can be given in, which adds
-// the quantity field (orders linked to a HOME item); `linkNote` says what
-// it is linked to.
+// unit }); `units`: the units the quantity can be given in (a simple list
+// when not given; for an order linked to a HOME item its purchase unit
+// comes first); `linkNote` says what it is linked to.
+//
+// The price is a unit price and a total price, like on the SHOP list (see
+// orderPricing.js). The total is the amount of the order's expense. The
+// quantity is only asked once the database has it (supabase/021).
 export function OrderForm({
   initial,
   prefill = null,
-  units = null,
+  units: unitOptions = null,
   linkNote = null,
   submitLabel = 'Add order',
   onSubmit,
@@ -47,12 +53,19 @@ export function OrderForm({
   const [details, setDetails] = useState(initial?.details ?? '')
   const [shopId, setShopId] = useState(initial?.shop_id ?? start?.shopId ?? '')
   const [orderDate, setOrderDate] = useState(initial?.order_date ?? localDateString())
-  const [price, setPrice] = useState(initial ? moneyText(initial.price) : start?.price > 0 ? moneyText(start.price) : '')
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? start?.paidBy ?? 'shared')
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
   const [subId, setSubId] = useState(startCategory && startCategory !== initialMain?.id ? startCategory : '')
-  const [quantity, setQuantity] = useState(String(initial?.quantity ?? start?.quantity ?? 1))
-  const [unit, setUnit] = useState(initial?.unit ?? start?.unit ?? units?.[0] ?? '')
+  const flow = useFlow()
+  // Orders have a quantity once supabase/021 has been run; before that
+  // the form has the total price only, as it always had.
+  const withQuantity = flow.ready
+  const [quantity, setQuantity] = useState(String(Number(initial?.quantity) > 0 ? Number(initial.quantity) : start?.quantity > 0 ? Number(start.quantity) : 1))
+  const unitList = useMemo(() => [...new Set([...(unitOptions ?? ORDER_UNITS), initial?.unit].filter(Boolean))], [unitOptions, initial])
+  const [unit, setUnit] = useState(initial?.unit ?? start?.unit ?? unitList[0])
+  const [price, setPrice] = useState(() =>
+    initial ? savedPrice(initial.price, quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
+  )
   const [expectedDate, setExpectedDate] = useState(initial?.expected_date ?? '')
   const [expectedUntil, setExpectedUntil] = useState(initial?.expected_until ?? '')
   const [url, setUrl] = useState(initial?.order_url ?? '')
@@ -66,17 +79,21 @@ export function OrderForm({
     setSubId(sub)
   }
 
+  const mismatch = withQuantity ? priceMismatch(price, quantity, unit) : null
+
   const problem = () => {
     if (!itemName.trim()) return 'Give the order a name.'
-    if (decimalProblem(price)) return `Price: ${decimalProblem(price)}`
-    if (!(parseDecimal(price) > 0)) return 'Enter the price (more than 0).'
+    if (decimalProblem(price.total)) return `Total price: ${decimalProblem(price.total)}`
+    if (withQuantity && decimalProblem(price.unit)) return `Unit price: ${decimalProblem(price.unit)}`
+    if (withQuantity && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
+    if (withQuantity && !(parseDecimal(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
+    if (mismatch) return "The unit price and the total price don't match: choose which one is right."
+    if (!(orderTotal(price) > 0)) return withQuantity ? 'Enter the total price or the unit price (more than 0).' : 'Enter the total price (more than 0).'
     if (!orderDate || !datesValid.order) return 'Fix the order date first (DD/MM/YYYY).'
     if (!datesValid.expected || !datesValid.until) return 'Fix the expected date first (DD/MM/YYYY), or remove it.'
     if (expectedUntil && !expectedDate) return 'Add the expected arrival date too, or remove the latest date.'
     if (expectedUntil && expectedUntil < expectedDate) return "The latest date can't be before the expected arrival date."
     if (url.trim() && !normalizeUrl(url)) return 'That link is not a web address (e.g. https://www.vinted.it/…).'
-    if (units && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
-    if (units && !(parseDecimal(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
     return ''
   }
 
@@ -93,13 +110,13 @@ export function OrderForm({
         details,
         shopId,
         orderDate,
-        price: parseDecimal(price),
+        price: orderTotal(price),
         paidBy,
         categoryId: subId || mainId || null,
         expectedDate,
         expectedUntil,
         url,
-        ...(units ? { quantity: parseDecimal(quantity), unit } : {}),
+        ...(withQuantity ? { quantity: parseDecimal(quantity), unit } : {}),
       },
       ids
     )
@@ -110,7 +127,8 @@ export function OrderForm({
       setItemName('')
       setDetails('')
       setShopId('')
-      setPrice('')
+      setPrice(emptyPrice)
+      setQuantity('1')
       setExpectedDate('')
       setExpectedUntil('')
       setUrl('')
@@ -133,7 +151,7 @@ export function OrderForm({
         />
       )}
 
-      <form onSubmit={submit} data-unsaved={itemName || price || details ? '' : undefined} className="space-y-3">
+      <form onSubmit={submit} data-unsaved={itemName || price.total || price.unit || details ? '' : undefined} className="space-y-3">
         {linkNote && <p className="text-[11px] text-[var(--color-text-soft)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2.5">{linkNote}</p>}
 
         <div>
@@ -148,25 +166,26 @@ export function OrderForm({
 
         <ShopPicker value={shopId} onChange={setShopId} defaultOnline label="Store (optional)" />
 
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label>Order date</Label>
-            <DateField label="Order date" required value={orderDate} onChange={setOrderDate} onValidity={(ok) => setDatesValid((v) => (v.order === ok ? v : { ...v, order: ok }))} />
-          </div>
-          <div>
-            <Label>Price (€)</Label>
-            <DecimalInput value={price} onChange={(e) => setPrice(e.target.value)} aria-label="Price" placeholder="0.00" required />
-            <DecimalHint value={price} />
-          </div>
+        <div>
+          <Label>Order date</Label>
+          <DateField label="Order date" required value={orderDate} onChange={setOrderDate} onValidity={(ok) => setDatesValid((v) => (v.order === ok ? v : { ...v, order: ok }))} />
         </div>
 
-        {units && (
+        {withQuantity && (
           <div>
             <Label>Quantity ordered</Label>
             <div className="flex gap-2">
-              <DecimalInput value={quantity} onChange={(e) => setQuantity(e.target.value)} aria-label="Quantity ordered" className="w-24 text-right" />
+              <DecimalInput
+                value={quantity}
+                onChange={(e) => {
+                  setQuantity(e.target.value)
+                  setPrice((p) => changeQuantity(p, e.target.value, unit))
+                }}
+                aria-label="Quantity ordered"
+                className="w-24 text-right"
+              />
               <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit ordered" className="w-auto">
-                {units.map((u) => (
+                {unitList.map((u) => (
                   <option key={u} value={u}>
                     {u}
                   </option>
@@ -176,6 +195,60 @@ export function OrderForm({
             <DecimalHint value={quantity} />
           </div>
         )}
+
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-2">
+            {withQuantity && (
+              <div>
+                <Label>Unit price (€)</Label>
+                <DecimalInput
+                  value={price.unit}
+                  onChange={(e) => setPrice((p) => typeUnitPrice(p, e.target.value, quantity, unit))}
+                  aria-label="Unit price"
+                  placeholder="0.00"
+                />
+                <DecimalHint value={price.unit} />
+              </div>
+            )}
+            <div className={withQuantity ? undefined : 'col-span-2'}>
+              <Label>Total price (€)</Label>
+              <DecimalInput
+                value={price.total}
+                onChange={(e) => setPrice((p) => typeTotalPrice(p, e.target.value, quantity, unit))}
+                aria-label="Total price"
+                placeholder="0.00"
+                required={!withQuantity}
+              />
+              <DecimalHint value={price.total} />
+            </div>
+          </div>
+          <p className="text-[11px] text-[var(--color-text-muted)]">
+            {withQuantity ? 'The total price is what you paid: it becomes the expense. Fill in either price and the other is worked out from the quantity.' : 'The total price is what you paid: it becomes the expense.'}
+          </p>
+          {mismatch && (
+            <div role="alert" className="rounded-2xl border border-amber-400/60 bg-amber-500/10 p-2.5 space-y-2">
+              <p className="text-[11px] text-amber-200">
+                {parseDecimal(quantity)} × €{mismatch.unit.toFixed(2)} is €{mismatch.expected.toFixed(2)}, not €{mismatch.total.toFixed(2)}. Which one is right?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPrice((p) => chooseUnitPrice(p, quantity, unit))}
+                  className="min-h-9 px-3 rounded-xl border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]"
+                >
+                  Unit price is right (total €{mismatch.expected.toFixed(2)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrice((p) => chooseTotalPrice(p, quantity, unit))}
+                  className="min-h-9 px-3 rounded-xl border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]"
+                >
+                  Total price is right (€{mismatch.total.toFixed(2)})
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         <ExpenseCategoryPicker value={{ mainId, subId }} onChange={pickCategory} mainCategories={mainCategories} subsOf={subsOf} onManage={() => setManagingCategories(true)} />
 

@@ -180,3 +180,20 @@ export function orderUnits(entry, pantry) {
   const purchase = pantry?.packaging_unit && Number(pantry.quantity_per_pack) > 0 ? pantry.packaging_unit : null
   return [...new Set([entry.unit, purchase, pantry?.unit].filter(Boolean))]
 }
+
+// The units a new order can be counted in when it is not linked to a HOME item.
+export const ORDER_UNITS = ['pcs', 'box', 'pack', 'bag', 'kg', 'gr', 'L', 'ml']
+
+// The units for an existing order linked to a HOME item: its purchase unit
+// (else the stock unit) first, then the other, then the order's own.
+export function linkedOrderUnits(order, pantry) {
+  const purchase = pantry?.packaging_unit && Number(pantry.quantity_per_pack) > 0 ? pantry.packaging_unit : null
+  return [...new Set([purchase, pantry?.unit, order.unit].filter(Boolean))]
+}
+
+// "2 box · €13.30": what was ordered and what it cost in total. An order
+// saved before quantities existed has 1 (its price is the total).
+export function orderAmountLabel(order) {
+  const quantity = Number(order.quantity) > 0 ? Number(order.quantity) : 1
+  return `${quantity}${order.unit ? ` ${order.unit}` : ''} · €${Number(order.price).toFixed(2)}`
+}
