@@ -1,0 +1,1266 @@
+# NUTRIHUB build plan — October 2026 (rounds 2–8)
+
+Written in round 1 (19/10/2026). Every later round starts in a fresh chat with
+no memory: **read this whole file first**, then only the files your round's
+section names. Everything the database needs for rounds 2–8 is already in
+`supabase/023_oct_2026_features.sql`; if a round truly needs more SQL, it goes
+in a new `supabase/024_<name>.sql` for review — never edit 002–023,
+`schema.sql`, `fix_access.sql` or `015_ROLLBACK.sql`, and never run SQL
+against Supabase yourself.
+
+Contents
+
+0. Rules for every round
+1. What round 1 checked in the code (and what differs from the brief)
+2. The database after 023 (reference)
+3. Round 2 — HOME Manage, MONEY lock, colours, unique names, keyword check
+4. Round 3 — Cart order (A), one-time purchases (B), group variants in SHOP (NOTE 1)
+5. Round 4 — Purchases with several items in MONEY (NOTE 2), merging old expenses (NOTE 3)
+6. Round 5 — Category suggestions while typing (NOTE 4), creating categories (NOTE 5)
+7. Round 6 — Discounts (NOTE 6)
+8. Round 7 — Trips (travel mode)
+9. Round 8 — AI structure (NOTE 7)
+10. Risks and decisions
+
+---
+
+## 0. Rules for every round
+
+**Who reads what.** Irene tests on her iPhone. Talk to her in simple
+Indonesian (or Italian if she writes Italian). Everything in the app — labels,
+toasts, code, comments, commit messages — is English.
+
+**Before you start.**
+
+- `supabase/023_oct_2026_features.sql` must have been run in Supabase (Irene
+  runs it after the round-1 review, before round 2 is deployed). The code of
+  rounds 2–8 may assume it. If a query still fails because a table or column
+  is missing (`isMissingTable(error)` in `lib/tableStore.js`, or PostgREST
+  `PGRST204` / Postgres `42703` for a column), show one clear message — "This
+  needs the database update supabase/023_oct_2026_features.sql" — instead of
+  crashing. Don't build a second code path for "before 023".
+- Run `npm test` before changing anything: on 19/10/2026 it was 51 files,
+  624 tests, all passing (598 before round 1 + 26 new 023 tests).
+
+**How this codebase is written (match it).**
+
+- Comments say in plain words what happens and why, above the code; no
+  jargon, no "TODO". Look at `src/hooks/usePurchase.js` for the tone.
+- Data access goes through the shared live table stores in `src/lib/stores.js`
+  (built by `createTableStore` in `src/lib/tableStore.js`): read with
+  `store.useRows()`, after a write call `upsertLocal` / `patchLocal` /
+  `removeLocal` so the screen updates without waiting for realtime. A new
+  table gets a new store there.
+- Writes use `attempt()` (toast + Retry on failure), `must()` (throws a
+  Supabase error), `inSteps()` (undo earlier steps if a later one fails),
+  `followUp()` (a non-critical step after a saved change) and
+  `deleteWithUndo()` — all in `src/lib/db.js`. Toasts and dialogs:
+  `showToast`, `askDialog`, `confirmDialog` in `src/lib/feedback.js`.
+- Every "Undo" restores exactly; nothing is ever lost silently.
+- Pure logic goes in `src/lib/*.js` with a `*.test.js` next to it; components
+  get render tests where there are some already (`*.render.test.jsx`).
+- Money: amounts are euros with 2 decimals; round with
+  `Math.round(x * 100) / 100`; parse typed numbers with `parseDecimal`
+  (comma or dot) and show the hint with `DecimalInput` / `DecimalHint`.
+- Dates: `DateField` everywhere (typed DD/MM/YYYY), stored as `YYYY-MM-DD`
+  local dates (`localDateString`).
+- Payers: `PAID_BY_OPTIONS` = irene, akbar, shared.
+- Phone first: tap targets ≥ 36 px (`min-h-9`), no horizontal scroll, inline
+  rows rather than popups where the brief says "no popups".
+
+**Finish every round with:** `npm test` (all green), `npm run lint`,
+`npm run build`; then commit only your files with a clear message (end it
+with the attribution line the session gives you) and push to `main` (GitHub
+Pages deploys it). Tell Irene in Indonesian what changed and give her your
+section's iPhone checklist.
+
+---
+
+## 1. What round 1 checked in the code
+
+Everything in the brief was checked against the code on 19/10/2026. All of it
+holds, with these differences and details (none blocks the plan):
+
+1. **Cart order today** — `groceryStore` (`lib/stores.js`) keeps
+   `grocery_items` newest first by `created_at`; `useGroceryList` builds
+   `cartItems` from it; `sortItems(…, 'recent')` and the List view sink
+   in-cart items to the bottom in `created_at` desc order; `ShoppingMode`
+   lists `inCart` in store order; `ConfirmPurchase` uses `cartItems`. So yes:
+   created_at desc everywhere. True.
+2. **`confirm_shopping_trip` makes one expense per line** — only when
+   `line_total > 0`; a line with total 0 makes no expense (but still adds
+   stock). Unchanged by 023.
+3. **`grocery_items.price`** is the price for `price_qty` × `price_unit`
+   (e.g. €2.50 per 500 gr), not always per single unit; `lineTotal()` in
+   `lib/pricing.js` converts. Same for `pantry_items.price`.
+4. **Expense details** — expenses really have no item/quantity/unit/price,
+   but a SHOP purchase line already kept a `grocery_snapshot` (quantity,
+   unit, price) per expense. 023 adds explicit columns to
+   `shopping_trip_items` so SHOP and MONEY lines read the same way.
+5. **MONEY "Home & Appliances"** — today it is locked from rename and move
+   (`EXPENSE_LOCKED` in `CategoryManager.jsx`) but **can be deleted**
+   (`PROTECTED` is only Other and Groceries). Round 2 adds the delete lock.
+6. **HOME category names** — today nothing checks HOME names at all
+   (`useInventoryCategories.addCategory` only numbers the id). The duplicate
+   "Frozen Vegetables": one is the seeded `frozen:vegetables` (010), the
+   other (under Fruit & Vegetables) was made by hand, so it is not in the
+   repo. Round 2's Manage can merge it (see there).
+7. **HOME display names** — `CATEGORY_NAME_OVERRIDES` shows `personal-care`
+   as "Beauty Care" whatever the database says, and `HIDDEN_CATEGORY_IDS`
+   (`baby`, `automotive`) are never shown. Round 2 must handle both (a
+   rename of personal-care would otherwise look like it did nothing).
+8. **Keyword list** — `suggestCategory` already drops a keyword answer whose
+   main category isn't on offer, and a sub-category that isn't under it
+   (`fit()` in `lib/categorySuggest.js`). But `guessCategory` decides
+   *before* that: a rule pointing to a missing category can still tie with a
+   valid one and make the guess "unclear" (null). Round 2 fixes this.
+9. **QuickAdd** asks with a popup when no category is found
+   (`askDialog` in `components/grocery/QuickAdd.jsx`). NOTE 5 replaces that
+   with chips / "No category" (round 5).
+10. **HOME editor requires a category** (`ItemEditor` refuses to save
+    without one). NOTE 5's grey "No category" is for SHOP and MONEY; items
+    that reach HOME through a purchase without a category show as "No
+    category" too (the database allows it). Decision: the HOME editor keeps
+    requiring a category.
+11. **Appliances** (`DURABLE_CATEGORY_IDS = ['appliances']`) never go into
+    HOME (no stock). So in MONEY "Add to HOME" is off and disabled for them.
+12. **"Holiday"** — no code looks for the name "Holiday" (searched all of
+    `src/`). Code finds MONEY categories by name only for "Groceries",
+    "Other" and "Home & Appliances" (and "Groceries" in `ReceiptsView`).
+13. **"New Item" label** — derived, not stored (`lib/newItems.js`): an item
+    created after `NEW_ITEM_SINCE` is new until it is bought/restocked again
+    (a purchase that creates it counts as part of creating it). So an item
+    created by a MONEY purchase gets the label by itself.
+14. **MONEY list today** shows a shopping trip as one row **per budget
+    category** (`ExpensesPage.expenseGroups`, key `trip|id|main`). NOTE 2
+    wants one row per purchase — round 4 changes that.
+15. **Live database** (from the brief): 25 tables = the 24 in the repo +
+    `weekly_planner` (not in the repo; 023 doesn't touch it). Live functions
+    match the repo exactly.
+16. **Grey is free?** SHOP tiles today: red Out, yellow Low, purple
+    Expired, **blue New Item**, category colour for stocked items. "Light
+    blue Not urgent" must be visibly different from the blue "New Item":
+    use sky (`rgba(56,189,248,…)`) plus the words "Not urgent".
+
+---
+
+## 2. The database after 023 (reference)
+
+All new tables: RLS on, one policy `household_only` (for all, to
+authenticated, `is_household_member()`), nothing for anon, live sync on.
+All new/replaced functions: `search_path = public`, household check
+(`42501`), anon/public can't run them.
+
+### New columns
+
+| Table.column | Meaning |
+|---|---|
+| `grocery_items.cart_added_at timestamptz` | When the entry went into the cart. Set/cleared **by the database** (trigger `grocery_items_cart_time`) on every path: a tap, the offline queue, Reopen, Confirm, Order online, Arrived. If the app sends a value with `in_cart: true` (the tap time, e.g. from the offline queue) that value is kept. Leaving the cart → null. Backfill: entries in the cart at 023 time got `created_at`. |
+| `grocery_items.one_time boolean default false` (nullable; null = false) | A SHOP entry for something not in HOME yet that is 1×. When Confirm creates the HOME item it inherits it. |
+| `pantry_items.one_time boolean not null default false` | One-time purchase. Constraint `pantry_items_one_time_not_group`: a group can't be 1× (variants can). "Finished" is derived: `one_time and current_stock <= 0`. |
+| `pantry_items.shop_dismissed_at timestamptz` | A group variant taken off the SHOP list by hand. Cleared **by the database** as soon as `current_stock > 0` (trigger `pantry_items_shop_dismissed`), so it can come back when it runs out again. |
+| `shopping_trips.source text` (`shop` default, `money`, `merged`) | Where the purchase was made: SHOP Confirm purchase, the MONEY purchase form, or by merging old expenses. Every existing trip is `shop`. |
+| `shopping_trips.coupon_kind` (`percent`/`amount`), `coupon_value`, `coupon_total` (€, default 0) | The coupon of the whole purchase. |
+| `shopping_trip_items.line_kind` (`shop` default, `money`) | A line from a SHOP entry, or typed in MONEY. |
+| `shopping_trip_items.quantity`, `unit` | What was bought (filled for both kinds by Confirm). |
+| `shopping_trip_items.list_total` | The **normal** price of the line as on the receipt, before any discount (null = no discount info: same as `line_total`). |
+| `shopping_trip_items.item_discount_kind` (`percent`/`amount`), `item_discount_value` | The line's own discount. |
+| `shopping_trip_items.coupon_share` (€, default 0) | The line's part of the purchase coupon. |
+| `expenses.merged_at`, `expenses.shop_before_merge` | Set when a single expense is merged into a purchase; `shop_before_merge` is the store it had (Split puts it back). |
+| `expenses.travel_id → travels` | The trip away it belongs to (on delete: set null, the expense stays). |
+| `orders.list_price`, `discount_kind`, `discount_value` | An order's normal price and its discount. `orders.price` stays the **paid total** (= the expense). |
+| `category_memory.expense_category_id → expense_categories` | The budget category remembered for a name (for things bought in MONEY that aren't HOME items). |
+| `category_memory.source` (`user` default, `ai`) | Who chose the remembered category. |
+
+Discount checks (constraints `shopping_trip_items_discount_ok`,
+`shopping_trips_coupon_ok`, `orders_discount_ok`): kind is `percent`
+(0–100) or `amount` (≥ 0).
+
+### New tables
+
+- **`travels`** — `id, name, kind ('holiday' | 'short'), start_date, end_date,
+  ended_on (null, or start ≤ ended_on ≤ end_date), created_at`. The period of
+  a trip is `start_date … coalesce(ended_on, end_date)`. "Trip" in the UI;
+  `travel` in code because `trip` already means a shopping trip
+  (`shopping_trips`, `expenses.trip_id`, `lib/trips.js`).
+- **`household_settings`** — `key text primary key, value jsonb, updated_at`.
+  Seeded: `ai_suggestions = false`.
+- **`ai_model_chain`** — `level ('light' | 'medium' | 'heavy' | 'photo'),
+  position (1, 2, …), model, active, web_search, note`; unique per
+  (level, position) and (level, model). **The app can only read it**
+  (authenticated has SELECT only). Seeded, insert-only-if-missing:
+  light: claude-haiku-5-5 → claude-sonnet-5-5 → claude-opus-5-5;
+  medium (web search): claude-sonnet-5-5 → claude-opus-5-5;
+  heavy: claude-opus-5-5; photo (later): claude-sonnet-5-5.
+  New models are added in the SQL Editor at the next position.
+- **`ai_category_proposals`** — one proposal of "Review all categories with
+  AI": `run_id, pantry_item_id, item_name, from_category_id,
+  from_subcategory_id, to_category_id, to_subcategory_id, new_category_name,
+  new_category_parent_id, reason, model, status ('pending' | 'approved' |
+  'rejected'), created_at, decided_at`.
+
+### Functions (call with `supabase.rpc(name, args)`)
+
+**`confirm_shopping_trip(payload)`** → the `shopping_trips` row. Unchanged for
+SHOP payloads (see "every changed line" below). New, all optional:
+
+```js
+{
+  id, trip_date, at, photo_ids, shop_id, paid_by,      // as before
+  source: 'money',                                      // only for the MONEY form
+  coupon_kind: 'amount' | 'percent', coupon_value, coupon_total,
+  items: [{
+    // SHOP line (as before): grocery_item_id, line_total, payer, expense_category_id,
+    //   durable, pantry_item_id, add, discard_expired, expiry_date, packaging_unit, quantity_per_pack
+    // new on any line:
+    travel_id, min_stock, list_total, item_discount_kind, item_discount_value, coupon_share,
+    // MONEY line (source 'money'), instead of grocery_item_id:
+    name, category_id, subcategory_id, quantity, unit, price, price_qty, price_unit, payer, one_time,
+    list_entry_id,   // an open SHOP entry for it: it leaves the list if stock really went into HOME
+  }],
+}
+```
+
+- MONEY line with "Add to HOME" off → send `durable: true` (an expense only,
+  exactly like an appliance in SHOP).
+- MONEY line, existing HOME item → `pantry_item_id` and `add` (in the item's
+  own unit — convert like `purchasedQuantity()` in `lib/purchase.js`); a
+  group needs a variant chosen first (as in SHOP).
+- MONEY line, new HOME item → `pantry_item_id: null`; the function first
+  looks for a non-group item with the same name (that's how a finished 1×
+  item is revived, never duplicated), else creates one with `category_id`,
+  `subcategory_id`, `unit`, the normal `price` / `price_qty` / `price_unit`,
+  `one_time` and `min_stock`.
+- `price` / `price_qty` / `price_unit` are the **normal** price (before
+  discounts): they become the HOME item's last price. `line_total` is what
+  was really paid (the expense).
+- `list_entry_id` closes that SHOP entry only if it is still "to buy" (not in
+  a cart, not ordered online, not bought) **and** the line really added stock.
+- Same `id` sent twice → saved once (both kinds).
+
+**`reopen_shopping_trip(trip_id)`** → number of lines undone (for a SHOP
+purchase: items back in the cart, as before; 0 = no longer there).
+SHOP lines exactly as before. MONEY lines: stock, history and expense undone,
+an item it created deleted, a SHOP entry it closed is "to buy" again
+(`in_cart` false); nothing goes into a cart. **Never deletes a merged
+expense** (they become single expenses again with their old store). A
+purchase with `source = 'merged'` is **refused** ("use Split").
+
+**`merge_expenses_into_purchase(payload)`** → the `shopping_trips` row.
+
+```js
+{ id /* new purchase, made by the app */, expense_ids: [uuid, …], shop_id /* optional */ }
+// or, to add to an existing purchase:
+{ trip_id, expense_ids: [uuid, …] }
+```
+
+Refuses (and changes nothing): fewer than 2 (new) / 0 (existing); an expense
+deleted meanwhile; an expense already in a purchase (or referenced by a
+purchase line); an expense of an order; different days; different payers; an
+existing purchase on another day or paid by someone else. Amount, category,
+date, payer and `travel_id` never change; each expense takes the purchase's
+store (its old one goes to `shop_before_merge`). A new purchase has
+`source = 'merged'`, its store is `shop_id`, or the one store all the
+expenses share. `total` grows by the merged amounts. Sent twice → once.
+
+**`split_merged_purchase(trip_id, expense_ids = null)`** → how many expenses
+were split off. Null = all merged expenses of that purchase. Each gets back
+its old store; a `merged` purchase with nothing left is deleted.
+
+**`merge_inventory_category(from_id, to_id)`** → `{ items, list_entries,
+memory, subcategories }`. Moves everything of `from_id` to `to_id`, then
+deletes `from_id`: HOME items, open/closed SHOP entries, remembered names
+(`category_memory`). Main → main: its sub-categories move along with their
+items. Main without subs → a sub. Sub → sub or main. The deleted category's
+budget mapping row disappears (the items then follow the target's mapping).
+Stock, expenses, colours and icons never change. Refuses: `appliances` itself;
+anything into or out of the appliances tree; a main with subs into a sub; a
+main into its own sub; the same category; missing ones.
+
+**`move_inventory_subcategory(sub_id, parent_id)`** → `{ items, list_entries,
+memory }`. A sub moves under another main (its items' main category
+follows); `parent_id = null` makes it a main; a main **without** subs can
+become a sub (its items get main = new parent, sub = it). Refuses: a main with
+subs becoming a sub, `appliances`, crossing the appliances tree, a category
+into itself. Same place → nothing happens.
+
+**Triggers:** `grocery_items_cart_time` (before insert/update on
+`grocery_items`), `pantry_items_shop_dismissed` (before insert/update on
+`pantry_items`). Both have the household check, but only for the app's roles
+(`anon`, `authenticated`), so maintenance in the SQL Editor is never blocked;
+the tables' own policy protects them anyway.
+
+### Every changed line in the two replaced functions
+
+`confirm_shopping_trip` (compared with 022, which it replaces):
+
+| Change | For a SHOP payload today |
+|---|---|
+| New variables `v_money` (payload.source = 'money'), `v_entry`, `v_entry_id`. | `v_money` is false. |
+| The trip insert also writes `source`, `coupon_kind`, `coupon_value`, `coupon_total`. | `'shop'`, null, null, 0 — the column defaults. |
+| The three line checks (entry exists / already bought / ordered online) are now inside `if not v_money then … end if`, same order, same messages. A MONEY line instead builds an in-memory `grocery_items` record from what was typed (never written) and refuses an empty name. | Same checks, same order. |
+| `v_entry_id := null` per line. | Unused. |
+| The expense insert also writes `travel_id` (from the line, else null). | null. |
+| The comment on name matching mentions the finished 1× item. | Comment only. |
+| A new HOME item also gets `one_time = entry.one_time` and `min_stock = line.min_stock` (default 0). | `one_time` false for every existing entry (new column, default false); `min_stock` 0 = the column default. Feature B.1: an entry marked 1× now makes a 1× item. |
+| New block: a MONEY line that added stock closes `list_entry_id`. | Skipped (`v_money` false). |
+| The line insert also writes `line_kind`, `quantity`, `unit`, `list_total`, `item_discount_kind`, `item_discount_value`, `coupon_share`; `grocery_item_id` is `v_entry_id` for MONEY lines. | `'shop'`, the entry's quantity and unit, null, null, null, 0; `grocery_item_id` = the entry, as before. |
+| The update marking the entry bought is inside `if not v_money`. | Runs as before. |
+
+`reopen_shopping_trip` (compared with 015):
+
+| Change | For a SHOP purchase today |
+|---|---|
+| `perform 1 … for update` became `select t.source into v_source … for update` (same lock, same "not found → 0"). | Same. |
+| New: `source = 'merged'` → refuse with "use Split". | Never `merged`. |
+| The expense delete got `and merged_at is null`. | Purchase lines' expenses are never merged (merge refuses them), so the same expenses are deleted. |
+| New first branch for `line_kind = 'money'` (entry back to "to buy", nothing re-inserted). | Lines are `shop`: the old two branches run unchanged. |
+| New last step: expenses merged into the purchase become single again, old store back. | No merged expenses: updates nothing. |
+
+Tests (`supabase/migrations.test.js`, block "023"): a full SHOP purchase
+under 023 gives exactly the same stock, history, expenses and Reopen result
+as the 014 tests; "already ordered online" and "never stock to a group by
+name" still hold; a snapshot from before 023 is still put back by Reopen.
+
+---
+
+## 3. Round 2 — HOME Manage, MONEY lock, colours, unique names, keyword check
+
+### Files
+
+- `src/hooks/useInventoryCategories.js` — add `renameCategory(id, name)`,
+  `moveSubcategory(id, parentId)` (rpc `move_inventory_subcategory`),
+  `deleteCategory(id, targetId)` (plain delete when nothing uses it, else rpc
+  `merge_inventory_category`), all with the name checks below; after each,
+  `inventoryCategoryStore.refresh()`, `pantryStore.refresh()`,
+  `groceryStore.refresh()`, `categoryMemoryStore.refresh()`,
+  `budgetMapStore.refresh()`.
+- new `src/lib/inventoryCategoryEdit.js` (+ test) — pure rules, like
+  `lib/categoryEdit.js`: `homeNameKey(name)` (trim, lower case, accents off,
+  spaces collapsed), `homeNameTaken(categories, name, exceptId)`,
+  `renameProblem`, `moveProblem`, `deleteProblem`, `usageOf(category, items,
+  entries, memory)`.
+- new `src/components/inventory/InventoryCategoryManager.jsx` — the Manage
+  screen (bottom sheet like `CategoryManager.jsx`).
+- `src/components/inventory/BudgetMappingView.jsx` — a "Manage categories"
+  button at the top (HOME → Categories is where it lives).
+- `src/data/constants.js` / `useInventoryCategories.visibleCategories` — the
+  name override only while the stored name is still the old default (see
+  rules).
+- `src/components/expenses/CategoryManager.jsx` — `PROTECTED` gets
+  "Home & Appliances"; its hint says "Locked: it can't be renamed, moved or
+  deleted."; `src/hooks/useExpenses.js` `deleteCategory` refuses it too.
+- `src/hooks/useCategoryColors.js`, `src/lib/expenseColors.js` — sub colour
+  = main colour.
+- `src/components/expenses/ExpenseGroup.jsx`, `CategoryManager.jsx` (and any
+  other place drawing a sub-category dot) — sub dot half size.
+- `src/lib/categoryGuess.js`, `src/lib/categorySuggest.js` — keyword check.
+
+### Data used
+
+`inventory_categories`, `pantry_items.category_id/subcategory_id`,
+`grocery_items.category_id/subcategory_id`, `category_memory`,
+`category_budget_map`; rpc `merge_inventory_category`,
+`move_inventory_subcategory`; `expense_category_colors` (read only).
+
+### Rules
+
+**HOME Manage screen**
+
+- Lists main categories in shop order with their subs indented; each row
+  shows its item count ("12 items" = HOME items in it, sub items counted in
+  their main too) and buttons Rename · Move · Delete. "+ Add category" /
+  "+ Add sub-category" at the top.
+- **Rename** main or sub: same id, so items, colours, icons, budget mapping
+  and the shop order stay. `appliances` can be renamed.
+- **Move** a sub to another main (or make it a main) with its items:
+  `move_inventory_subcategory`. A main with subs can't become a sub (the
+  button explains it). A main without subs can become a sub. `appliances`
+  can't be moved; nothing moves into or out of Home & Appliances.
+- **Delete**: if nothing uses it (no items, no SHOP entries, no remembered
+  names, no subs) → plain delete with Undo. Otherwise ask inline "Move items
+  to…" (a select of other categories; main with subs → mains only) and call
+  `merge_inventory_category`. Toast: "Moved 12 items to Snacks · Sweet
+  Snacks. 'Biscotti' deleted." (No Undo for a merge: say so before
+  confirming.) `appliances` can't be deleted.
+- Old expenses, stock, colours and icons never change (the function doesn't
+  touch them).
+- **Unique HOME names**: a HOME category name must be unique across ALL HOME
+  categories, main and sub, under any main, ignoring capitals, accents and
+  extra spaces. Checked in app code on add and rename (also in
+  `addCategory` / `addSubcategory` used by SHOP and the item editor). **No
+  database unique index** — the live data still has the duplicate "Frozen
+  Vegetables", so an index would fail. Hidden categories (`baby`,
+  `automotive`) don't count. The existing duplicate must not block anything
+  else: the check only looks at the name being typed.
+- HOME and MONEY never check each other's names.
+- **Name override**: show `personal-care` as "Beauty Care" only while its
+  stored name is still the original "Personal Care & Beauty"; after a rename
+  in Manage show the stored name. (Otherwise a rename looks ignored.)
+- Merging "Frozen Vegetables": Irene deletes the hand-made one under Fruit &
+  Vegetables and moves its items to Frozen Food › Frozen Vegetables (or the
+  other way round). The function re-points memory and SHOP entries.
+
+**MONEY**
+
+- "Home & Appliances" locked from delete as well (button disabled with the
+  lock hint), like Groceries and Other.
+- **Sub-category colour = its main's colour.** `styleFor(subId)` returns the
+  main's style. Colours are no longer generated or saved for subs
+  (`assignCategoryColors` only for mains); old saved sub colour rows stay in
+  the table, unused. Apply to income categories too (same component, same
+  rule — see Risks).
+- Sub dot ≈ half the main dot: main `w-2.5 h-2.5` (10 px) → sub
+  `w-[5px] h-[5px]`, in the opened expense row (`ExpenseGroup` section
+  headers) and in Manage (`CategoryManager` rows).
+
+**Keyword check**
+
+- `guessCategory(name, available)` gets the set of existing category ids
+  (main and sub) and ignores rules whose **main** doesn't exist *before*
+  scoring; a rule whose sub is missing but main exists counts as main-only.
+  So a missing category can't make a clear guess "unclear". `suggestCategory`
+  passes `parents` / `subsByParent`; `fit()` stays as a second guard.
+- Rules pointing to missing categories are silently ignored (no error, no
+  console noise).
+
+### Edge cases
+
+- Rename "Snacks" to "snacks " (only case/space) → allowed (same category),
+  saved trimmed.
+- Rename "Snacks" to "Sweet Snacks" while a sub "Sweet Snacks" exists →
+  refused: "'Sweet Snacks' already exists (under Snacks)."
+- Delete sub "Ice Cream" with 5 items → asks "Move 5 items to…"; pick
+  "Frozen Food" (main) → items keep main Frozen Food, no sub.
+- Delete main "Garden" with subs Seeds, Tools → only mains offered; after
+  moving to "Outdoor", Seeds and Tools are under Outdoor.
+- Delete "Garden" while the other phone adds an item to it → the function
+  runs in one transaction: either the item was there and moved, or it comes
+  after the delete (then it is "No category"); never lost stock.
+- A keyword rule for `frozen:vegetables` after that sub was merged away →
+  the guess falls back to main "Frozen Food".
+
+### iPhone checklist
+
+1. HOME → Categories → Manage categories: every main shows its item count.
+2. Rename a sub (e.g. "Cheese" → "Cheese & Dairy"): items in it still show
+   it; the budget mapping for it is unchanged.
+3. Try to rename a category to a name used elsewhere (e.g. "Frozen
+   Vegetables" → "Fresh Fruit"): refused with the place it is used.
+4. Move a sub to another main: its items now show under the new main
+   (filter HOME by category).
+5. Delete the hand-made "Frozen Vegetables" → choose Frozen Food › Frozen
+   Vegetables → items moved, only one "Frozen Vegetables" left.
+6. Home & Appliances: rename works, Move/Delete are disabled.
+7. MONEY → Manage: "Home & Appliances" can't be deleted.
+8. MONEY: open an expense day with a sub-category: the sub dot has the main
+   colour and is half the size; same in Manage.
+9. SHOP quick add "pizza": still suggests Frozen Food › Frozen Meals.
+
+---
+
+## 4. Round 3 — Cart order (A), one-time purchases (B), group variants in SHOP (NOTE 1)
+
+### Files
+
+- `src/hooks/useGroceryList.js` — `cartItems` sorted oldest in cart first;
+  `reasonOf` knows `not-urgent` and 1×; `PRIORITY` puts `not-urgent` last.
+- `src/hooks/useGroceryItems.js` — `toggleCart` sends
+  `cart_added_at: inCart ? new Date().toISOString() : null` and patches it
+  locally; `addItem` accepts `oneTime`.
+- `src/lib/offlineActions.js` — `queueCart` keeps the tap time and sends it
+  as `cart_added_at` (the trigger keeps a sent time).
+- `src/pages/GroceryPage.jsx`, `src/components/grocery/ShoppingMode.jsx`,
+  `src/components/grocery/ConfirmPurchase.jsx` — cart lists in cart order.
+- `src/lib/inventory.js` — `restockReason` / `displayReason` / stats for
+  1×; `syncShoppingForItem` / `syncGroupOf` for the new group rule.
+- new `src/lib/oneTime.js` (+ test) — `isOneTime`, `isFinished(item)`,
+  `splitFinished(items)`.
+- `src/hooks/usePantryItems.js` — `ITEM_FIELDS` + `one_time`,
+  `shop_dismissed_at`; "finished" toast with Undo; flagging takes the item
+  off "to buy".
+- `src/components/inventory/ItemEditor.jsx` — 1× toggle (new and edit, not
+  for groups), minimum field hidden while on.
+- `src/pages/PantryPage.jsx` — collapsed "Finished one-time items".
+- `src/components/inventory/ItemTile.jsx`, `GroupTile.jsx` — grey 1× label;
+  finished 1× variants hidden in the group.
+- `src/components/grocery/AddItemForm.jsx` (More options) — 1× toggle for a
+  new SHOP entry not in HOME.
+- `src/components/grocery/GroceryItemTile.jsx`, `ShoppingMode.jsx`
+  (`ShopTile`), `ConfirmPurchase.jsx` — 1× label; group row "— out: …",
+  × per variant, "Not urgent" colour.
+- `src/lib/inventoryStyles.js` — `not-urgent` style (sky) and a neutral
+  grey `oneTime` badge.
+- `src/lib/purchase.js` — prefill the variant of a group line with the
+  first out variant.
+
+### Data used
+
+`grocery_items.cart_added_at` (trigger keeps it right), `grocery_items.one_time`,
+`pantry_items.one_time`, `pantry_items.shop_dismissed_at` (trigger clears it
+on restock), constraint `pantry_items_one_time_not_group`;
+`confirm_shopping_trip` (inherits 1× for new items; revives a finished 1× item
+by name).
+
+### Rules
+
+**A. Cart order**
+
+- Cart list, ShoppingMode "in the cart" and Confirm purchase: oldest in cart
+  first — `cart_added_at` ascending, then `created_at` ascending (items
+  reopened together share one time).
+- "To buy" lists keep their own sorting.
+
+**B. One-time purchases ("1×")**
+
+1. The flag can be set in the HOME editor (new and edit), and on a new SHOP
+   entry (More options) for something not in HOME. A SHOP entry linked to a
+   HOME item shows (and changes) the HOME item's flag. Confirm purchase makes
+   a new HOME item 1× when its entry was (023 does it).
+2. Finished = 1× and stock ≤ 0. A finished item is hidden from the HOME grid
+   and listed in a collapsed section "Finished one-time items (N)" at the
+   bottom; never deleted. When a stock change makes a 1× item finished, toast
+   "'Sun cream' is finished — moved to Finished one-time items" with Undo
+   (puts the stock back with reason `edited`).
+3. The flag can be removed any time, also from the Finished section ("Not
+   one-time"). Then the item is a normal item again: at stock 0 it is Out and
+   goes on the SHOP list like any Out item (say so in the button's hint).
+4. Grey "1×" label (neutral grey badge) in HOME tiles, SHOP list, ShoppingMode
+   and Confirm purchase. A 1× item never turns yellow/red: `restockReason` and
+   `displayReason` return null for it; its minimum is ignored; the minimum
+   field is hidden in the editor while 1× is on (the stored value is kept).
+   1× items don't count in the Low/Out stat tiles; finished ones don't count
+   in "Total items".
+5. Flagging an item that is on the SHOP list: its open entries that are
+   neither in a cart nor ordered online are removed (with Undo) — manual
+   entries too. In the cart or on the way: they stay.
+6. A variant may be 1× (finished → hidden inside the group; the group stays).
+   A group can never be 1× (toggle not shown; the database refuses it too).
+7. Bought again by the same name → the finished item comes back (the
+   database matches by name; keep finished items in `pantryItems` so
+   `pantryItemFor` and QuickAdd suggestions find them).
+8. No existing item becomes 1× by itself (023 changed none).
+9. MONEY expenses and trips are always kept (nothing here deletes them).
+
+**NOTE 1. Group variants in SHOP**
+
+- A group gets ONE SHOP entry (as today, `pantry_item_id` = the group) when
+  its total ≤ its minimum **or** at least one variant is at 0 (and that
+  variant is not 1× and not dismissed). The minimum stays on the group.
+  Variants never get entries of their own (as today).
+- The row: "Chips & Snacks — out: Pringles, Tuc" (out variants, not 1×, not
+  dismissed). Colour from the group: red total 0; yellow total ≤ min; sky
+  light blue + "Not urgent" when the total is above the minimum but a variant
+  is at 0.
+- Order: in the default priority sort (and the budget plan) red and yellow
+  on top, "Not urgent" at the bottom (`PRIORITY = ['out','low','expired',
+  'new','stocked','not-urgent']`). Other sorts (A–Z, price, recent) and
+  ShoppingMode's shop order stay as they are.
+- Inside a group row (opened) and in Confirm purchase's variant select:
+  variants at 0 first, then lowest to highest stock. Confirm purchase
+  pre-selects the first out variant (the user can change it). HOME's group
+  tile keeps its A–Z variant list.
+- Removing one variant by hand (× on its name in the row) sets its
+  `shop_dismissed_at`; it doesn't come back until it is restocked (the
+  database clears the mark when its stock goes above 0) and then runs out
+  again. If no listed variant is left and the group isn't low, the row goes
+  away.
+- Deleting a whole "Not urgent" row by hand dismisses every variant it
+  listed (Undo clears those marks and puts the row back). Deleting a
+  yellow/red row works as for any Low/Out item today.
+- Stock from Confirm purchase goes to the variant, never the group (true
+  since 022; the confirm screen must still require a variant).
+
+### Edge cases
+
+- Two phones tap Milk then Bread 2 s apart → cart shows Milk, Bread on both.
+- Tapped offline at 10:00, sent at 10:30 → its time is 10:00.
+- Reopen puts 5 items back → all get the reopen time; they keep their list
+  order between them (created_at).
+- 1× "Sun cream" stock 1 → use 1 → finished, toast with Undo → Undo → stock
+  1, visible again.
+- 1× "Party hats" finished, SHOP quick add "party hats" → links to the
+  finished item → Confirm → stock 2, one item, back in the grid.
+- 1× flag on "Batteries", which has an open auto entry in the cart → entry
+  stays in the cart.
+- Group "Chips & Snacks" min 4: Lays 5, Pringles 0, Tuc 0 → total 5 > 4 →
+  sky "Not urgent — out: Pringles, Tuc". × on Tuc → "— out: Pringles". Buy
+  Tuc later (restock +2) → its mark is cleared; when Tuc is 0 again it shows
+  again.
+- Same group, Lays 3, Pringles 0 → total 3 ≤ 4 → yellow, "— out: Pringles".
+- A 1× variant at 0 → never listed; hidden in the group.
+
+### iPhone checklist
+
+1. Put three items in the cart in the order Bread, Milk, Eggs → the cart and
+   Confirm purchase show Bread, Milk, Eggs.
+2. HOME → Add item with "One-time purchase (1×)" on: the minimum field
+   disappears; the tile shows a grey "1×".
+3. Use it down to 0 → it moves to "Finished one-time items" with a toast;
+   press Undo → it is back.
+4. In Finished, press "Not one-time" → it shows as Out and appears on the
+   SHOP list.
+5. SHOP → More options → new item "Balloons" with 1× → Confirm purchase →
+   HOME has "Balloons" with 1×.
+6. Mark an item that is "to buy" in SHOP as 1× → it leaves "to buy".
+7. A group with one variant at 0 but total above its minimum → one sky "Not
+   urgent" row at the bottom of the SHOP list listing that variant.
+8. × on that variant → it disappears; restock it in HOME, use it to 0 → it
+   is listed again.
+9. Confirm a group row → the out variant is pre-selected.
+
+---
+
+## 5. Round 4 — Purchases with several items in MONEY (NOTE 2), merging old expenses (NOTE 3)
+
+### Decision: MONEY purchases reuse `shopping_trips` / `shopping_trip_items`
+
+A purchase typed in MONEY is a `shopping_trips` row with `source = 'money'`,
+one `shopping_trip_items` line per item (`line_kind = 'money'`) and one
+expense per line, saved by the same `confirm_shopping_trip` in one
+transaction. Why: SHOP trips already have everything a multi-item purchase
+needs — one store, one payer, one date, one expense per line, stock per line,
+exact Undo (`reopen_shopping_trip`), receipt photos, the "Change the store of
+the whole trip" action, Receipts, and the MONEY list grouping by `trip_id`.
+A parallel table would have to copy all of it and would drift; with one
+structure "MONEY purchases and SHOP trips look and work the same" comes for
+free. The item details (quantity, unit, normal price, discounts) live on the
+**line**, next to the expense id, for both kinds. A plain single expense
+(edited with the old Edit expense form) stays a plain expense.
+
+### Files
+
+- new `src/components/expenses/PurchaseForm.jsx` — the "Add expense" button
+  opens it (one item row to start, "+ Add item").
+- new `src/lib/moneyPurchase.js` (+ test) — rows → `confirm_shopping_trip`
+  payload; Add-to-HOME default; which HOME item / SHOP entry a row matches.
+- `src/hooks/usePurchase.js` — `recordMoneyPurchase()` (like `confirmCart`:
+  id made once per form, Undo toast = `reopenTrip`), `reopenTrip` wording by
+  `source`; `deleteTripRecord` splits merged expenses first.
+- new `src/hooks/useMerge.js` — `mergeExpenses`, `addToPurchase`,
+  `splitPurchase` (rpcs), Undo toasts.
+- `src/pages/ExpensesPage.jsx` — one row per purchase; Select mode; delete
+  dialog per kind.
+- `src/components/expenses/ExpenseGroup.jsx`, `EntryRows.jsx` (`TripRow`) —
+  the purchase row and its opened view (shared component for both lists).
+- new `src/components/expenses/MergeDialog.jsx` — store / date / payer form.
+- `src/lib/moneyList.js` (+ test) — `groupPurchases()` instead of the
+  per-category trip key; `purchasePart()` for the category filter.
+- `src/lib/trips.js` (+ test) — `tripState` counts merged expenses too.
+- `src/components/grocery/ReceiptsView.jsx` — label per source: Reopen
+  (shop) / Undo purchase (money) / Split (merged).
+- `src/hooks/useBudgetMap.js` — `previewPastPurchases` reads only
+  `line_kind = 'shop'` lines (and orders).
+
+### Data used
+
+`shopping_trips` (`source`), `shopping_trip_items` (`line_kind`, `quantity`,
+`unit`, `list_total`…), `expenses` (`trip_id`, `merged_at`,
+`shop_before_merge`), rpcs `confirm_shopping_trip` (source 'money'),
+`reopen_shopping_trip`, `merge_expenses_into_purchase`,
+`split_merged_purchase`; `category_budget_map` via `lib/budgetMap.js`.
+
+### Rules — NOTE 2 (the purchase form)
+
+- Top: store (`ShopPicker`), date (`DateField`), payer (Irene / Akbar /
+  Shared). Rows: name, price (as on the receipt), quantity + unit (default
+  1 pcs), HOME item category › sub (round 4: the existing `CategoryFields`
+  select prefilled by `useCategorySuggestions`; round 5 turns it into chips),
+  budget category (follows the HOME category through the mapping, changeable),
+  "Add to HOME" toggle; for a new HOME item also "1×" toggle and a small
+  "Min" field (default 0). No popups: everything inline.
+- One item row = one normal expense (one line). Several rows = one purchase.
+- Item category from the name, then budget category =
+  `budgetCategoryFor({ category_id, subcategory_id })` (existing mapping).
+- "Add to HOME": on by default when the row has a HOME item category (and it
+  isn't Home & Appliances); off otherwise; can be switched off. Off → the line
+  is `durable: true` (expense only). On: an existing HOME item (same name,
+  not a group; or picked) → stock goes up by the quantity converted to its
+  unit (`purchasedQuantity`; ask the pack size inline if needed, as Confirm
+  does); a finished 1× item comes back; a group → pick a variant inline.
+  New → created in HOME (gets "New Item" by itself) with 1× and Min.
+- If that HOME item has an open SHOP entry still "to buy", send it as
+  `list_entry_id`: it leaves the SHOP list only if the stock really went into
+  HOME (023 checks). Show it on the row: "On your SHOP list — it will leave
+  the list". An entry in a cart or ordered online is never closed (say "It's
+  in the cart in SHOP" on the row).
+- MONEY expenses are never deleted by any of this.
+- Saved with one press; same id if pressed again (no double purchase).
+  Toast "Purchase saved · 3 items · €33.40" with Undo (= reopen).
+- Before AI: the AI hooks are prepared in round 8; nothing here waits for it.
+
+**In the list (one row per purchase, SHOP and MONEY alike)**
+
+- Collapsed: store · date · total · one colour dot per main category in it
+  (main colour), payer(s). Opened: items grouped by main category with a
+  subtotal each; every item shows its name, sub-category, quantity/unit, and
+  amount (and in round 6 its discount history); edit/delete per item as
+  today; "Change the store of the whole purchase".
+- "By category" chart and filters stay per category: they count expenses, so
+  nothing changes there. With a category filter on, the purchase row shows
+  only that category's part and "of total €80" (the purchase's full total =
+  sum of all its loaded expenses).
+- Deleting an expense of a purchase asks: SHOP → "Reopen purchase" or
+  "Delete expense only" (as today); MONEY → "Undo the whole purchase" or
+  "Delete expense only"; merged → "Take it out of the purchase (Split)" or
+  "Delete expense only".
+
+### Rules — NOTE 3 (merge)
+
+- Expenses → "Select" → tick single expenses (purchase expenses and order
+  expenses show no tick box) → "Merge into one purchase" → inline form:
+  store (prefilled when they share one; must be chosen when they differ or
+  are empty — "Choose the store for this purchase"), date and payer shown
+  (read-only). Allowed only if all have the same date and the same payer;
+  the button says why when not.
+- "Add to an existing purchase": lists purchases (SHOP or MONEY or merged) of
+  the same day whose expenses are all paid by the same person.
+- Amounts, categories, charts' category totals and HOME stock never change.
+  The store of each merged expense becomes the purchase's store (its old
+  store is kept and comes back on Split) — so "By store" can change for
+  those expenses (see Risks — confirm with Irene).
+- Undo (toast) and "Split" (button on a merged purchase; "Take it out" per
+  merged expense) call `split_merged_purchase`.
+- **Safety (critical).** A merged expense is never a line of the purchase:
+  the purchase only points to it (`expenses.trip_id` + `merged_at`), so the
+  code that deletes a purchase's expenses (`reopen_shopping_trip`) can't
+  reach it. On top: (1) Reopen of a `merged` purchase is refused in the
+  database ("use Split"); (2) Reopen of a SHOP/MONEY purchase that has merged
+  expenses turns them back into single expenses (old store) instead of
+  deleting them; (3) the delete in Reopen skips any expense with `merged_at`.
+  The app never shows Reopen for a merged purchase, and "Delete record" on a
+  purchase with merged expenses first splits them (so their stores come
+  back). Tested in `supabase/migrations.test.js` (023 block).
+
+### Edge cases
+
+- Conad, 14/10, Irene: "Cat food" €20 (Pets), "Bread" €2.50 (Groceries) →
+  one row "Conad · 14/10 · €22.50" with an orange and a green dot; opened:
+  Groceries €2.50 · Bread; Pets €20 · Cat food. Chart: Groceries +2.50,
+  Pets +20.
+- With the Pets filter on: the row shows "Cat food €20 · of total €22.50".
+- "Bread" is in HOME and on the SHOP list (to buy) → after saving: stock +1,
+  the entry is bought. With Add to HOME off → the entry stays on the list.
+- "Dinner at Mario's" (no HOME category) → Add to HOME off by default.
+- "Laptop" (Home & Appliances) → Add to HOME off and disabled.
+- Merge 3 expenses of 14/10 by Irene, stores Conad / none / Lidl → store
+  must be chosen; choose Conad → all three show Conad; Split → back to
+  Conad / none / Lidl.
+- Merge an expense of Akbar with one of Irene → refused before sending.
+- Merge an order's expense → no tick box (the database refuses it anyway).
+- Undo of a MONEY purchase that created "Sun cream" in HOME → the item is
+  deleted again; the expenses are gone; stock of others back.
+
+### iPhone checklist
+
+1. MONEY → Add expense → one row → Save: one expense, as before.
+2. "+ Add item" → two rows of different categories → one purchase row with
+   two dots; open it: two groups with subtotals.
+3. Turn on a Pets filter in the chart → the row shows only the Pets part
+   "of total …".
+4. A row for an item in HOME with "Add to HOME" on → HOME stock went up;
+   it was on the SHOP list → it left the list.
+5. A new item with 1× and Min 0 → appears in HOME with "New Item" and "1×".
+6. Undo in the toast → everything is back as before.
+7. Select → tick two old expenses of the same day and payer → Merge →
+   choose the store → one purchase row; amounts and the category chart
+   unchanged.
+8. On that merged purchase: no Reopen, a Split button; Split → the two
+   expenses are single again with their old stores.
+9. Add one more single expense of that day to an existing SHOP purchase →
+   then Reopen that SHOP purchase → the added expense is still in the list.
+
+---
+
+## 6. Round 5 — Category suggestions while typing (NOTE 4), creating categories (NOTE 5)
+
+### Files
+
+- `src/lib/categorySuggest.js` (+ test) — `suggestCategories(name, context,
+  { limit: 3 })` → up to 3 chips `{ categoryId, subcategoryId,
+  expenseCategoryId, source, label }`, layers memory → pantry → keywords
+  (→ AI in round 8). Keep `suggestCategory` (first chip) for existing callers.
+- `src/lib/categoryGuess.js` (+ test) — `guessCategories(name, available,
+  limit)`: the best distinct rules, best first (today only the single best).
+- new `src/lib/categoryNames.js` (+ test) — `similarName`, `findExisting`,
+  `freeNameSuggestions(name, main, taken, synonyms)`.
+- new `src/data/categorySynonyms.js` — small built-in list (Gifts →
+  Souvenirs, Restaurant → Dining, Electronics → Gadgets, Clothes → Apparel,
+  Snacks → Treats, Drinks → Beverages, Car → Vehicle, Travel → Journeys,
+  Books → Reading, Toys → Games…).
+- new `src/components/ui/CategoryChips.jsx` — chips + "✚ New" + the inline
+  create row.
+- new `src/lib/lastPrice.js` (+ test) — last normal price and unit for a
+  name.
+- `src/hooks/useCategorySuggestions.js` — memory with `expense_category_id`
+  and `source`; `rememberBudget()`.
+- Use the chips in: `PurchaseForm.jsx` rows, `ExpenseForm.jsx`
+  (description), `components/grocery/AddItemForm.jsx`, `QuickAdd.jsx`
+  (replace the category popup), `ConfirmPurchase.jsx` for "No category"
+  lines.
+
+### Data used
+
+`category_memory` (+ `expense_category_id`, `source`), `pantry_items`,
+`shopping_trip_items` (`name`, `list_total`, `line_total`, `quantity`,
+`unit`, `created_at`), `orders` (`list_price`, `price`, `quantity`, `unit`),
+`inventory_categories`, `expense_categories`, `category_budget_map`.
+
+### Rules — NOTE 4
+
+- Under the name field: 1–3 chips "Category › Sub" (HOME item categories;
+  for an "Add to HOME off" MONEY row: budget categories). Tapping fills HOME
+  category, sub and the budget category (mapping), or the budget category
+  directly.
+- Picking something other than the first chip (or choosing by hand) is
+  remembered for that name: `category_memory` upsert, `source: 'user'`; for a
+  MONEY-only pick also `expense_category_id`. Memory is tried first next time.
+- Same behaviour in SHOP (AddItemForm, QuickAdd).
+- Bought before → last price and purchase unit fill in (editable), from the
+  most recent of: a purchase line with that name (`list_total ?? line_total`
+  for its `quantity` + `unit`), the HOME item (`price` / `price_qty` /
+  `price_unit`), an order (`list_price ?? price` for its `quantity` +
+  `unit`). Store is never filled. "Last price" is the **normal** price
+  before any discount (round 6 stores it; before round 6 `list_total` is
+  null and `line_total` is used).
+
+### Rules — NOTE 5
+
+- Always confirmed: a "✚ New" chip next to the existing chips opens a small
+  inline row (not a popup): name (editable), budget category, "Create". It
+  only adds. Sub missing but main exists: "Dairy & Eggs › ✚ Kefir" (creates
+  the sub).
+- Before showing "✚ New", compare with all existing categories and subs,
+  similar names included (capitals, accents, singular/plural via
+  `singular()`, "&"/"and", extra spaces): a match shows that existing chip
+  instead.
+- "Add to HOME" on → a HOME category (+ its mapping); off → a MONEY category
+  only. From the SHOP list always a HOME category.
+- Mapping of a new HOME category: if a MONEY **main** category has the same
+  or a similar name (e.g. HOME "Pet Supplies" ~ MONEY "Pets", HOME "Health &
+  Medicine" ~ MONEY "Health") → that one; otherwise Groceries. Shown in the
+  create row and changeable; a `category_budget_map` row is written only when
+  the choice differs from the default (Groceries), like the mapping screen.
+- Before AI: when nothing matches, no guessed chip — only "✚ New category";
+  an item saved without a category shows a grey "No category" label (SHOP
+  tile, MONEY row, HOME tile). After AI (round 8): AI may propose a new
+  category through the same "✚ New" row; it still needs Create.
+- **Name already used** — the create row must say so and offer a free name
+  before Create, e.g. "Gifts already exists in Shopping". Name stays
+  editable; the app never renames by itself. Before AI: 1–2 suggestions that
+  are guaranteed free: "<main name> <name>" ("Holiday Gifts" / "Trips
+  Gifts") and a synonym from the built-in list ("Souvenirs"); each checked
+  against the uniqueness rule, skipped if taken. After AI: AI suggests the
+  best fitting free name (still checked).
+- Uniqueness: MONEY keeps its rule (unique across all levels, ignoring
+  capitals; the database also has a case-sensitive unique constraint on
+  `expense_categories.name`). HOME: the round-2 rule (all levels, app code
+  only, no index). HOME and MONEY never check each other.
+
+### Edge cases
+
+- "kefir" → chips "Dairy & Eggs › Yogurt & Desserts", "Dairy & Eggs ›
+  ✚ Kefir"; tapping the second opens the row "Kefir" under Dairy & Eggs,
+  budget Groceries → Create.
+- Typing "Gift" in MONEY with Add to HOME off → chip "Shopping › Gifts"
+  (similar to existing) instead of "✚ Gift".
+- During a trip, "✚ Gifts" under Trips → "Gifts already exists in Shopping"
+  → suggestions "Trips Gifts", "Souvenirs".
+- Nutella bought at €6.00 −50% → paid €3.00 → next time the price fills
+  €6.00.
+
+### iPhone checklist
+
+1. MONEY → Add expense → type "yogurt" → 1–3 chips; tap one → category,
+   sub and budget category filled.
+2. Pick a different chip → next time "yogurt" suggests your pick first.
+3. Type something you bought before → price and unit filled, store empty.
+4. Type a new thing → "✚ New category" only → create it inline; it appears
+   in HOME (if Add to HOME on) and in Categories mapping.
+5. Try to create "Gifts" under another main → warning with free names;
+   pick one → created.
+6. SHOP quick add of an unknown word → no popup; it's added with a grey "No
+   category"; tap to fix.
+
+---
+
+## 7. Round 6 — Discounts (NOTE 6)
+
+### Files
+
+- new `src/lib/discounts.js` (+ test with every example below) —
+  `applyDiscount(list, { kind, value })`, `spreadCoupon(lines, coupon)`,
+  `discountLabel(list, paid, discount)`.
+- `src/components/expenses/PurchaseForm.jsx` — per row "−% / −€" inline
+  field; at the bottom "Purchase discount" (coupon, % or €).
+- `src/components/grocery/ConfirmPurchase.jsx`, `src/lib/purchase.js` — same
+  two kinds; the typed total is the **normal** price, the paid amount is
+  computed; `confirmationPayload` sends `line_total` (paid), `list_total`,
+  `item_discount_*`, `coupon_share`, and the trip's `coupon_*`.
+- `src/components/expenses/OrderForm.jsx`, `src/hooks/useOrders.js`
+  (`orderRowFrom`, `editOrder`), `src/lib/orders.js` — per-item discount only;
+  `list_price`, `discount_kind`, `discount_value`; `price` = paid.
+- `ExpenseGroup.jsx`, `EntryRows.jsx` — the history "€6.00 → €3.00 (−50%)"
+  on the item, "Conad · €150 (coupon −€50)" on the purchase row.
+
+### Data used
+
+`shopping_trip_items.list_total`, `item_discount_kind`, `item_discount_value`,
+`coupon_share`; `shopping_trips.coupon_kind`, `coupon_value`, `coupon_total`;
+`orders.list_price`, `discount_kind`, `discount_value`; `expenses.amount`
+(always what was really paid).
+
+### Rules
+
+- Per item: percent or € off. Sneakers €80 −30% → €56; Jacket €120 −€25 →
+  €95. Shown "€80 → €56 (−30%)", "€120 → €95 (−€25)". A discount larger than
+  the price → paid €0 (refuse more than 100 %).
+- Whole-purchase coupon (% or €): the user types each price as on the
+  receipt, then "Purchase discount". Per-item discounts first, then the
+  coupon spread **proportionally by the price after item discounts** over all
+  lines; each share rounded to cents, the remaining cents on the **last**
+  line, so the total equals the receipt exactly. Example: €200 = Groceries
+  €120 + €60, Pets €20; coupon −€50 → €90 + €45 + €15 = €150. Shown
+  "Conad · €150 (coupon −€50)". If the last line can't take the remainder
+  (it would go below 0) the rest goes to the line before it. A € coupon
+  bigger than the total is capped at the total.
+- "Last price" for autofill = the normal price: Nutella €6.00, promo −50% →
+  MONEY records €3.00, next autofill €6.00; with a coupon: recorded €4.50,
+  autofill still €6.00. So the HOME item price (and grocery entry price)
+  stay the normal price; only the expense gets the paid amount.
+- Where: MONEY purchase form and SHOP Confirm purchase = both kinds; Order
+  online / Orders = per-item only (`orders.price` paid, `list_price` normal).
+- MONEY always records what was really paid; the discount history is visible
+  in the opened purchase / expense details.
+- Editing an expense amount by hand later doesn't change its line's discount
+  fields (they describe the receipt); the row then shows the expense amount.
+
+### Edge cases
+
+- Lines €10, €8.40 (=12 −30%), €20 = €38.40, coupon −€5 → shares 1.30,
+  1.09, 2.61 → paid 8.70, 7.31, 17.39 = €33.40 (this exact case is in the 023
+  test).
+- Coupon −10% on €38.40 → €3.84 spread.
+- Coupon on a purchase with a €0 line → that line gets share 0.
+- An order "Sneakers" €80 −30% → order price €56, expense €56, list price
+  €80; next order autofill €80.
+
+### iPhone checklist
+
+1. MONEY purchase, one item €80 with −30% → shows €56 and "€80 → €56
+   (−30%)"; the expense is €56.
+2. Three items + coupon −€50 → the total equals the receipt; the row shows
+   "(coupon −€50)".
+3. SHOP Confirm purchase: Nutella €6, −50% → expense €3; next time Nutella's
+   price in SHOP is €6.
+4. Order online with −€25 → the order and its expense are the paid amount;
+   the order shows the normal price crossed out.
+
+---
+
+## 8. Round 7 — Trips (travel mode)
+
+### Names
+
+UI: "Trips", "Start trip", "🌴 Holiday" / "🚗 Short trip". Code and
+database: **`travel`** — table `travels`, column `expenses.travel_id`, store
+`travelStore`, files `lib/travels.js`, `hooks/useTravels.js`. Reason: "trip"
+already means a shopping trip (`shopping_trips`, `expenses.trip_id`,
+`lib/trips.js`, `tripStore`, `TripRow`…); mixing them would be a constant
+source of bugs.
+
+### Files
+
+- `src/lib/stores.js` — `travelStore` (all travels), `travelExpenses` family
+  (expenses with `travel_id = X`, plus all expenses in its period for the
+  summary).
+- new `src/lib/travels.js` (+ test) — `periodOf(travel)`, `travelFor(date,
+  travels)`, `activeTravel(today)`, `overlaps()`, `totalsByKindAndYear()`,
+  `summary(travel, expenses)`.
+- new `src/hooks/useTravels.js` — start, edit, end early, delete; set/clear
+  an expense's travel.
+- new `src/components/expenses/TripsSection.jsx` (list, level 1),
+  `TripDetail.jsx` (levels 2 and 3, end summary), `StartTripForm.jsx`.
+- `src/pages/ExpensesPage.jsx` — Trips section; one-time "Rename Holiday to
+  Trips".
+- `src/components/expenses/CategoryManager.jsx` — "Trips" added to the
+  locked names (after the rename).
+- Forms that set `travel_id`: `ExpenseForm.jsx`, `PurchaseForm.jsx`,
+  `ConfirmPurchase.jsx` (+ `lib/purchase.js` payload), `OrderForm.jsx` /
+  `OrderOnlineDialog.jsx` (+ `lib/orders.js expenseRowForOrder`).
+- `src/lib/categorySuggest.js` — prefer Trips subs while a trip covers the
+  date.
+
+### Data used
+
+`travels`, `expenses.travel_id`, `expense_categories` (main "Trips" and its
+subs), `confirm_shopping_trip` line `travel_id`.
+
+### Rules
+
+- **Rename** the MONEY main "Holiday" to "Trips" in this round, in the app,
+  once: a card "Set up Trips" in MONEY renames it with the existing
+  `renameCategory` (same id → colour, subs Accommodation / Activities / Food
+  & Drinks / Transport and its expenses stay). If "Trips" already exists,
+  nothing to do. Then lock "Trips" like Groceries (code finds it by name).
+  Not in SQL (as the brief says).
+- **Start trip**: name, start–end date, kind 🌴 Holiday or 🚗 Short trip.
+  Both work the same and book into the one main category "Trips". Trips may
+  not overlap (checked in the app; the database doesn't).
+- While a date is inside a trip (`travelFor(date)`): forms show a small
+  marker "🌴 Trip: Bali" (🚗 for a short trip), set `travel_id`, and the
+  budget category defaults to a Trips sub (suggested by name: hotel →
+  Accommodation, museum → Activities, restaurant/supermarket → Food & Drinks,
+  train/taxi/fuel → Transport; else Trips itself); chips prefer Trips subs.
+- **All** expenses whose **expense date** is in the trip period go to Trips
+  automatically when they are made: MONEY Expenses (single and purchase),
+  SHOP Confirm purchase (every line) and Order online. Decided by the
+  expense date, not the day of typing (entering on 15/10 an expense dated
+  05/10 during Bali → Bali).
+- Order online: a toggle "Trip expense: Bali" on by default, one tap off
+  (then normal category, no `travel_id`).
+- "Add to HOME" during a trip: the expense stays in Trips; Add to HOME starts
+  **off**; turning it on for a **new** item turns 1× on automatically (can be
+  turned off). An existing HOME item → normal stock increase.
+- Editing an expense date later: the app asks — "This date is outside the
+  trip Bali. Remove it from the trip?" (Yes → `travel_id` null and choose a
+  category, the normal suggestion pre-selected) / "This date is during the
+  trip Bali. Add it to the trip?" (Yes → `travel_id` + Trips category). No →
+  nothing changes.
+- Any expense can be taken out of a trip **on purpose** ("Not a trip
+  expense", e.g. rent): `travel_id` null + a category; never automatically.
+  The app never puts it back by itself (only creating an expense or changing
+  its date sets or asks).
+- The trip ends by itself after its end date; "End trip now" sets `ended_on`
+  = today (the period then ends today).
+- **End summary** (when a trip has ended, and from the trip at any time):
+  one screen with ALL expenses dated in the trip period; those not in the
+  trip clearly marked ("Rent €700 — not in trip").
+- **Three levels**: (1) list of trips with their totals, and per kind per
+  year ("Holidays 2026: €2,400 · Short trips 2026: €650", by start year);
+  (2) tap a trip → totals per Trips sub-category (a By category chart for
+  one trip); (3) every expense in full (name, date, store, payer, amount).
+- Starting a trip whose period already has expenses: show them and ask
+  "Add these 4 expenses to the trip?" with a tick per expense (all ticked
+  except Housing & Utilities / Subscription / Savings, which usually aren't
+  trip costs). Nothing moves without that tap (see Risks).
+
+### Edge cases
+
+- Bali 10–20/10; dinner entered on 22/10 dated 15/10 → Bali.
+- A SHOP purchase confirmed on 12/10 → every line → Trips › Food & Drinks,
+  `travel_id` Bali; "Toothpaste" with Add to HOME? In SHOP, stock goes to
+  HOME as always; the expense is a trip expense.
+- Rent €700 dated 15/10 → after saving it's in Bali; "Not a trip expense" →
+  Housing & Utilities; summary shows "Rent €700 — not in trip".
+- End Bali early on 16/10 → an expense dated 18/10 is not in Bali.
+- Deleting a trip → its expenses stay (Trips categories), `travel_id` empty.
+- Two trips can't overlap: 10–20/10 and 18–25/10 → refused when starting.
+
+### iPhone checklist
+
+1. MONEY → Set up Trips → "Holiday" is now "Trips", same colour and subs.
+2. Start trip "Test" today–tomorrow, 🚗 Short trip → marker "🚗 Trip: Test"
+   on Add expense.
+3. Add an expense today → it is under Trips, in the trip.
+4. SHOP Confirm purchase today → its expenses are in the trip.
+5. Order online today → "Trip expense: Test" is on; turn it off → not in the
+   trip.
+6. Edit an expense's date to last month → asked to remove it from the trip.
+7. Trip list shows the totals; tap the trip → per sub-category; tap again →
+   every expense.
+8. End trip now → the summary lists every expense of those days, the ones
+   not in the trip marked.
+
+---
+
+## 9. Round 8 — AI structure (NOTE 7), off until there is an API key
+
+### Files
+
+- new `supabase/functions/suggest-category/index.ts` — the Edge Function
+  (Deno). Deployed by Irene with the Supabase CLI; the API key is a Supabase
+  secret (`supabase secrets set ANTHROPIC_API_KEY=…`), never in the app or
+  the repo.
+- `src/lib/categorySuggest.js` — `ASYNC_SUGGESTERS = [aiSuggester]`; same
+  result shape as the other layers.
+- new `src/lib/ai.js` — `aiEnabled()`, `askAi(level, body)` via
+  `supabase.functions.invoke('suggest-category', …)`, silent on any failure.
+- `src/lib/stores.js` — `householdSettingsStore`, `aiModelChainStore`,
+  `aiProposalStore`.
+- new `src/components/settings/AiSettings.jsx` (opened from
+  `components/auth/AccountSettings.jsx`) — the "AI suggestions" toggle (off
+  by default) and the model chain, read-only.
+- new `src/components/inventory/AiReview.jsx` — "Review all categories with
+  AI": proposals, "Approve all" / one by one, Reject.
+- `src/hooks/useCategorySuggestions.js` — AI answers saved to memory with
+  `source: 'ai'`.
+
+### Data used
+
+`household_settings` (`ai_suggestions`), `ai_model_chain` (read only),
+`ai_category_proposals`, `category_memory` (`source`,
+`expense_category_id`), `inventory_categories`, `expense_categories`.
+
+### Rules
+
+- **One suggestion "door"**: `suggestCategories` tries memory → (pantry) →
+  built-in keywords → AI (only when `ai_suggestions` is true and nothing above
+  answered). Always the same result shape `{ categoryId, subcategoryId,
+  expenseCategoryId, source, label }`; AI answers go through the same `fit()`
+  (only existing categories) — a proposed new category comes back as a
+  "✚ New" chip (round 5 row; still needs Create).
+- **The Edge Function**: checks the caller's login and
+  `is_household_member()` (rpc with the caller's JWT); without
+  `ANTHROPIC_API_KEY` it answers `{ active: false }` (HTTP 200) and the app
+  silently uses the other sources. It reads `ai_model_chain` for the level
+  (active rows by position) and tries each model in order until one answers.
+- **Calling Claude** (checked against the Claude API reference on
+  19/10/2026): use the official TypeScript SDK in Deno
+  (`import Anthropic from 'npm:@anthropic-ai/sdk'`), not raw fetch. Model IDs
+  exactly as in the chain (`claude-haiku-5-5`, `claude-sonnet-5-5`,
+  `claude-opus-5-5`; no date suffixes). Ask for JSON with structured outputs:
+  `output_config: { format: { type: 'json_schema', schema } }` (the schema
+  lists the allowed category ids as an enum) and validate the answer anyway.
+  Forced `tool_choice` is not allowed on Opus 5.5 / Sonnet 5.5 — don't use it.
+  Thinking can't be turned off on Opus 5.5: use `output_config: { effort:
+  'low' }` for the light level. Medium level (web search):
+  `tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }]`
+  (Sonnet 5.5 / Opus 5.5). Always check `stop_reason` (`refusal` → try the
+  next model in the chain). The reference recommends also enabling
+  server-side refusal fallbacks on Sonnet/Opus requests
+  (`betas: ['server-side-fallback-2026-07-01']`, `fallbacks: 'default'`);
+  decide in round 8 whether the chain alone is enough, and tell Irene.
+- **Setting** "AI suggestions" (off by default) stored in
+  `household_settings` (`key = 'ai_suggestions'`, `value = true/false`), shared
+  by both phones. The toggle says "Needs an API key in Supabase" while the
+  function answers `active: false`.
+- **AI called once per new item**: its answer is saved to `category_memory`
+  (`source: 'ai'`); next time memory answers. A user pick later overwrites it
+  (`source: 'user'`).
+- **Model chain** per level is shown, never edited in the app (the database
+  allows only reading); new models are added at the end in the SQL Editor.
+- **"Review all categories with AI"** (heavy level): the function cross-checks
+  all HOME items and writes proposals (`status 'pending'`, one `run_id`); the
+  review screen lists them ("Rake: Garden › Seeds → Garden › Tools — reason")
+  with "Approve all" and Approve / Reject each. Approving changes only the HOME
+  item's category (+ its remembered name); a proposal with a new category goes
+  through the "✚ New" create row first. Nothing changes automatically; **old
+  expenses never change**.
+
+### Edge cases
+
+- No key: toggle on → the function answers `active: false` → no AI chip, no
+  error toast.
+- Haiku refuses or fails → Sonnet → Opus; all fail → no AI chip.
+- AI proposes a category id that doesn't exist → dropped (`fit`).
+- The same new name typed on both phones at once → at most two calls; the
+  memory row is an upsert (last wins).
+
+### iPhone checklist
+
+1. Settings → AI suggestions is off; the model chain is listed (light: Haiku,
+   Sonnet, Opus …).
+2. Turn it on without a key → "Needs an API key in Supabase"; suggestions
+   still work from memory/keywords.
+3. (After a key is set) type an unknown product → an AI chip; type it again
+   → the same chip comes from memory (no second AI call).
+4. HOME → Review all categories with AI → proposals listed; Reject one,
+   Approve one → only that item changed; MONEY unchanged.
+
+---
+
+## 10. Risks and decisions
+
+**Decisions made in round 1**
+
+1. **MONEY purchases reuse `shopping_trips` / `shopping_trip_items`**
+   (`source = 'money'`, `line_kind = 'money'`) — see round 4 for why.
+2. **Item details are stored on the purchase line** (`shopping_trip_items`:
+   quantity, unit, normal price, discounts), and for orders on `orders`;
+   `expenses` gets no item columns. A plain single expense has no details.
+3. **`confirm_shopping_trip` was extended, not duplicated**: the MONEY path is
+   switched on only by `payload.source = 'money'`; a SHOP payload runs the same
+   checks in the same order and writes the same rows (every changed line is in
+   section 2). One function = one way to save a purchase.
+4. **Merged expenses are marked on the expense** (`merged_at`,
+   `shop_before_merge`), never made purchase lines, so Reopen can't delete
+   them; plus a refusal for `merged` purchases and a skip in the delete.
+5. **Merging sets each expense's store to the purchase's store** (kept for
+   Split). Amounts, categories, dates, payers and the By-category chart never
+   change, but the **By-store** chart can (an expense with no store, or
+   another one, moves to the chosen store). **Please confirm, Irene**: if the
+   store of old expenses must never change either, round 4 only sets the
+   purchase's store and leaves the expenses' stores (023 supports both).
+6. **Reopen of a SHOP/MONEY purchase that has merged expenses** turns those
+   back into single expenses (old store) rather than refusing. Safe either
+   way; this is the more convenient one.
+7. **Two triggers** keep `cart_added_at` and `shop_dismissed_at` right on every
+   path (taps, offline queue, Reopen, Confirm, Arrived, imports) without
+   touching the other functions. Their household check applies only to the
+   app's roles (`anon`, `authenticated`) so the SQL Editor (as in the one-off
+   files) is never blocked; RLS already protects the tables.
+8. **`grocery_items.one_time` is nullable** (null = not 1×): Reopen puts a
+   deleted SHOP entry back from a snapshot that, for purchases made before 023,
+   has no value for it; a NOT NULL column would make that Reopen fail.
+9. **The AI model chain is read-only for the app** through grants (SELECT
+   only); it still has the one `household_only` policy like every table.
+10. **HOME category tools are database functions** (`merge_inventory_category`,
+    `move_inventory_subcategory`) although the brief expected no SQL for round
+    2: deleting a category cascades (its subs, its remembered names, its
+    mapping), so moving everything first and deleting last must happen in one
+    transaction.
+11. **HOME name uniqueness is app code only**, no unique index (live duplicate
+    "Frozen Vegetables").
+12. **Travel names**: `travels`, `travel_id` (UI "Trips").
+13. **No overlapping trips** — checked in the app only (a database exclusion
+    constraint would need an extension).
+14. **1× "finished" is derived** (`one_time and stock <= 0`), not stored.
+15. **The "Not urgent" colour is sky**, so it doesn't look like the blue "New
+    Item".
+16. **MONEY sub colour = main colour also for income categories** (same
+    screens, same rule). Say if income should keep its own sub colours.
+17. **Variant order (0 first, then lowest stock)** applies to the SHOP row and
+    Confirm purchase; HOME's group tile keeps A–Z. "Not urgent" at the bottom
+    applies to the default priority sort and the budget plan, not to A–Z/price
+    or the shop route.
+18. **"Apply the mapping to past purchases"** must read only SHOP lines from
+    round 4 on: MONEY lines had their budget category chosen in the form, and a
+    MONEY line without a HOME category would otherwise be moved to Groceries.
+19. **"Delete record"** on a purchase with merged expenses splits them first.
+20. **Round 8 calls Claude from a Supabase Edge Function** with the official
+    SDK; the key stays in Supabase secrets.
+
+**Things that are unclear (asked or assumed)**
+
+21. "One item = a normal expense" is read as: every item row becomes one
+    normal expense (a line), and a form with one row behaves like today's Add
+    expense.
+22. "A HOME category that has its own main category in MONEY → there" is read
+    as: a MONEY main with the same or a similar name (round 5).
+23. Starting a trip whose dates already have expenses: assumed the app asks
+    which to add (none move silently).
+24. The rename Holiday → Trips is done by the app in round 7 (one tap, same
+    id). If Irene prefers to rename it by hand in MONEY → Manage, round 7 only
+    checks that "Trips" exists.
+25. Removing 1× from a finished item makes it Out → it goes on the SHOP list.
+    Assumed that's wanted (it's what "normal item" means).
+26. Variants: is the 0-first order also wanted in HOME's group tile? Assumed
+    no (see 17).
+
+**Risks**
+
+27. 023 must be run before round 2 is deployed; the code assumes it.
+28. The live database can't be inspected from here: the verification SELECT at
+    the end of 023 lists every new table, column, function and model row with
+    `ok`; Irene should send its result after running it.
+29. A purchase line's `line_total` 0 makes no expense (old behaviour) — a free
+    item in a purchase still adds stock but no expense row.
+30. `category_memory` rows are deleted with a HOME category (cascade from 011)
+    if a category is deleted by any path other than `merge_inventory_category`
+    — round 2 must use the function whenever memory points to the category.
+31. Keyword rules for a merged-away category fall back to its main (as the
+    brief asks); there is no redirect table.
+32. Two phones merging the same expenses at the same time: the second request
+    is refused ("already part of a purchase") — correct, but the toast must say
+    so clearly.

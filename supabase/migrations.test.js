@@ -28,8 +28,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 022 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022')).sort()
+  // 015 (the login lock) and 016 to 023 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022') && !f.startsWith('023')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -1066,6 +1066,637 @@ describe('022: a group never receives stock directly', () => {
       const entry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id) values ('Rice', 2, 'pcs', 2, 1, 'pcs', $1, true, 'misc') returning id`, [item])).id
       await db.query(`select * from confirm_shopping_trip($1)`, [{ id: '77777777-7777-7777-7777-777777777777', trip_date: '2026-10-17', items: [{ grocery_item_id: entry, line_total: 4, expense_category_id: groceries, pantry_item_id: item, add: 2 }] }])
       expect(await stockOf(item)).toBe(3)
+    })
+  })
+})
+
+describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, category tools, AI data', () => {
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  const file = '023_oct_2026_features.sql'
+  const read = (f = file) => fs.readFileSync(path.join(dir, f), 'utf8')
+  const rows = async (sql, params) => (await db.query(sql, params)).rows
+  const row = async (sql, params) => (await rows(sql, params))[0]
+  const fails = async (sql, params) => {
+    try {
+      await db.query(sql, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  async function as(role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const asMember = (fn) => as('authenticated', MEMBER, fn)
+  const stockOf = async (id) => Number((await row(`select current_stock from pantry_items where id = $1`, [id])).current_stock)
+  // Everything that existed before 023, without the columns 023 adds.
+  const snapshot = async () => ({
+    expenses: await rows(`select id, amount::float as amount, category_id, description, paid_by, expense_date::text as date, shop_id, trip_id from expenses order by id`),
+    orders: await rows(`select id, item_name, price::float as price, status, expense_id, quantity::float as quantity from orders order by id`),
+    stock: await rows(`select id, name, current_stock::float as stock, min_stock::float as min, category_id, subcategory_id, is_group, group_id from pantry_items order by id`),
+    grocery: await rows(`select id, name, quantity::float as quantity, price::float as price, completed, in_cart, expense_id, trip_id, pantry_item_id, category_id from grocery_items order by id`),
+    trips: await rows(`select id, trip_date::text as date, total::float as total, shop_id, paid_by from shopping_trips order by id`),
+    tripItems: await rows(`select id, trip_id, expense_id, line_total::float as total, stock_added::float as added from shopping_trip_items order by id`),
+    categories: await rows(`select id, name, parent_id, type from inventory_categories order by id`),
+    memory: await rows(`select id, category_id, subcategory_id from category_memory order by id`),
+    budgetMap: await rows(`select id, expense_category_id from category_budget_map order by id`),
+    logs: (await row(`select count(*)::int as n from stock_logs`)).n,
+  })
+  let before
+
+  beforeAll(async () => {
+    // In the cart before 023: it gets its created_at as the time it went in.
+    await db.query(`insert into grocery_items (name, quantity, unit, in_cart, category_id, created_at) values ('In the cart before 023', 1, 'pcs', true, 'misc', '2026-10-01T10:00:00Z')`)
+    before = await snapshot()
+  })
+
+  it('changes nothing that exists (only the cart time of what is in the cart), and is safe to re-run', async () => {
+    await db.exec(read())
+    await db.exec(read())
+    expect(await snapshot()).toEqual(before)
+    const cart = await rows(`select (cart_added_at = created_at) as same from grocery_items where in_cart`)
+    expect(cart.length).toBeGreaterThan(0)
+    expect(cart.every((r) => r.same)).toBe(true)
+    expect(await row(`select (select count(*)::int from grocery_items where not in_cart and cart_added_at is not null) as stray_times,
+      (select count(*)::int from pantry_items where one_time) as one_time_items,
+      (select count(*)::int from grocery_items where one_time) as one_time_entries,
+      (select count(*)::int from pantry_items where shop_dismissed_at is not null) as dismissed,
+      (select count(*)::int from shopping_trips where source <> 'shop') as not_shop,
+      (select count(*)::int from shopping_trip_items where line_kind <> 'shop') as not_shop_lines,
+      (select count(*)::int from expenses where merged_at is not null or travel_id is not null or shop_before_merge is not null) as touched_expenses`)).toEqual({
+      stray_times: 0,
+      one_time_items: 0,
+      one_time_entries: 0,
+      dismissed: 0,
+      not_shop: 0,
+      not_shop_lines: 0,
+      touched_expenses: 0,
+    })
+  })
+
+  it('ends with a check where every row says ok, listing the tables, columns, functions and AI model chain', async () => {
+    const result = (await db.exec(read())).at(-1).rows
+    expect(result.filter((r) => !r.ok)).toEqual([])
+    const count = (section) => result.filter((r) => r.section === section).length
+    expect([count('1 new table'), count('2 new column'), count('3 function'), count('4 AI model chain'), count('5 data')]).toEqual([4, 23, 8, 7, 5])
+    expect(result.filter((r) => r.section === '4 AI model chain').map((r) => `${r.name}: ${r.detail.split(' · ').slice(0, 2).join(' · ')}`)).toEqual([
+      'heavy #1: claude-opus-5-5 · Review all categories: cross-check every item',
+      'light #1: claude-haiku-5-5 · One new item name → its category',
+      'light #2: claude-sonnet-5-5 · One new item name → its category',
+      'light #3: claude-opus-5-5 · One new item name → its category',
+      'medium #1: claude-sonnet-5-5 · web search',
+      'medium #2: claude-opus-5-5 · web search',
+      'photo #1: claude-sonnet-5-5 · Receipt photos (later)',
+    ])
+    // 015's own check still finds nothing open.
+    const lock = await db.query(read('015_lock_to_household.sql').split('-- ── 5. Check')[1].replace(/^[^\n]*\n/, ''))
+    expect(lock.rows[0]).toMatchObject({ tables_open_to_anon: 'none', functions_open_to_anon: 'none', tables_without_rls: 'none' })
+  })
+
+  it('keeps the new tables and functions away from anon and strangers; the model chain is read-only for the app', async () => {
+    for (const t of ['travels', 'household_settings', 'ai_model_chain', 'ai_category_proposals']) {
+      expect(await as('anon', null, () => fails(`select * from ${t}`))).toMatch(/permission denied/)
+      const policy = (table) => rows(`select cmd, roles::text, qual, with_check from pg_policies where tablename = $1`, [table])
+      expect(await policy(t)).toEqual(await policy('expenses'))
+    }
+    for (const call of [
+      `select merge_expenses_into_purchase('{}'::jsonb)`,
+      `select split_merged_purchase(gen_random_uuid())`,
+      `select merge_inventory_category('a', 'b')`,
+      `select move_inventory_subcategory('a', null)`,
+    ]) {
+      expect(await as('anon', null, () => fails(call))).toMatch(/permission denied/)
+      expect(await as('authenticated', STRANGER, () => fails(call))).toMatch(/Not allowed/)
+    }
+    expect(await as('authenticated', STRANGER, () => rows(`select * from household_settings`))).toEqual([])
+    expect(await as('authenticated', STRANGER, () => fails(`insert into travels (name, start_date, end_date) values ('Nope', '2026-10-01', '2026-10-02')`))).toMatch(/row-level security/)
+    await asMember(async () => {
+      expect((await rows(`select model from ai_model_chain where level = 'light' and active order by position`)).map((r) => r.model)).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'])
+      expect(await fails(`insert into ai_model_chain (level, position, model) values ('light', 4, 'x')`)).toMatch(/permission denied/)
+      expect(await fails(`update ai_model_chain set active = false`)).toMatch(/permission denied/)
+      expect((await row(`select value from household_settings where key = 'ai_suggestions'`)).value).toBe(false)
+      await db.query(`update household_settings set value = 'true'::jsonb where key = 'ai_suggestions'`)
+      await db.query(`update household_settings set value = 'false'::jsonb where key = 'ai_suggestions'`)
+    })
+  })
+
+  it('keeps the time an entry went into the cart, and forgets it when it leaves', async () => {
+    await asMember(async () => {
+      const a = (await row(`insert into grocery_items (name, quantity, unit, category_id) values ('Cart A 023', 1, 'pcs', 'misc') returning id, cart_added_at`))
+      expect(a.cart_added_at).toBeNull()
+      await db.query(`update grocery_items set in_cart = true where id = $1`, [a.id])
+      const inCart = (await row(`select cart_added_at::text as t from grocery_items where id = $1`, [a.id])).t
+      expect(inCart).not.toBeNull()
+      // Still in the cart (e.g. its quantity changes): the same time.
+      await db.query(`update grocery_items set quantity = 3 where id = $1`, [a.id])
+      expect((await row(`select cart_added_at::text as t from grocery_items where id = $1`, [a.id])).t).toBe(inCart)
+      // A tap sent later (no signal at the time) keeps the time of the tap.
+      const b = (await row(`insert into grocery_items (name, quantity, unit, category_id) values ('Cart B 023', 1, 'pcs', 'misc') returning id`)).id
+      await db.query(`update grocery_items set in_cart = true, cart_added_at = '2026-10-18T09:00:00Z' where id = $1`, [b])
+      expect((await row(`select extract(epoch from cart_added_at)::int as t from grocery_items where id = $1`, [b])).t).toBe(Date.parse('2026-10-18T09:00:00Z') / 1000)
+      // Out of the cart: no time.
+      await db.query(`update grocery_items set in_cart = false where id = any($1)`, [[a.id, b]])
+      expect((await rows(`select cart_added_at from grocery_items where id = any($1)`, [[a.id, b]])).every((r) => r.cart_added_at === null)).toBe(true)
+      await db.query(`delete from grocery_items where id = any($1)`, [[a.id, b]])
+    })
+  })
+
+  describe('a SHOP purchase works exactly as before', () => {
+    let groceries, wine, milk, ids, start
+    const trip = '23000000-0000-0000-0000-000000000001'
+    const add = (name, qty, unit, price, pantry) =>
+      row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id) values ($1,$2,$3,$4,$2,$3,$5,true,'misc') returning id`, [name, qty, unit, price, pantry]).then((r) => r.id)
+    const state = async () => ({
+      wine: await stockOf(wine),
+      milk: await row(`select current_stock::float as stock, expiry_date::text as expiry, payer from pantry_items where id = $1`, [milk]),
+      avocados: (await rows(`select current_stock::float as stock from pantry_items where name = 'Avocado 023'`)).map((r) => r.stock),
+      logs: (await row(`select count(*)::int as n from stock_logs where item_id = any($1) or item_name = 'Avocado 023'`, [[wine, milk]])).n,
+      expenses: await row(`select count(*)::int as n, coalesce(sum(amount), 0)::float as total from expenses where description like '% 023'`),
+      bought: (await row(`select count(*)::int as n from grocery_items where id = any($1) and completed`, [Object.values(ids)])).n,
+      inCart: (await row(`select count(*)::int as n from grocery_items where id = any($1) and in_cart and cart_added_at is not null`, [Object.values(ids)])).n,
+    })
+    const payload = (id) => ({
+      id,
+      trip_date: '2026-10-18',
+      photo_ids: [],
+      items: [
+        { grocery_item_id: ids.falanghina, line_total: 2.27, expense_category_id: groceries, pantry_item_id: wine, add: 1 },
+        { grocery_item_id: ids.vermentino, line_total: 3.32, expense_category_id: groceries, pantry_item_id: wine, add: 1 },
+        { grocery_item_id: ids.milk, line_total: 3.6, payer: 'irene', expense_category_id: groceries, pantry_item_id: milk, add: 3, discard_expired: true, expiry_date: '2026-10-30' },
+        { grocery_item_id: ids.avocado1, line_total: 2.84, expense_category_id: groceries, pantry_item_id: null, add: 2 },
+        { grocery_item_id: ids.avocado2, line_total: 1, expense_category_id: groceries, pantry_item_id: null, add: 1 },
+      ],
+    })
+
+    beforeAll(async () => {
+      await asMember(async () => {
+        groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+        wine = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Wine 023', 'pcs', 1, 'beverages') returning id`)).id
+        milk = (await row(`insert into pantry_items (name, unit, current_stock, expiry_date, category_id) values ('Milk 023', 'btl', 2, '2020-01-01', 'dairy') returning id`)).id
+        ids = {
+          falanghina: await add('Falanghina 023', 1, 'pcs', 2.27, wine),
+          vermentino: await add('Vermentino 023', 1, 'pcs', 3.32, wine),
+          milk: await add('Milk 023', 3, 'btl', 3.6, milk),
+          avocado1: await add('Avocado 023', 2, 'pcs', 2.84, null),
+          avocado2: await add('Avocado 023', 1, 'pcs', 1, null),
+        }
+      })
+      start = await state()
+    })
+
+    it('confirms the whole cart at once, with the same stock, history and expenses as before', async () => {
+      expect(start).toMatchObject({ wine: 1, logs: 0, expenses: { n: 0 }, bought: 0, inCart: 5 })
+      await asMember(async () => {
+        const t = await row(`select * from confirm_shopping_trip($1)`, [payload(trip)])
+        expect({ total: Number(t.total), source: t.source, coupon: Number(t.coupon_total) }).toEqual({ total: 13.03, source: 'shop', coupon: 0 })
+        expect(await state()).toEqual({
+          wine: 3,
+          milk: { stock: 3, expiry: '2026-10-30', payer: 'irene' },
+          avocados: [3],
+          logs: 6,
+          expenses: { n: 5, total: 13.03 },
+          bought: 5,
+          inCart: 0,
+        })
+        // Out of the cart: no cart time. No trip away, nothing 1×.
+        expect((await rows(`select cart_added_at from grocery_items where id = any($1)`, [Object.values(ids)])).every((r) => r.cart_added_at === null)).toBe(true)
+        expect((await row(`select count(*)::int as n from expenses where trip_id = $1 and travel_id is null and merged_at is null`, [trip])).n).toBe(5)
+        expect((await row(`select one_time, min_stock::float as min from pantry_items where name = 'Avocado 023'`))).toEqual({ one_time: false, min: 0 })
+        // The lines now also say what was bought.
+        expect(await rows(`select line_kind, quantity::float as quantity, unit, list_total, coupon_share::float as coupon from shopping_trip_items where trip_id = $1 order by position`, [trip])).toEqual([
+          { line_kind: 'shop', quantity: 1, unit: 'pcs', list_total: null, coupon: 0 },
+          { line_kind: 'shop', quantity: 1, unit: 'pcs', list_total: null, coupon: 0 },
+          { line_kind: 'shop', quantity: 3, unit: 'btl', list_total: null, coupon: 0 },
+          { line_kind: 'shop', quantity: 2, unit: 'pcs', list_total: null, coupon: 0 },
+          { line_kind: 'shop', quantity: 1, unit: 'pcs', list_total: null, coupon: 0 },
+        ])
+        // Sent again: nothing new.
+        const after = await state()
+        await db.query(`select * from confirm_shopping_trip($1)`, [payload(trip)])
+        expect(await state()).toEqual(after)
+      })
+    })
+
+    it('reopens it exactly: the items are back in the cart, with a cart time', async () => {
+      await asMember(async () => {
+        expect((await row(`select reopen_shopping_trip($1) as n`, [trip])).n).toBe(5)
+        expect(await state()).toEqual(start)
+        expect((await row(`select reopen_shopping_trip($1) as n`, [trip])).n).toBe(0)
+      })
+    })
+
+    it('puts back an entry deleted after confirming (also one saved before 023 had its 1× and cart time)', async () => {
+      await asMember(async () => {
+        const again = '23000000-0000-0000-0000-000000000002'
+        await db.query(`select * from confirm_shopping_trip($1)`, [payload(again)])
+        await db.query(`delete from grocery_items where id = $1`, [ids.avocado1])
+        // A snapshot from before 023 has neither column.
+        await db.query(`update shopping_trip_items set grocery_snapshot = grocery_snapshot - 'one_time' - 'cart_added_at' where trip_id = $1`, [again])
+        await db.query(`select reopen_shopping_trip($1)`, [again])
+        expect(await row(`select name, in_cart, completed, cart_added_at is not null as timed from grocery_items where id = $1`, [ids.avocado1])).toEqual({ name: 'Avocado 023', in_cart: true, completed: false, timed: true })
+        expect(await state()).toEqual(start)
+      })
+    })
+
+    it('still refuses an item ordered online, and never gives stock to a group by name', async () => {
+      await asMember(async () => {
+        const entry = await add('Ordered 023', 1, 'pcs', 4, null)
+        const order = (await row(`insert into orders (item_name, price, grocery_item_id) values ('Ordered 023', 4, $1) returning id`, [entry])).id
+        expect(await fails(`select * from confirm_shopping_trip($1)`, [{ id: '23000000-0000-0000-0000-000000000003', trip_date: '2026-10-18', items: [{ grocery_item_id: entry, line_total: 4, expense_category_id: groceries, add: 1 }] }])).toMatch(/already ordered online/)
+        expect((await row(`select count(*)::int as n from shopping_trips where id = '23000000-0000-0000-0000-000000000003'`)).n).toBe(0)
+        await db.query(`delete from orders where id = $1`, [order])
+        await db.query(`delete from grocery_items where id = $1`, [entry])
+
+        const group = (await row(`insert into pantry_items (name, unit, is_group, category_id) values ('Crackers 023', 'pcs', true, 'snacks') returning id`)).id
+        const named = await add('Crackers 023', 2, 'pcs', 3, null)
+        await db.query(`select * from confirm_shopping_trip($1)`, [{ id: '23000000-0000-0000-0000-000000000004', trip_date: '2026-10-18', items: [{ grocery_item_id: named, line_total: 6, expense_category_id: groceries, add: 2 }] }])
+        expect(await stockOf(group)).toBe(0)
+        expect((await rows(`select current_stock::float as stock from pantry_items where name = 'Crackers 023' and not is_group`)).map((r) => r.stock)).toEqual([2])
+      })
+    })
+  })
+
+  describe('1×: one-time purchases', () => {
+    let groceries
+    beforeAll(async () => {
+      groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+    })
+
+    it('a new item bought from a 1× SHOP entry is 1× too; an existing item never becomes 1× by itself', async () => {
+      await asMember(async () => {
+        const kept = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Candles 023', 'pcs', 1, 'household') returning id`)).id
+        const fresh = (await row(`insert into grocery_items (name, quantity, unit, price, in_cart, category_id, one_time) values ('Balloons 023', 1, 'pack', 3, true, 'misc', true) returning id`)).id
+        const known = (await row(`insert into grocery_items (name, quantity, unit, price, in_cart, category_id, one_time) values ('Candles 023', 2, 'pcs', 2, true, 'household', true) returning id`)).id
+        await db.query(`select * from confirm_shopping_trip($1)`, [
+          { id: '23000000-0000-0000-0000-000000000011', trip_date: '2026-10-18', items: [
+            { grocery_item_id: fresh, line_total: 3, expense_category_id: groceries, add: 1 },
+            { grocery_item_id: known, line_total: 2, expense_category_id: groceries, pantry_item_id: kept, add: 2 },
+          ] },
+        ])
+        expect(await row(`select one_time, current_stock::float as stock from pantry_items where name = 'Balloons 023'`)).toEqual({ one_time: true, stock: 1 })
+        expect(await row(`select one_time, current_stock::float as stock from pantry_items where id = $1`, [kept])).toEqual({ one_time: false, stock: 3 })
+      })
+    })
+
+    it('bought again by name, a finished 1× item comes back instead of a second one', async () => {
+      await asMember(async () => {
+        const hats = (await row(`insert into pantry_items (name, unit, current_stock, category_id, one_time) values ('Party hats 023', 'pcs', 0, 'misc', true) returning id`)).id
+        const entry = (await row(`insert into grocery_items (name, quantity, unit, price, in_cart, category_id) values ('party hats 023', 2, 'pcs', 1, true, 'misc') returning id`)).id
+        await db.query(`select * from confirm_shopping_trip($1)`, [{ id: '23000000-0000-0000-0000-000000000012', trip_date: '2026-10-18', items: [{ grocery_item_id: entry, line_total: 2, expense_category_id: groceries, add: 2 }] }])
+        expect(await rows(`select id, current_stock::float as stock, one_time from pantry_items where lower(name) = 'party hats 023'`)).toEqual([{ id: hats, stock: 2, one_time: true }])
+      })
+    })
+
+    it('a group can never be 1×, its variants can', async () => {
+      await asMember(async () => {
+        const group = (await row(`insert into pantry_items (name, unit, is_group, category_id) values ('Chips 023', 'pcs', true, 'snacks') returning id`)).id
+        const variant = (await row(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Chips 023 paprika', 'pcs', 1, $1, 'snacks') returning id`, [group])).id
+        expect(await fails(`update pantry_items set one_time = true where id = $1`, [group])).toMatch(/pantry_items_one_time_not_group/)
+        expect(await fails(`update pantry_items set one_time = true where id = $1`, [variant])).toBeNull()
+      })
+    })
+  })
+
+  it('a variant taken off the SHOP list by hand stays off until it is restocked', async () => {
+    await asMember(async () => {
+      const group = (await row(`insert into pantry_items (name, unit, is_group, min_stock, category_id) values ('Snack mix 023', 'pcs', true, 2, 'snacks') returning id`)).id
+      const tuc = (await row(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Tuc 023', 'pcs', 0, $1, 'snacks') returning id`, [group])).id
+      await db.query(`update pantry_items set shop_dismissed_at = now() where id = $1`, [tuc])
+      await db.query(`update pantry_items set notes = 'still out' where id = $1`, [tuc])
+      expect((await row(`select shop_dismissed_at is not null as off from pantry_items where id = $1`, [tuc])).off).toBe(true)
+      await db.query(`select * from increment_stock($1, 2)`, [tuc])
+      expect((await row(`select shop_dismissed_at is null as back from pantry_items where id = $1`, [tuc])).back).toBe(true)
+      // Used up again: it can go on the list again (nothing remembers the old dismissal).
+      await db.query(`select * from increment_stock($1, -2)`, [tuc])
+      expect(await row(`select current_stock::float as stock, shop_dismissed_at from pantry_items where id = $1`, [tuc])).toEqual({ stock: 0, shop_dismissed_at: null })
+    })
+  })
+
+  describe('a purchase typed in MONEY (several items, discounts, a coupon, a trip away)', () => {
+    const trip = '23000000-0000-0000-0000-000000000021'
+    let shop, pets, goingOut, litter, entry, cartEntry, bali, payload, start
+
+    beforeAll(async () => {
+      await asMember(async () => {
+        shop = (await row(`insert into shops (name) values ('Lidl 023') returning id`)).id
+        pets = (await row(`insert into expense_categories (name) values ('Pets 023') returning id`)).id
+        goingOut = (await row(`insert into expense_categories (name) values ('Going out 023') returning id`)).id
+        litter = (await row(`insert into pantry_items (name, unit, current_stock, min_stock, price, price_qty, price_unit, category_id) values ('Cat litter 023', 'pack', 1, 2, 5, 1, 'pack', 'pet') returning id`)).id
+        // On the SHOP list, still to buy: it leaves the list once the stock is in HOME.
+        entry = (await row(`insert into grocery_items (name, quantity, unit, pantry_item_id, auto_generated, category_id) values ('Cat litter 023', 2, 'pack', $1, true, 'pet') returning id`, [litter])).id
+        bali = (await row(`insert into travels (name, kind, start_date, end_date) values ('Bali 023', 'holiday', '2026-10-10', '2026-10-20') returning id`)).id
+      })
+      // €38.40 as on the receipt (10 + 12 −30% + 20), coupon −€5 spread by price,
+      // the cents on the last line: paid 8.70 + 7.31 + 17.39 = 33.40.
+      payload = {
+        id: trip,
+        source: 'money',
+        trip_date: '2026-10-12',
+        shop_id: shop,
+        paid_by: 'irene',
+        coupon_kind: 'amount',
+        coupon_value: 5,
+        coupon_total: 5,
+        items: [
+          { name: 'Cat litter 023', category_id: 'pet', quantity: 2, unit: 'pack', price: 10, price_qty: 2, price_unit: 'pack', pantry_item_id: litter, add: 2, line_total: 8.7, list_total: 10, coupon_share: 1.3, expense_category_id: pets, travel_id: bali, list_entry_id: entry },
+          { name: 'Sun cream 023', category_id: 'personal-care', quantity: 1, unit: 'pcs', price: 12, price_qty: 1, price_unit: 'pcs', pantry_item_id: null, add: 1, one_time: true, min_stock: 0, line_total: 7.31, list_total: 12, item_discount_kind: 'percent', item_discount_value: 30, coupon_share: 1.09, expense_category_id: goingOut, travel_id: bali },
+          { name: 'Dinner 023', durable: true, add: 0, line_total: 17.39, list_total: 20, coupon_share: 2.61, expense_category_id: goingOut, travel_id: bali },
+        ],
+      }
+      start = await snapshot()
+    })
+
+    it('saves one purchase: an expense per item, stock for what goes to HOME, the normal price kept', async () => {
+      await asMember(async () => {
+        const t = await row(`select * from confirm_shopping_trip($1)`, [payload])
+        expect({ source: t.source, total: Number(t.total), coupon: Number(t.coupon_total), kind: t.coupon_kind, shop: t.shop_id, paid: t.paid_by }).toEqual({ source: 'money', total: 33.4, coupon: 5, kind: 'amount', shop, paid: 'irene' })
+        expect(await rows(`select description, amount::float as amount, paid_by, shop_id, travel_id, expense_date::text as date from expenses where trip_id = $1 order by amount`, [trip])).toEqual([
+          { description: 'Sun cream 023', amount: 7.31, paid_by: 'irene', shop_id: shop, travel_id: bali, date: '2026-10-12' },
+          { description: 'Cat litter 023', amount: 8.7, paid_by: 'irene', shop_id: shop, travel_id: bali, date: '2026-10-12' },
+          { description: 'Dinner 023', amount: 17.39, paid_by: 'irene', shop_id: shop, travel_id: bali, date: '2026-10-12' },
+        ])
+        // Existing item: stock up, and the price is the normal one (before discounts).
+        expect(await row(`select current_stock::float as stock, price::float as price, price_qty::float as qty, price_unit as unit from pantry_items where id = $1`, [litter])).toEqual({ stock: 3, price: 10, qty: 2, unit: 'pack' })
+        // New item: made in HOME, 1× as asked, minimum 0, normal price.
+        expect(await row(`select current_stock::float as stock, one_time, min_stock::float as min, price::float as price, category_id from pantry_items where name = 'Sun cream 023'`)).toEqual({ stock: 1, one_time: true, min: 0, price: 12, category_id: 'personal-care' })
+        // "Add to HOME" off: an expense only.
+        expect((await row(`select count(*)::int as n from pantry_items where name = 'Dinner 023'`)).n).toBe(0)
+        // The SHOP entry left the list; no SHOP entry was made for the others.
+        expect(await row(`select completed, in_cart, trip_id from grocery_items where id = $1`, [entry])).toEqual({ completed: true, in_cart: false, trip_id: trip })
+        expect((await row(`select count(*)::int as n from grocery_items where name in ('Sun cream 023', 'Dinner 023')`)).n).toBe(0)
+        // Each line keeps its details and discounts.
+        expect(await rows(`select line_kind, name, quantity::float as quantity, unit, list_total::float as list, item_discount_kind as kind, item_discount_value::float as value, coupon_share::float as coupon, grocery_item_id, grocery_snapshot->>'category_id' as category from shopping_trip_items where trip_id = $1 order by position`, [trip])).toEqual([
+          { line_kind: 'money', name: 'Cat litter 023', quantity: 2, unit: 'pack', list: 10, kind: null, value: null, coupon: 1.3, grocery_item_id: entry, category: 'pet' },
+          { line_kind: 'money', name: 'Sun cream 023', quantity: 1, unit: 'pcs', list: 12, kind: 'percent', value: 30, coupon: 1.09, grocery_item_id: null, category: 'personal-care' },
+          { line_kind: 'money', name: 'Dinner 023', quantity: 1, unit: 'pcs', list: 20, kind: null, value: null, coupon: 2.61, grocery_item_id: null, category: null },
+        ])
+        // Sent again: nothing new.
+        await db.query(`select * from confirm_shopping_trip($1)`, [payload])
+        expect((await row(`select count(*)::int as n from expenses where trip_id = $1`, [trip])).n).toBe(3)
+        expect(await stockOf(litter)).toBe(3)
+      })
+    })
+
+    it('Undo (reopen) takes it all back; the SHOP entry is "to buy" again, nothing goes into the cart', async () => {
+      await asMember(async () => {
+        expect((await row(`select reopen_shopping_trip($1) as n`, [trip])).n).toBe(3)
+      })
+      expect(await snapshot()).toEqual(start)
+      expect(await row(`select completed, in_cart, trip_id, cart_added_at from grocery_items where id = $1`, [entry])).toEqual({ completed: false, in_cart: false, trip_id: null, cart_added_at: null })
+    })
+
+    it('never closes a SHOP entry that is in the cart, and refuses a line without a name', async () => {
+      await asMember(async () => {
+        cartEntry = (await row(`insert into grocery_items (name, quantity, unit, pantry_item_id, in_cart, category_id) values ('Cat litter 023', 1, 'pack', $1, true, 'pet') returning id`, [litter])).id
+        const id = '23000000-0000-0000-0000-000000000022'
+        await db.query(`select * from confirm_shopping_trip($1)`, [{ id, source: 'money', trip_date: '2026-10-12', items: [{ name: 'Cat litter 023', pantry_item_id: litter, add: 1, line_total: 5, expense_category_id: pets, list_entry_id: cartEntry }] }])
+        expect(await row(`select completed, in_cart from grocery_items where id = $1`, [cartEntry])).toEqual({ completed: false, in_cart: true })
+        expect((await row(`select grocery_item_id from shopping_trip_items where trip_id = $1`, [id])).grocery_item_id).toBeNull()
+        await db.query(`select reopen_shopping_trip($1)`, [id])
+        expect(await fails(`select * from confirm_shopping_trip($1)`, [{ id: '23000000-0000-0000-0000-000000000023', source: 'money', trip_date: '2026-10-12', items: [{ name: '  ', line_total: 1 }] }])).toMatch(/needs a name/)
+        await db.query(`delete from grocery_items where id = $1`, [cartEntry])
+      })
+    })
+
+    it('a trip away keeps its expenses when it is deleted; its dates are checked', async () => {
+      await asMember(async () => {
+        expect(await fails(`insert into travels (name, start_date, end_date) values ('Backwards 023', '2026-10-10', '2026-10-01')`)).toMatch(/check/)
+        expect(await fails(`insert into travels (name, kind, start_date, end_date) values ('Cruise 023', 'cruise', '2026-10-10', '2026-10-11')`)).toMatch(/check/)
+        const expense = (await row(`insert into expenses (amount, description, paid_by, expense_date, travel_id) values (40, 'Hotel 023', 'shared', '2026-10-11', $1) returning id`, [bali])).id
+        await db.query(`delete from travels where id = $1`, [bali])
+        expect(await row(`select amount::float as amount, travel_id from expenses where id = $1`, [expense])).toEqual({ amount: 40, travel_id: null })
+        await db.query(`delete from expenses where id = $1`, [expense])
+      })
+    })
+
+    it('checks discounts: a percent goes up to 100, an amount is never negative', async () => {
+      await asMember(async () => {
+        const order = (await row(`insert into orders (item_name, price, list_price, discount_kind, discount_value) values ('Sneakers 023', 56, 80, 'percent', 30) returning id`)).id
+        expect(await fails(`update orders set discount_value = 120 where id = $1`, [order])).toMatch(/orders_discount_ok/)
+        expect(await fails(`update orders set discount_kind = 'amount', discount_value = 120 where id = $1`, [order])).toBeNull()
+        expect(await fails(`update orders set discount_value = -1 where id = $1`, [order])).toMatch(/orders_discount_ok/)
+        expect(await fails(`update orders set discount_kind = 'coupon' where id = $1`, [order])).toMatch(/orders_discount_ok/)
+        await db.query(`delete from orders where id = $1`, [order])
+      })
+    })
+  })
+
+  describe('merging old expenses into one purchase', () => {
+    let conad, lidl, groceries, pets, e, order
+    const merged = '23000000-0000-0000-0000-000000000031'
+    const expense = (amount, category, payer, date, shopId, description) =>
+      row(`insert into expenses (amount, category_id, paid_by, expense_date, shop_id, description) values ($1, $2, $3, $4, $5, $6) returning id`, [amount, category, payer, date, shopId, description]).then((r) => r.id)
+    const money = () => rows(`select id, amount::float as amount, category_id, paid_by, expense_date::text as date, description from expenses where description like 'M023%' order by id`)
+    const byCategory = () => rows(`select category_id, sum(amount)::float as total from expenses where description like 'M023%' group by category_id order by category_id`)
+
+    beforeAll(async () => {
+      await asMember(async () => {
+        conad = (await row(`insert into shops (name) values ('Conad 023') returning id`)).id
+        lidl = (await row(`select id from shops where name = 'Lidl 023'`)).id
+        groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+        pets = (await row(`select id from expense_categories where name = 'Pets 023'`)).id
+        e = {
+          bread: await expense(12, groceries, 'irene', '2026-10-14', conad, 'M023 bread'),
+          food: await expense(20, pets, 'irene', '2026-10-14', null, 'M023 cat food'),
+          fruit: await expense(5.5, groceries, 'irene', '2026-10-14', lidl, 'M023 fruit'),
+          akbar: await expense(7, groceries, 'akbar', '2026-10-14', null, 'M023 akbar'),
+          yesterday: await expense(3, groceries, 'irene', '2026-10-13', null, 'M023 yesterday'),
+          ordered: await expense(30, pets, 'irene', '2026-10-14', null, 'M023 ordered'),
+        }
+        order = (await row(`insert into orders (item_name, price, expense_id) values ('M023 ordered', 30, $1) returning id`, [e.ordered])).id
+      })
+    })
+
+    it('refuses what can\'t be merged, and changes nothing then', async () => {
+      const startMoney = await money()
+      await asMember(async () => {
+        const merge = (ids, extra = {}) => fails(`select * from merge_expenses_into_purchase($1)`, [{ id: '23000000-0000-0000-0000-0000000000ff', expense_ids: ids, ...extra }])
+        expect(await merge([e.bread])).toMatch(/at least two/)
+        expect(await merge([e.bread, e.akbar])).toMatch(/same person/)
+        expect(await merge([e.bread, e.yesterday])).toMatch(/same day/)
+        expect(await merge([e.bread, e.ordered])).toMatch(/orders can't be merged/)
+        expect(await merge([e.bread, '23000000-0000-0000-0000-0000000000aa'])).toMatch(/deleted meanwhile/)
+      })
+      expect(await money()).toEqual(startMoney)
+      expect((await row(`select count(*)::int as n from shopping_trips where source = 'merged'`)).n).toBe(0)
+    })
+
+    it('merges them into one purchase: amounts, categories, dates and payers never change; one store', async () => {
+      const startMoney = await money()
+      const startTotals = await byCategory()
+      await asMember(async () => {
+        const t = await row(`select * from merge_expenses_into_purchase($1)`, [{ id: merged, expense_ids: [e.bread, e.food, e.fruit], shop_id: conad }])
+        expect({ source: t.source, total: Number(t.total), shop: t.shop_id, paid: t.paid_by }).toEqual({ source: 'merged', total: 37.5, shop: conad, paid: 'irene' })
+        expect((await row(`select trip_date::text as d from shopping_trips where id = $1`, [merged])).d).toBe('2026-10-14')
+        expect(await rows(`select id, trip_id, shop_id, shop_before_merge, merged_at is not null as merged from expenses where id = any($1) order by amount`, [[e.bread, e.food, e.fruit]])).toEqual([
+          { id: e.fruit, trip_id: merged, shop_id: conad, shop_before_merge: lidl, merged: true },
+          { id: e.bread, trip_id: merged, shop_id: conad, shop_before_merge: conad, merged: true },
+          { id: e.food, trip_id: merged, shop_id: conad, shop_before_merge: null, merged: true },
+        ])
+        // No purchase lines: nothing that undoes a purchase can reach them.
+        expect((await row(`select count(*)::int as n from shopping_trip_items where trip_id = $1`, [merged])).n).toBe(0)
+        // Sent again: the same purchase, nothing new.
+        await db.query(`select * from merge_expenses_into_purchase($1)`, [{ id: merged, expense_ids: [e.bread, e.food, e.fruit], shop_id: conad }])
+        expect(Number((await row(`select total from shopping_trips where id = $1`, [merged])).total)).toBe(37.5)
+      })
+      expect(await money()).toEqual(startMoney)
+      expect(await byCategory()).toEqual(startTotals)
+    })
+
+    it('can never lose its expenses: Reopen is refused, and a merged expense can\'t join another purchase', async () => {
+      const startMoney = await money()
+      await asMember(async () => {
+        expect(await fails(`select reopen_shopping_trip($1)`, [merged])).toMatch(/use Split/)
+        expect(await fails(`select * from merge_expenses_into_purchase($1)`, [{ id: '23000000-0000-0000-0000-000000000032', expense_ids: [e.bread, e.yesterday] }])).toMatch(/already part of a purchase/)
+      })
+      expect(await money()).toEqual(startMoney)
+      expect((await row(`select count(*)::int as n from expenses where trip_id = $1`, [merged])).n).toBe(3)
+    })
+
+    it('Split puts one, or all, back as single expenses with the store each had', async () => {
+      await asMember(async () => {
+        expect((await row(`select split_merged_purchase($1, $2) as n`, [merged, [e.food]])).n).toBe(1)
+        expect(await row(`select trip_id, shop_id, merged_at from expenses where id = $1`, [e.food])).toEqual({ trip_id: null, shop_id: null, merged_at: null })
+        expect(Number((await row(`select total from shopping_trips where id = $1`, [merged])).total)).toBe(17.5)
+        expect((await row(`select split_merged_purchase($1) as n`, [merged])).n).toBe(2)
+        expect(await rows(`select id, trip_id, shop_id, shop_before_merge from expenses where id = any($1) order by amount`, [[e.bread, e.fruit]])).toEqual([
+          { id: e.fruit, trip_id: null, shop_id: lidl, shop_before_merge: null },
+          { id: e.bread, trip_id: null, shop_id: conad, shop_before_merge: null },
+        ])
+        // Nothing left in it: the purchase is gone.
+        expect((await row(`select count(*)::int as n from shopping_trips where id = $1`, [merged])).n).toBe(0)
+        expect((await row(`select split_merged_purchase($1) as n`, [merged])).n).toBe(0)
+      })
+    })
+
+    it('can be added to a SHOP purchase of the same day and payer; reopening that purchase keeps it', async () => {
+      await asMember(async () => {
+        const bread = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Bread 023', 'pcs', 1, 'bakery') returning id`)).id
+        const entry = (await row(`insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id, payer) values ('Bread 023', 1, 'pcs', 2.5, 1, 'pcs', $1, true, 'bakery', 'irene') returning id`, [bread])).id
+        const shopTrip = '23000000-0000-0000-0000-000000000033'
+        await db.query(`select * from confirm_shopping_trip($1)`, [{ id: shopTrip, trip_date: '2026-10-14', shop_id: conad, paid_by: 'irene', items: [{ grocery_item_id: entry, line_total: 2.5, payer: 'irene', expense_category_id: groceries, pantry_item_id: bread, add: 1 }] }])
+        expect(await fails(`select * from merge_expenses_into_purchase($1)`, [{ trip_id: shopTrip, expense_ids: [e.akbar] }])).toMatch(/paid by someone else/)
+        expect(await fails(`select * from merge_expenses_into_purchase($1)`, [{ trip_id: shopTrip, expense_ids: [e.yesterday] }])).toMatch(/only the same day/)
+        const t = await row(`select * from merge_expenses_into_purchase($1)`, [{ trip_id: shopTrip, expense_ids: [e.food] }])
+        expect({ source: t.source, total: Number(t.total) }).toEqual({ source: 'shop', total: 22.5 })
+        // Sent again: nothing new.
+        await db.query(`select * from merge_expenses_into_purchase($1)`, [{ trip_id: shopTrip, expense_ids: [e.food] }])
+        expect(Number((await row(`select total from shopping_trips where id = $1`, [shopTrip])).total)).toBe(22.5)
+        expect(await row(`select trip_id, shop_id from expenses where id = $1`, [e.food])).toEqual({ trip_id: shopTrip, shop_id: conad })
+
+        expect((await row(`select reopen_shopping_trip($1) as n`, [shopTrip])).n).toBe(1)
+        // The purchase's own expense is undone; the merged one stays, single again.
+        expect((await row(`select count(*)::int as n from expenses where description = 'Bread 023'`)).n).toBe(0)
+        expect(await row(`select amount::float as amount, category_id, trip_id, shop_id, merged_at from expenses where id = $1`, [e.food])).toEqual({ amount: 20, category_id: pets, trip_id: null, shop_id: null, merged_at: null })
+        expect(await stockOf(bread)).toBe(1)
+        expect(await row(`select in_cart, completed from grocery_items where id = $1`, [entry])).toEqual({ in_cart: true, completed: false })
+        await db.query(`delete from grocery_items where id = $1`, [entry])
+        await db.query(`delete from orders where id = $1`, [order])
+      })
+    })
+  })
+
+  describe('HOME Manage: deleting a category in use, moving a sub-category', () => {
+    let pets
+    const item = (name, category, sub) => row(`insert into pantry_items (name, unit, current_stock, category_id, subcategory_id) values ($1, 'pcs', 1, $2, $3) returning id`, [name, category, sub]).then((r) => r.id)
+    const where = (id) => row(`select category_id, subcategory_id from pantry_items where id = $1`, [id])
+
+    beforeAll(async () => {
+      pets = (await row(`select id from expense_categories where name = 'Pets 023'`)).id
+      await asMember(async () => {
+        await db.exec(`
+          insert into inventory_categories (id, name, parent_id, type, sort_order) values
+            ('garden-023', 'Garden 023', null, 'parent', 90), ('outdoor-023', 'Outdoor 023', null, 'parent', 91), ('patio-023', 'Patio 023', null, 'parent', 92),
+            ('garden-023:seeds', 'Seeds 023', 'garden-023', 'sub', 1), ('garden-023:tools', 'Tools 023', 'garden-023', 'sub', 2);
+        `)
+      })
+    })
+
+    it('moves everything of a main category (its sub-categories too) to another one, then deletes it', async () => {
+      await asMember(async () => {
+        const basil = await item('Basil seeds 023', 'garden-023', 'garden-023:seeds')
+        const rake = await item('Rake 023', 'garden-023', 'garden-023:tools')
+        const hose = await item('Hose 023', 'garden-023', null)
+        await db.query(`insert into grocery_items (name, quantity, unit, category_id, subcategory_id) values ('Hose 023', 1, 'pcs', 'garden-023', null)`)
+        await db.query(`insert into category_memory (id, name, category_id, subcategory_id) values ('basil seeds 023', 'Basil seeds 023', 'garden-023', 'garden-023:seeds')`)
+        await db.query(`insert into category_budget_map (id, expense_category_id) values ('garden-023', $1)`, [pets])
+        const stockBefore = await rows(`select id, current_stock::float as s from pantry_items order by id`)
+        const result = (await row(`select merge_inventory_category('garden-023', 'outdoor-023') as r`)).r
+        expect(result).toEqual({ items: 3, list_entries: 1, memory: 1, subcategories: 2 })
+        expect(await where(basil)).toEqual({ category_id: 'outdoor-023', subcategory_id: 'garden-023:seeds' })
+        expect(await where(rake)).toEqual({ category_id: 'outdoor-023', subcategory_id: 'garden-023:tools' })
+        expect(await where(hose)).toEqual({ category_id: 'outdoor-023', subcategory_id: null })
+        expect((await row(`select category_id from grocery_items where name = 'Hose 023'`)).category_id).toBe('outdoor-023')
+        expect(await row(`select category_id, subcategory_id from category_memory where id = 'basil seeds 023'`)).toEqual({ category_id: 'outdoor-023', subcategory_id: 'garden-023:seeds' })
+        expect(await rows(`select id, parent_id from inventory_categories where id like 'garden-023%' order by id`)).toEqual([
+          { id: 'garden-023:seeds', parent_id: 'outdoor-023' },
+          { id: 'garden-023:tools', parent_id: 'outdoor-023' },
+        ])
+        // Its own budget mapping is gone; stock never changes.
+        expect((await row(`select count(*)::int as n from category_budget_map where id = 'garden-023'`)).n).toBe(0)
+        expect(await rows(`select id, current_stock::float as s from pantry_items order by id`)).toEqual(stockBefore)
+
+        // A sub-category into another sub-category.
+        expect((await row(`select merge_inventory_category('garden-023:tools', 'garden-023:seeds') as r`)).r).toMatchObject({ items: 1 })
+        expect(await where(rake)).toEqual({ category_id: 'outdoor-023', subcategory_id: 'garden-023:seeds' })
+        expect((await row(`select count(*)::int as n from inventory_categories where id = 'garden-023:tools'`)).n).toBe(0)
+      })
+    })
+
+    it('refuses what would lose items or break Home & Appliances', async () => {
+      await asMember(async () => {
+        expect(await fails(`select merge_inventory_category('appliances', 'outdoor-023')`)).toMatch(/can't be deleted/)
+        expect(await fails(`select merge_inventory_category('appliances:kitchen', 'outdoor-023')`)).toMatch(/Home & Appliances/)
+        expect(await fails(`select merge_inventory_category('outdoor-023', 'appliances:kitchen')`)).toMatch(/Home & Appliances/)
+        expect(await fails(`select merge_inventory_category('outdoor-023', 'garden-023:seeds')`)).toMatch(/pick a category outside it/)
+        expect(await fails(`select merge_inventory_category('outdoor-023', 'snacks:sweet')`)).toMatch(/has sub-categories/)
+        expect(await fails(`select merge_inventory_category('outdoor-023', 'outdoor-023')`)).toMatch(/another category/)
+        expect(await fails(`select merge_inventory_category('no-such-023', 'outdoor-023')`)).toMatch(/no longer exists/)
+        expect((await row(`select count(*)::int as n from inventory_categories where id in ('outdoor-023', 'appliances', 'appliances:kitchen')`)).n).toBe(3)
+      })
+    })
+
+    it('moves a sub-category with its items; a main category without sub-categories can become one', async () => {
+      await asMember(async () => {
+        const basil = (await row(`select id from pantry_items where name = 'Basil seeds 023'`)).id
+        const chair = await item('Chair 023', 'patio-023', null)
+        // Sub-category → under another main category: its items follow.
+        expect((await row(`select move_inventory_subcategory('garden-023:seeds', 'patio-023') as r`)).r).toMatchObject({ items: 2, memory: 1 })
+        expect(await where(basil)).toEqual({ category_id: 'patio-023', subcategory_id: 'garden-023:seeds' })
+        expect((await row(`select category_id from category_memory where id = 'basil seeds 023'`)).category_id).toBe('patio-023')
+        // A main category with sub-categories can't become a sub-category.
+        expect(await fails(`select move_inventory_subcategory('patio-023', 'outdoor-023')`)).toMatch(/can't become a sub-category/)
+        // Sub-category → main category.
+        await db.query(`select move_inventory_subcategory('garden-023:seeds', null)`)
+        expect(await row(`select parent_id, type from inventory_categories where id = 'garden-023:seeds'`)).toEqual({ parent_id: null, type: 'parent' })
+        expect(await where(basil)).toEqual({ category_id: 'garden-023:seeds', subcategory_id: null })
+        // Main category (now without sub-categories) → a sub-category.
+        await db.query(`select move_inventory_subcategory('patio-023', 'outdoor-023')`)
+        expect(await row(`select parent_id, type from inventory_categories where id = 'patio-023'`)).toEqual({ parent_id: 'outdoor-023', type: 'sub' })
+        expect(await where(chair)).toEqual({ category_id: 'outdoor-023', subcategory_id: 'patio-023' })
+        // Home & Appliances stays where it is, and nothing moves into it.
+        expect(await fails(`select move_inventory_subcategory('appliances', 'outdoor-023')`)).toMatch(/can't be moved/)
+        expect(await fails(`select move_inventory_subcategory('patio-023', 'appliances')`)).toMatch(/Home & Appliances/)
+        expect(await fails(`select move_inventory_subcategory('appliances:kitchen', 'outdoor-023')`)).toMatch(/Home & Appliances/)
+        expect(await fails(`select move_inventory_subcategory('patio-023', 'patio-023')`)).toMatch(/main category|inside itself/)
+      })
+    })
+  })
+
+  it('remembers who chose a name\'s category, and its budget category', async () => {
+    await asMember(async () => {
+      const pets = (await row(`select id from expense_categories where name = 'Pets 023'`)).id
+      await db.query(`insert into category_memory (id, name, category_id, expense_category_id, source) values ('vet visit 023', 'Vet visit 023', null, $1, 'ai')`, [pets])
+      expect(await row(`select source, expense_category_id from category_memory where id = 'vet visit 023'`)).toEqual({ source: 'ai', expense_category_id: pets })
+      expect((await row(`select source from category_memory where id = 'basil seeds 023'`)).source).toBe('user')
+      expect(await fails(`update category_memory set source = 'robot' where id = 'vet visit 023'`)).toMatch(/check/)
     })
   })
 })
