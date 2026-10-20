@@ -144,3 +144,25 @@ export function guessCategory(name, available = null) {
   const rule = top.reduce((a, b) => (b.order < a.order ? b : a))
   return { categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }
 }
+
+// The best distinct rules for a name, best first: [{ categoryId,
+// subcategoryId }] (at most `limit`). Same scoring as guessCategory, but
+// instead of one answer (or nothing when the best matches disagree) it
+// lists them, so the form can show a few chips. Rules for categories that
+// don't exist are ignored first, exactly like guessCategory.
+export function guessCategories(name, available = null, limit = 3) {
+  const tokens = tokensOf(name)
+  if (!tokens.length || tokens.join('').length < 2) return []
+  const best = new Map() // "category|sub" → { rule, score }
+  for (const m of findMatches(tokens)) {
+    const rule = ruleFor(m.rule, available)
+    if (!rule) continue
+    const key = `${rule.categoryId}|${rule.subcategoryId ?? ''}`
+    const known = best.get(key)
+    if (!known || m.score > known.score || (m.score === known.score && rule.order < known.rule.order)) best.set(key, { rule, score: m.score })
+  }
+  return [...best.values()]
+    .sort((a, b) => b.score - a.score || a.rule.order - b.rule.order)
+    .slice(0, limit)
+    .map(({ rule }) => ({ categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }))
+}

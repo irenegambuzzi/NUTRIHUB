@@ -70,6 +70,7 @@ export function GroceryPage() {
     addItem,
     updatePricing,
     updatePayer,
+    updateCategory,
     deleteItem,
     addVariant,
     cartItems,
@@ -254,6 +255,7 @@ export function GroceryPage() {
         onDelete={removeItem}
         onUpdatePricing={updatePricing}
         onUpdatePayer={updatePayer}
+        onUpdateCategory={updateCategory}
         oneTime={entryIsOneTime(item, pantryFor(item))}
         {...orderProps(item)}
       />
@@ -509,6 +511,7 @@ export function GroceryPage() {
           totalOf={totalOf}
           updatePricing={updatePricing}
           updatePayer={updatePayer}
+          updateCategory={updateCategory}
           toggleCart={toggleCart}
           openOrderOf={flow.ready ? openOrderOf : () => null}
           onCancelOrder={(order) => askCancelOrder(order, { orders, today })}

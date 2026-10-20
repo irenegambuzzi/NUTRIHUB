@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { ASYNC_SUGGESTERS, suggestCategory, suggestCategoryAsync, worthRemembering } from './categorySuggest'
+import { ASYNC_SUGGESTERS, differsFromFirst, suggestBudgetCategories, suggestCategories, suggestCategoriesAsync, suggestCategory, suggestCategoryAsync, worthRemembering } from './categorySuggest'
 
 const parents = [{ id: 'frozen' }, { id: 'snacks' }, { id: 'dairy' }, { id: 'my-stuff' }]
 const subsByParent = new Map([
@@ -88,5 +88,117 @@ describe('worthRemembering', () => {
     const memory = new Map([['bounty', { category_id: 'snacks', subcategory_id: null }]])
     expect(worthRemembering('Bounty', 'snacks', null, memory)).toBe(false)
     expect(worthRemembering('Bounty', 'snacks', 'snacks:sweet', memory)).toBe(true)
+  })
+})
+
+describe('suggestCategories (the chips)', () => {
+  const named = {
+    parents: [
+      { id: 'frozen', name: 'Frozen Food' },
+      { id: 'dairy', name: 'Dairy & Eggs' },
+      { id: 'shopping', name: 'Shopping' },
+    ],
+    subsByParent: new Map([
+      ['frozen', [{ id: 'frozen:meals', name: 'Frozen Meals & Pizza' }]],
+      ['dairy', [{ id: 'dairy:yogurt', name: 'Yogurt & Desserts' }]],
+      ['shopping', [{ id: 'shopping:gifts', name: 'Gifts' }]],
+    ]),
+  }
+  const ctx = (extra = {}) => ({ memory: new Map(), pantryByName: new Map(), ...named, ...extra })
+
+  it('"pizza" → Frozen Food › Frozen Meals & Pizza, with the same result shape as every answer', () => {
+    const [first] = suggestCategories('pizza', ctx())
+    expect(first).toEqual({ categoryId: 'frozen', subcategoryId: 'frozen:meals', expenseCategoryId: null, source: 'keywords', label: 'Frozen Food › Frozen Meals & Pizza' })
+  })
+
+  it('tries memory first, then the pantry, then the keywords; no duplicates; at most 3', () => {
+    const memory = new Map([['pizza', { category_id: 'shopping', subcategory_id: null }]])
+    const pantryByName = new Map([['pizza', { category_id: 'dairy', subcategory_id: 'dairy:yogurt' }]])
+    const chips = suggestCategories('Pizza', ctx({ memory, pantryByName }))
+    expect(chips.map((c) => c.source)).toEqual(['memory', 'pantry', 'keywords'])
+    expect(chips.map((c) => c.categoryId)).toEqual(['shopping', 'dairy', 'frozen'])
+    expect(suggestCategories('Pizza', ctx({ memory, pantryByName }), { limit: 2 })).toHaveLength(2)
+    const same = suggestCategories('pizza', ctx({ memory: new Map([['pizza', { category_id: 'frozen', subcategory_id: 'frozen:meals' }]]) }))
+    expect(same.filter((c) => c.categoryId === 'frozen' && c.subcategoryId === 'frozen:meals')).toHaveLength(1)
+  })
+
+  it('only offers categories that really exist (a deleted one is skipped, a missing sub falls back to the main)', () => {
+    const memory = new Map([['pizza', { category_id: 'gone', subcategory_id: null }]])
+    expect(suggestCategories('pizza', ctx({ memory }))[0]).toMatchObject({ categoryId: 'frozen', source: 'keywords' })
+    const noSub = { parents: [{ id: 'frozen', name: 'Frozen Food' }], subsByParent: new Map([['frozen', []]]) }
+    expect(suggestCategories('pizza', ctx(noSub))[0]).toMatchObject({ categoryId: 'frozen', subcategoryId: null, label: 'Frozen Food' })
+  })
+
+  it('shows no guessed chip when nothing matches', () => {
+    expect(suggestCategories('Stuff for Marco', ctx())).toEqual([])
+    expect(suggestCategories('', ctx())).toEqual([])
+  })
+
+  it('a similar name of an existing category is shown as that chip instead of a new one', () => {
+    const chips = suggestCategories('Gift', ctx())
+    expect(chips).toEqual([expect.objectContaining({ categoryId: 'shopping', subcategoryId: 'shopping:gifts', source: 'name', label: 'Shopping › Gifts' })])
+  })
+
+  it('what someone picked for a name comes first next time', () => {
+    const memory = new Map([['test kefir', { category_id: 'shopping', subcategory_id: 'shopping:gifts' }]])
+    expect(suggestCategories('Test kefir', ctx({ memory }))[0]).toMatchObject({ categoryId: 'shopping', source: 'memory' })
+  })
+
+  it('the async door adds nothing before round 8 (no AI suggester)', async () => {
+    expect(ASYNC_SUGGESTERS).toEqual([])
+    expect(await suggestCategoriesAsync('Stuff for Marco', ctx())).toEqual([])
+    expect((await suggestCategoriesAsync('pizza', ctx()))[0].categoryId).toBe('frozen')
+  })
+})
+
+describe('suggestBudgetCategories (a MONEY row not added to HOME)', () => {
+  const expenseCategories = [
+    { id: 'groceries', name: 'Groceries', parent_id: null },
+    { id: 'shopping', name: 'Shopping', parent_id: null },
+    { id: 'gifts', name: 'Gifts', parent_id: 'shopping' },
+  ]
+  const base = {
+    memory: new Map(),
+    pantryByName: new Map(),
+    parents: [{ id: 'frozen', name: 'Frozen Food' }],
+    subsByParent: new Map([['frozen', []]]),
+    expenseCategories,
+    budgetFor: () => 'groceries',
+  }
+
+  it('gives budget categories in the same shape: the remembered one first, then the HOME suggestion through the mapping', () => {
+    const memory = new Map([['pizza', { category_id: null, expense_category_id: 'gifts' }]])
+    const chips = suggestBudgetCategories('Pizza', { ...base, memory })
+    expect(chips).toEqual([
+      { categoryId: null, subcategoryId: null, expenseCategoryId: 'gifts', source: 'memory', label: 'Shopping › Gifts' },
+      { categoryId: null, subcategoryId: null, expenseCategoryId: 'groceries', source: 'keywords', label: 'Groceries' },
+    ])
+  })
+
+  it('a similar name matches an existing budget category: "Gift" → Shopping › Gifts', () => {
+    expect(suggestBudgetCategories('Gift', base)).toEqual([expect.objectContaining({ expenseCategoryId: 'gifts', source: 'name' })])
+  })
+
+  it('only budget categories that exist; none for an unknown name', () => {
+    const memory = new Map([['pizza', { expense_category_id: 'deleted' }]])
+    expect(suggestBudgetCategories('Pizza', { ...base, memory }).map((c) => c.expenseCategoryId)).toEqual(['groceries'])
+    expect(suggestBudgetCategories('Stuff for Marco', base)).toEqual([])
+  })
+})
+
+describe('learning from a different pick', () => {
+  const chips = [{ categoryId: 'a', subcategoryId: null, expenseCategoryId: null }, { categoryId: 'b', subcategoryId: null, expenseCategoryId: null }]
+
+  it('a pick other than the first chip is worth remembering; the first chip is not', () => {
+    expect(differsFromFirst({ categoryId: 'b', subcategoryId: null, expenseCategoryId: null }, chips)).toBe(true)
+    expect(differsFromFirst({ categoryId: 'a', subcategoryId: null, expenseCategoryId: null }, chips)).toBe(false)
+    expect(differsFromFirst({ categoryId: 'a', subcategoryId: 's', expenseCategoryId: null }, chips)).toBe(true)
+  })
+
+  it('a pick with no chip on offer is remembered; a budget pick is compared by its budget category', () => {
+    expect(differsFromFirst({ categoryId: 'a' }, [])).toBe(true)
+    const budget = [{ categoryId: null, subcategoryId: null, expenseCategoryId: 'groceries' }]
+    expect(differsFromFirst({ categoryId: null, subcategoryId: null, expenseCategoryId: 'groceries' }, budget)).toBe(false)
+    expect(differsFromFirst({ categoryId: null, subcategoryId: null, expenseCategoryId: 'gifts' }, budget)).toBe(true)
   })
 })

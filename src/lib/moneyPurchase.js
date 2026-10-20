@@ -19,6 +19,8 @@ const round2 = (n) => Math.round(n * 100) / 100
 // A new, empty item row. `key` only tells rows apart on screen.
 //   addToHome   null = follow the default (see addsToHome), else the choice
 //   variantId   undefined = not chosen yet (the first variant at 0 is taken)
+//   priceEdited / autoFilled   the price, quantity and unit were typed by hand
+//               / filled in from the last purchase of that name
 export function emptyRow(key) {
   return {
     key,
@@ -27,6 +29,8 @@ export function emptyRow(key) {
     quantityText: '1',
     unit: DEFAULT_UNIT,
     unitTouched: false,
+    priceEdited: false,
+    autoFilled: false,
     categoryId: '',
     subcategoryId: '',
     categoryTouched: false,

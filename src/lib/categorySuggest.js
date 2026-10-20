@@ -1,4 +1,5 @@
-import { guessCategory, normalizeName } from './categoryGuess'
+import { guessCategories, guessCategory, normalizeName } from './categoryGuess'
+import { findExisting } from './categoryNames'
 import { normName } from './grocery'
 
 // Where a category suggestion for an item name comes from, tried in order;
@@ -73,4 +74,110 @@ export function worthRemembering(name, categoryId, subcategoryId, memory, availa
   if (existing) return existing.category_id !== categoryId || (existing.subcategory_id ?? null) !== (subcategoryId ?? null)
   const keywords = guessCategory(name, available)
   return !(keywords && keywords.categoryId === categoryId && (keywords.subcategoryId ?? null) === (subcategoryId ?? null))
+}
+
+// ── Chips: a few suggestions at once ────────────────────────────────
+//
+// ONE door for every form (SHOP add, QuickAdd, MONEY purchase rows). Same
+// result shape always, whoever answered:
+//   { categoryId, subcategoryId, expenseCategoryId, source, label }
+// HOME mode (a HOME category, the budget category follows its mapping):
+// expenseCategoryId is null. Budget mode (a MONEY row with "Add to HOME"
+// off): categoryId / subcategoryId are null and expenseCategoryId is the
+// budget category. `source`: memory, pantry, keywords, name (an existing
+// category with a similar name) or, from round 8, ai.
+// Layers, in order: memory → pantry → keywords → a similar name; only
+// categories that really exist are ever offered.
+
+const DEFAULT_LIMIT = 3
+
+const pathName = (list, c) => {
+  const parent = c?.parent_id ? list.find((x) => x.id === c.parent_id) : null
+  return parent ? `${parent.name} › ${c.name}` : c?.name ?? ''
+}
+
+// Every HOME category on offer as a flat list [{ id, name, parent_id }].
+function flatHome({ parents = [], subsByParent }) {
+  const out = []
+  for (const p of parents) {
+    out.push({ id: p.id, name: p.name ?? p.id, parent_id: null })
+    for (const s of subsByParent?.get(p.id) || []) out.push({ id: s.id, name: s.name ?? s.id, parent_id: p.id })
+  }
+  return out
+}
+
+const homeChip = (pick, source, flat) => {
+  const main = flat.find((c) => c.id === pick.categoryId)
+  const sub = pick.subcategoryId ? flat.find((c) => c.id === pick.subcategoryId) : null
+  const label = sub ? `${main.name} › ${sub.name}` : main.name
+  return { categoryId: pick.categoryId, subcategoryId: pick.subcategoryId ?? null, expenseCategoryId: null, source, label }
+}
+
+// The HOME-category chips for a name (see above). `context`: { memory,
+// pantryByName, parents, subsByParent }.
+export function suggestCategories(name, context, { limit = DEFAULT_LIMIT } = {}) {
+  if (!normalizeName(name)) return []
+  const flat = flatHome(context)
+  const chips = []
+  const add = (pick, source) => {
+    const fitted = fit(pick, context)
+    if (!fitted || chips.length >= limit) return
+    if (chips.some((c) => c.categoryId === fitted.categoryId && c.subcategoryId === fitted.subcategoryId)) return
+    chips.push(homeChip(fitted, source, flat))
+  }
+  for (const layer of SUGGESTERS) {
+    if (layer.source === 'keywords') for (const pick of guessCategories(name, context, limit)) add(pick, 'keywords')
+    else add(layer.suggest(name, context), layer.source)
+  }
+  const similar = findExisting(name, flat)
+  if (similar) add(similar.parent_id ? { categoryId: similar.parent_id, subcategoryId: similar.id } : { categoryId: similar.id, subcategoryId: null }, 'name')
+  return chips
+}
+
+// The budget-category chips for a name, for a MONEY row that isn't added
+// to HOME. `context` is the same plus { expenseCategories [{ id, name,
+// parent_id }], budgetFor({ categoryId, subcategoryId }) → budget category
+// id (the mapping) }. What was remembered for the name as a budget
+// category comes first; the HOME suggestions follow through the mapping.
+export function suggestBudgetCategories(name, context, { limit = DEFAULT_LIMIT } = {}) {
+  if (!normalizeName(name)) return []
+  const { expenseCategories = [], budgetFor = () => null } = context
+  const chips = []
+  const add = (id, source) => {
+    if (!id || chips.length >= limit || chips.some((c) => c.expenseCategoryId === id)) return
+    const category = expenseCategories.find((c) => c.id === id)
+    if (category) chips.push({ categoryId: null, subcategoryId: null, expenseCategoryId: id, source, label: pathName(expenseCategories, category) })
+  }
+  add(context.memory?.get(normalizeName(name))?.expense_category_id, 'memory')
+  for (const chip of suggestCategories(name, context, { limit })) add(budgetFor(chip), chip.source)
+  const similar = findExisting(name, expenseCategories)
+  if (similar) add(similar.id, 'name')
+  return chips
+}
+
+// The same, then the slower layers (AI, round 8) when the quick ones gave
+// nothing. A slower layer answers { categoryId, subcategoryId }.
+export async function suggestCategoriesAsync(name, context, options = {}) {
+  const quick = suggestCategories(name, context, options)
+  if (quick.length || !normalizeName(name)) return quick
+  const flat = flatHome(context)
+  for (const layer of ASYNC_SUGGESTERS) {
+    const result = fit(await layer.suggest(name, context), context)
+    if (result) return [homeChip(result, layer.source, flat)]
+  }
+  return []
+}
+
+// Whether the pick differs from the first suggestion: only then is it
+// worth remembering as "what I want for this name" (the first chip would
+// have been given anyway). `pick`: { categoryId, subcategoryId,
+// expenseCategoryId } as in a chip; `chips`: what was on offer.
+export function differsFromFirst(pick, chips) {
+  const first = chips?.[0]
+  if (!first) return true
+  return (
+    (first.categoryId ?? null) !== (pick.categoryId ?? null) ||
+    (first.subcategoryId ?? null) !== (pick.subcategoryId ?? null) ||
+    (first.expenseCategoryId ?? null) !== (pick.expenseCategoryId ?? null)
+  )
 }

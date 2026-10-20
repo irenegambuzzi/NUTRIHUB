@@ -63,6 +63,10 @@ export const EXPIRY_STYLES = {
   ok: 'bg-[var(--color-surface-soft)] text-[var(--color-text-muted)]',
 }
 
+// An item saved without a category (SHOP, MONEY and HOME rows): grey, the
+// same size as "New Item".
+export const NO_CATEGORY = { label: 'No category', className: 'bg-zinc-500/25 text-zinc-300' }
+
 // Why an item is on the grocery list.
 export const RESTOCK_LABELS = {
   out: { label: 'Out of Stock', className: STATUS_STYLES.out.badge },

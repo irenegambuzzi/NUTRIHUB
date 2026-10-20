@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus, SlidersHorizontal } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Input } from '../ui/Field'
+import { CategoryChips } from '../ui/CategoryChips'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT } from '../../data/constants'
@@ -9,7 +10,7 @@ import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { normName, payerLabel } from '../../lib/grocery'
 import { stepQuantity } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
-import { askDialog, showToast } from '../../lib/feedback'
+import { showToast } from '../../lib/feedback'
 import { buildSuggestions, matchSuggestions, readHistory, rememberAdded } from '../../lib/quickAdd'
 
 // A sensible first quantity: 100 gr / ml, otherwise 1.
@@ -23,38 +24,34 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
   const [active, setActive] = useState(0)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState(readHistory)
-  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
+  const { suggest, suggestions, remember } = useCategorySuggestions({ parents, subsByParent })
+  // The chip tapped for what is typed (cleared when the text changes).
+  const [picked, setPicked] = useState(null)
+  const chips = text.trim() ? suggestions(text) : []
 
-  const suggestions = useMemo(() => buildSuggestions(pantryItems, items, history), [pantryItems, items, history])
-  const matches = matchSuggestions(suggestions, text)
+  const suggestionList = useMemo(() => buildSuggestions(pantryItems, items, history), [pantryItems, items, history])
+  const matches = matchSuggestions(suggestionList, text)
   const isParent = (id) => parents.some((p) => p.id === id)
   const isSubOf = (parentId, id) => (subsByParent.get(parentId) || []).some((s) => s.id === id)
 
-  // Picked suggestion, or what was typed. Its category comes from what was
-  // remembered for the name, the pantry or the keywords; if there's none,
-  // the user is asked (and the answer remembered).
-  async function entryFor(suggestion) {
-    const name = (suggestion?.name ?? text).trim()
-    const known = suggestion ?? suggestions.find((s) => normName(s.name) === normName(name))
-    const entry = known ?? { name, unit: DEFAULT_UNIT, price: 0, payer: 'shared' }
-    const pick = suggest(name) ?? (isParent(entry.categoryId) ? { categoryId: entry.categoryId, subcategoryId: entry.subcategoryId } : null)
-    if (pick) return { ...entry, categoryId: pick.categoryId, subcategoryId: pick.subcategoryId }
-    const answer = await askDialog({
-      title: `Which category is "${name}"?`,
-      message: "It isn't in the list yet. The app will remember your choice for next time.",
-      fields: [{ name: 'categoryId', type: 'select', required: true, placeholder: 'Choose a category…', options: parents.map((p) => ({ value: p.id, label: p.name })) }],
-      confirmLabel: 'Add',
-    })
-    if (!answer) return null
-    remember(name, answer.categoryId, null)
-    return { ...entry, categoryId: answer.categoryId, subcategoryId: null }
-  }
+  const findSuggestion = (name) => suggestionList.find((s) => normName(s.name) === normName(name))
 
+  // Picked suggestion, or what was typed. Its category is the chip tapped,
+  // else what was remembered for the name, the pantry or the keywords. With
+  // none of these the item is added without a category (grey "No category",
+  // tap it to choose) — nothing is asked and nothing is guessed.
+  function entryFor(suggestion) {
+    const name = (suggestion?.name ?? text).trim()
+    const known = suggestion ?? findSuggestion(name)
+    const entry = known ?? { name, unit: DEFAULT_UNIT, price: 0, payer: 'shared' }
+    const tapped = !suggestion && picked
+    const pick = tapped || suggest(name) || (isParent(entry.categoryId) ? { categoryId: entry.categoryId, subcategoryId: entry.subcategoryId } : null)
+    return { ...entry, categoryId: pick?.categoryId ?? null, subcategoryId: pick?.subcategoryId ?? null, tapped: Boolean(tapped) }
+  }
   const add = async (suggestion) => {
     if (busy || !(suggestion?.name ?? text).trim()) return
     setBusy(true)
-    const entry = await entryFor(suggestion)
-    if (!entry) return setBusy(false)
+    const entry = entryFor(suggestion)
     const open = items.find((i) => !i.completed && normName(i.name) === normName(entry.name))
     if (open) {
       const quantity = stepQuantity(open.quantity, open.unit, 1)
@@ -62,7 +59,7 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
       if (!error) showToast({ message: `"${open.name}" was already on the list — now ${quantity} ${open.unit}` })
     } else {
       const { categoryId } = entry
-      const subcategoryId = isSubOf(categoryId, entry.subcategoryId) ? entry.subcategoryId : null
+      const subcategoryId = categoryId && isSubOf(categoryId, entry.subcategoryId) ? entry.subcategoryId : null
       const unit = entry.unit || DEFAULT_UNIT
       const { error } = await addItem({
         name: entry.name,
@@ -80,11 +77,13 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
         const remembered = { name: entry.name, categoryId, subcategoryId, unit, price: entry.price || 0, priceQty: entry.priceQty ?? null, priceUnit: entry.priceUnit ?? null, payer: entry.payer || 'shared' }
         rememberAdded(remembered)
         setHistory(readHistory())
-        showToast({ message: `Added "${entry.name}" · ${firstQuantity(unit)} ${unit}` })
+        if (entry.tapped && categoryId) remember(entry.name, categoryId, subcategoryId, { chips })
+        showToast({ message: `Added "${entry.name}" · ${firstQuantity(unit)} ${unit}${categoryId ? '' : ' · no category yet'}` })
       }
     }
     setBusy(false)
     setText('')
+    setPicked(null)
     setActive(0)
   }
 
@@ -113,6 +112,7 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
           value={text}
           onChange={(e) => {
             setText(e.target.value)
+            setPicked(null)
             setActive(0)
           }}
           onKeyDown={onKeyDown}
@@ -132,6 +132,14 @@ export function QuickAdd({ items, pantryItems, parents, subsByParent, categoryNa
           <Plus size={20} />
         </button>
       </form>
+
+      <CategoryChips
+        mode="home"
+        name={text}
+        chips={chips}
+        selected={picked}
+        onPick={(pick) => setPicked({ categoryId: pick.categoryId, subcategoryId: pick.subcategoryId ?? null })}
+      />
 
       {matches.length > 0 && (
         <ul role="listbox" className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)] overflow-hidden">

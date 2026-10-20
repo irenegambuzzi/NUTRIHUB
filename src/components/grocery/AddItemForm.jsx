@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, Plus } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
@@ -6,12 +6,14 @@ import { Input, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { decimalProblem, firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { CategoryFields } from '../inventory/CategoryFields'
+import { CategoryChips } from '../ui/CategoryChips'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker, UnitOptions } from './shared'
 import { EXTRA_PACKAGING_UNITS, normName } from '../../lib/grocery'
 import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
+import { useLastPrice } from '../../hooks/useLastPrice'
 import { roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { isOneTime } from '../../lib/oneTime'
@@ -42,7 +44,7 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
 // from the name, or left empty for the user to pick; a pick by hand is
 // remembered for that name on both phones.
 export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd, onAddCategory, onAddSubcategory, initialName = '', onAdded }) {
-  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
+  const { suggest, suggestions, remember } = useCategorySuggestions({ parents, subsByParent })
   const [initial] = useState(() => (initialName ? fieldsFromName(initialName, suggest, pantryByName) : {}))
   const [name, setName] = useState(initialName)
   const [categoryId, setCategoryId] = useState(initial.categoryId ?? '')
@@ -57,6 +59,25 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   // One-time purchase (1×), for something not in HOME yet: Confirm
   // purchase makes its new HOME item one-time too.
   const [oneTime, setOneTime] = useState(false)
+  // Bought before: the last normal price and the unit it was bought in fill
+  // in until the price or unit is changed by hand (the store never is).
+  const [priceEdited, setPriceEdited] = useState(false)
+  const [autoFilled, setAutoFilled] = useState(false)
+  const last = useLastPrice(name)
+  const lastKey = last ? `${last.price}|${last.quantity}|${last.unit}` : ''
+  useEffect(() => {
+    if (priceEdited) return
+    if (last) {
+      setPriceDraft({ price: moneyText(last.price), price_qty: String(last.quantity), price_unit: last.unit })
+      setUnit(last.unit)
+      setAutoFilled(true)
+    } else if (autoFilled) {
+      setPriceDraft(EMPTY_PRICE)
+      setAutoFilled(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastKey, priceEdited])
+  const chips = suggestions(name)
 
   // Suggest category/subcategory from the name until the user picks one.
   const handleNameChange = (value) => {
@@ -80,13 +101,12 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
-    if (!categoryId) return setCategoryError('Pick a category (or add a new one).')
     if (firstDecimalProblem(quantity, priceDraft.price, priceDraft.price_qty)) return
     const known = pantryByName.get(normName(name))
     const { error } = await onAdd({
       name: name.trim(),
-      categoryId,
-      subcategoryId: subcategoryId || null,
+      categoryId: categoryId || null,
+      subcategoryId: categoryId ? subcategoryId || null : null,
       price: parseDecimal(priceDraft.price) || 0,
       priceQty: parseDecimal(priceDraft.price) > 0 ? parseDecimal(priceDraft.price_qty) || 1 : null,
       priceUnit: parseDecimal(priceDraft.price) > 0 ? formPriceUnit : null,
@@ -98,7 +118,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
-    if (categoryTouched) remember(name, categoryId, subcategoryId || null)
+    if (categoryTouched && categoryId) remember(name, categoryId, subcategoryId || null, { chips })
     setName('')
     setCategoryId('')
     setSubcategoryId('')
@@ -107,6 +127,8 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     setCategoryTouched(false)
     setSuggested(false)
     setOneTime(false)
+    setPriceEdited(false)
+    setAutoFilled(false)
     onAdded?.()
   }
 
@@ -114,6 +136,19 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     <form onSubmit={handleAdd} data-unsaved={name.trim() ? '' : undefined}>
       <Card className="space-y-3 rounded-3xl">
         <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+        <CategoryChips
+          mode="home"
+          name={name}
+          chips={chips}
+          selected={{ categoryId, subcategoryId }}
+          onPick={(pick) => {
+            setCategoryId(pick.categoryId)
+            setSubcategoryId(pick.subcategoryId ?? '')
+            setCategoryTouched(true)
+            setSuggested(false)
+            setCategoryError('')
+          }}
+        />
         <CategoryFields
           categoryId={categoryId}
           subcategoryId={subcategoryId}
@@ -140,14 +175,24 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
             onBlur={() => !decimalProblem(quantity) && setQuantity(String(roundQuantity(quantity, unit) || 1))}
             aria-label="Quantity"
           />
-          <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit">
+          <Select
+            value={unit}
+            onChange={(e) => {
+              setUnit(e.target.value)
+              setPriceEdited(true)
+            }}
+            aria-label="Unit"
+          >
             <UnitOptions />
           </Select>
         </div>
         <DecimalHint value={quantity} className="-mt-2" />
         <PriceFields
           value={{ ...priceDraft, price_unit: formPriceUnit }}
-          onChange={(patch) => setPriceDraft((d) => ({ ...d, ...patch }))}
+          onChange={(patch) => {
+            setPriceEdited(true)
+            setPriceDraft((d) => ({ ...d, ...patch }))
+          }}
           unitOptions={formPriceUnits}
           line={{ quantity: formQuantity, unit }}
           pack={formPack}

@@ -1000,6 +1000,80 @@ the database — no `supabase/024`):
 6. SHOP quick add of an unknown word → no popup; it's added with a grey "No
    category"; tap to fix.
 
+### As built in round 5 (20/10/2026)
+
+Built as above, with these details (decided while building; none changes the
+database — no `supabase/024`). Irene decided plan item 22: the default budget
+category of a **new** HOME category is the MONEY **main** category with
+**exactly** the same name (capitals and outer spaces ignored), else
+Groceries — no "similar name" guessing (this replaces the "same or similar"
+wording of the NOTE 5 rule above).
+
+- **Files**: `lib/categoryNames.js` (`nameKey`, `similarName`, `sameName`,
+  `findExisting`, `takenMessage`, `freeNameSuggestions`) + `data/categorySynonyms.js`
+  (20 pairs); `lib/newCategory.js` (`checkNewName` for HOME and MONEY,
+  `defaultNewBudget`, `mappingToStore`, `titleCase`); `lib/lastPrice.js`
+  (`lastPriceFor`, `fetchTripLines`); `categoryGuess.guessCategories`;
+  `categorySuggest.suggestCategories` / `suggestBudgetCategories` /
+  `suggestCategoriesAsync` / `differsFromFirst` (`suggestCategory` stays);
+  hooks `useLastPrice`, `useCategoryCreation`, and `useCategorySuggestions`
+  with `suggestions`, `budgetSuggestions`, `remember(…, { chips })`,
+  `rememberBudget`; `components/ui/CategoryChips.jsx` (chips + the inline
+  "New category" row), `ui/NoCategoryLabel.jsx`, `grocery/FixCategory.jsx`.
+- **One door, one shape**: every chip is `{ categoryId, subcategoryId,
+  expenseCategoryId, source, label }`. Layers: memory → HOME item (pantry) →
+  keywords (up to 3 distinct rules, best first) → an existing category with a
+  similar name (source `name`) → AI (`ASYNC_SUGGESTERS`, still empty). Only
+  categories that exist are offered. A MONEY row with Add to HOME **off**
+  gets *budget* chips instead: the name's remembered budget category
+  (`category_memory.expense_category_id`), then the HOME suggestions through
+  the mapping, then a similar name among the budget categories.
+- **Learning**: a pick (chip, or the selects) that differs from the first
+  chip on offer is saved in `category_memory` with `source: 'user'`; a HOME
+  pick never overwrites the remembered budget category and the other way
+  round. A MONEY-only pick (`rememberBudget`) writes `expense_category_id`
+  only (`category_id` stays null; the HOME layers ignore such a row).
+- **Last price**: the most recent of a purchase line (`list_total ?? line_total`
+  for its `quantity` + `unit`; older SHOP lines from `grocery_snapshot`), an
+  order (`list_price ?? price`, only with quantity + unit) and the HOME item
+  (`price` per `price_qty` `price_unit`). It fills price, quantity and unit
+  until one of them is edited by hand. Store never. Purchase lines are asked
+  from the database 400 ms after typing stops (nothing fills offline except
+  HOME items and orders). QuickAdd has no price field, so it doesn't use it.
+- **"New category" row** (inline, never a popup): name (starts as the typed
+  item name in Title Case), "New main category" / "Sub-category of …", and for
+  HOME a budget category (starts by the exact-name rule above; a sub-category
+  with no exact match starts as its main's budget, not Groceries, so it keeps
+  following its main). A mapping row is stored only when the choice differs
+  from what the category gets without one. Add to HOME on / SHOP → a HOME
+  category; Add to HOME off → a MONEY category only (no HOME row, no mapping).
+  Home & Appliances isn't offered as a main for a new sub-category.
+- **Name already used**: "Gifts already exists in Shopping" (or "… as a main
+  category") shown before Create; Create stays off; the name is never changed
+  by the app. Up to 2 tappable free names: "<main name> <name>" (only for a
+  sub-category) and built-in synonyms; each is checked against the same
+  uniqueness rule before it is shown. A *similar* (not identical) existing
+  category is offered as "Use <path>" instead of a near-duplicate. HOME and
+  MONEY never check each other.
+- **"✚ New" chip with a proposed name**: `CategoryChips` takes `proposals`
+  `[{ parentId, name }]` for round 8; nothing passes any, so it is off.
+- **No category**: the SHOP add forms no longer insist on a category. QuickAdd
+  adds an unknown word at once with no category (no popup); "More options"
+  also allows it. Grey "No category" (the shared `SMALL_LABEL` size, grey like
+  1×) on a SHOP tile, a HOME tile, a Confirm purchase line (new item) and a
+  MONEY purchase line without a budget category. On SHOP tiles and Confirm
+  lines it can be tapped to open the chips (`FixCategory`, `updateCategory`).
+- **Not done (as the brief said)**: trip-based suggestions (round 7),
+  discounts (round 6), AI calls (round 8). `ExpenseForm.jsx` (the form for
+  editing one existing expense) has no chips: the brief listed the SHOP forms
+  and the MONEY purchase rows.
+
+### iPhone checklist for round 5
+
+See the list in the round's final message: (a) "pizza" chip, (b) an item
+bought before fills price and unit, (c) a different pick is learned, (d) a
+new sub from SHOP, (e) "Gifts already exists in Shopping".
+
 ---
 
 ## 7. Round 6 — Discounts (NOTE 6)
@@ -1420,3 +1494,17 @@ Split gives each its old one back), item 21, decision 6, decisions 18 and 19.
 42. **MONEY doesn't ask about expired stock** (SHOP does); the row warns.
 43. **Reopen / Undo purchase / Split are also on the opened purchase row**
     in MONEY, not only in Receipts.
+
+**Decisions made in round 5 (20/10/2026)**
+
+44. **New HOME category → budget category by an exact name** (Irene's answer to
+    item 22): a MONEY main category with the same name (case-insensitive,
+    trimmed), else Groceries; for a new sub-category, else what its main is
+    booked to. Always shown and changeable before Create.
+45. **Chips are tried memory → HOME item → keywords → similar name**; the
+    similar-name layer is what shows "Shopping › Gifts" for "Gift" instead of
+    offering a near-duplicate.
+46. **A pick is remembered only when it differs from the first chip** on
+    offer; memory rows for MONEY-only picks keep `category_id` null.
+47. **SHOP may now save an item without a category** (grey "No category",
+    tap to fix); the HOME editor still requires one (item 10).

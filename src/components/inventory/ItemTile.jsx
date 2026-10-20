@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Minus, Plus, Pencil, Trash, Trash2, ShoppingCart, CalendarClock, PackagePlus } from 'lucide-react'
 import { RestockForm } from './RestockForm'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
@@ -60,6 +61,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
         {isNew && (
           <span className={cn(SMALL_LABEL, 'self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
         )}
+        {!item.category_id && <NoCategoryLabel className="self-center" />}
         {expiry !== 'none' && (
           <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1', EXPIRY_STYLES[expiry])}>
             <CalendarClock size={10} />

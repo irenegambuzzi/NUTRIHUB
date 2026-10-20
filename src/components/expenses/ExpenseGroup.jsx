@@ -1,3 +1,4 @@
+import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { useState } from 'react'
 import { ChevronDown, Pencil, RotateCcw, ShoppingCart, Split, Store, Trash2 } from 'lucide-react'
 import { PAID_BY_OPTIONS } from '../../data/constants'
@@ -79,6 +80,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
                   <div className="min-w-0">
                     <p className="text-[var(--color-text)] truncate">{e.description || section.name || main?.name || 'Expense'}</p>
                     <span className="text-[10px] text-[var(--color-text-muted)]">
+                      {!e.category_id && <NoCategoryLabel className="mr-1" />}
                       {paidByLabel(e.paid_by)}
                       {shopOf?.(e.shop_id) && (
                         <>
@@ -204,6 +206,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
                             <span>·</span>
                           </>
                         )}
+                        {!e.category_id && <NoCategoryLabel className="shrink-0" />}
                         <span className="shrink-0">{paidByLabel(e.paid_by)}</span>
                         {e.merged_at && <span className="shrink-0">· merged</span>}
                       </span>

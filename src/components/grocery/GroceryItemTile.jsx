@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { Check, Globe, Trash2 } from 'lucide-react'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
+import { NoCategoryLabel } from '../ui/NoCategoryLabel'
+import { FixCategory } from './FixCategory'
 import { PayerPicker } from './shared'
 import { EntryEditor, PriceButton, QuantityStepper } from './EntryControls'
 import { useEntryEditing } from '../../hooks/useEntryEditing'
@@ -14,10 +17,11 @@ import { RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryS
 // action when the item's usual store is online (`orderFirst`,
 // `usualShop`). `oneTime`: a one-time purchase (grey "1× purchase"). A
 // group's variants are shown in the group's card instead (GroupShopCard).
-export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false }) {
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onUpdateCategory = null, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false }) {
   const c = inventoryCategoryColor(item.category_id)
   const edit = useEntryEditing(item, pack, onUpdatePricing)
   const label = RESTOCK_LABELS[reason]
+  const [fixing, setFixing] = useState(false)
 
   // Background follows why the item is here: red Out, yellow Low,
   // purple Expired, blue New; items already in stock keep their category
@@ -55,7 +59,7 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
         </p>
         <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
           {item.in_cart && 'In the cart · '}
-          {categoryName(item.category_id)}
+          {item.category_id && categoryName(item.category_id)}
         </p>
         {oneTime && <OneTimeBadge className="inline-block mt-1" />}
       </button>
@@ -76,12 +80,21 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
         </span>
       )}
 
-      {!item.in_cart && (label || budgetMark) && (
+      {((!item.in_cart && (label || budgetMark)) || !item.category_id) && (
         <div className="flex flex-wrap gap-1 mt-1">
-          {label && <span className={cn(SMALL_LABEL, label.className)}>{label.label}</span>}
+          {!item.category_id && (onUpdateCategory ? (
+            <button type="button" onClick={() => setFixing((v) => !v)} aria-label={`Choose a category for ${item.name}`} aria-expanded={fixing}>
+              <NoCategoryLabel />
+            </button>
+          ) : (
+            <NoCategoryLabel />
+          ))}
+          {!item.in_cart && label && <span className={cn(SMALL_LABEL, label.className)}>{label.label}</span>}
           <BudgetMark mark={budgetMark} />
         </div>
       )}
+
+      {fixing && !item.category_id && <FixCategory item={item} onUpdateCategory={onUpdateCategory} onDone={() => setFixing(false)} />}
 
       {edit.editing ? <EntryEditor item={item} pack={pack} edit={edit} /> : <PriceButton item={item} pack={pack} total={total} edit={edit} />}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { guessCategory, normalizeName, singular } from './categoryGuess'
+import { guessCategories, guessCategory, normalizeName, singular } from './categoryGuess'
 
 const sub = (name) => guessCategory(name)?.subcategoryId
 const parent = (name) => guessCategory(name)?.categoryId
@@ -233,5 +233,31 @@ describe('guessCategory with the categories that exist now', () => {
     // With one of the two gone, the other decides.
     expect(guessCategory('tablet', available(['health', 'cleaning']))).toMatchObject({ categoryId: 'health' })
     expect(guessCategory('tablet', available(['appliances', 'cleaning']))).toMatchObject({ categoryId: 'appliances' })
+  })
+})
+
+describe('guessCategories (the chips)', () => {
+  const all = { parents: [{ id: 'frozen' }, { id: 'bakery' }, { id: 'dairy' }], subsByParent: new Map([['frozen', [{ id: 'frozen:meals' }]], ['bakery', []], ['dairy', []]]) }
+
+  it('lists the best distinct rules, best first, up to the limit', () => {
+    const out = guessCategories('pizza', all, 3)
+    expect(out[0]).toEqual({ categoryId: 'frozen', subcategoryId: 'frozen:meals' })
+    expect(new Set(out.map((c) => `${c.categoryId}|${c.subcategoryId}`)).size).toBe(out.length)
+    expect(out.length).toBeLessThanOrEqual(3)
+    expect(guessCategories('pizza', all, 1)).toHaveLength(1)
+  })
+
+  it('its first answer is the answer of guessCategory when that is clear', () => {
+    expect(guessCategories('Ice cream', null, 3)[0]).toEqual(guessCategory('Ice cream'))
+  })
+
+  it('ignores categories that do not exist, before ranking', () => {
+    const only = { parents: [{ id: 'bakery' }], subsByParent: new Map([['bakery', []]]) }
+    for (const c of guessCategories('pizza', only, 3)) expect(c.categoryId).toBe('bakery')
+  })
+
+  it('nothing for a name that matches nothing', () => {
+    expect(guessCategories('Stuff for Marco', all, 3)).toEqual([])
+    expect(guessCategories('', all, 3)).toEqual([])
   })
 })

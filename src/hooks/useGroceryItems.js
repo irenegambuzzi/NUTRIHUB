@@ -167,6 +167,22 @@ export function useGroceryItems() {
     [fetchItems]
   )
 
+  // Gives an entry saved without a category its category (and sub-category)
+  // — the grey "No category" label's fix. Its budget category follows the
+  // mapping when it is bought.
+  const updateCategory = useCallback(
+    async (item, { categoryId, subcategoryId = null }) =>
+      attempt(
+        async () => {
+          const patch = { category_id: categoryId, subcategory_id: subcategoryId || null }
+          must(await updateRows('grocery_items', [item.id], patch))
+          groceryStore.patchLocal([item.id], patch)
+        },
+        { onFail: fetchItems }
+      ),
+    [fetchItems]
+  )
+
   // Deletes right away; Undo puts the exact rows back.
   const removeWithUndo = useCallback(
     (query, message) =>
@@ -226,5 +242,5 @@ export function useGroceryItems() {
     [fetchItems]
   )
 
-  return { items, addItem, toggleCart, updatePricing, updatePayer, deleteItem, addVariant }
+  return { items, addItem, toggleCart, updatePricing, updatePayer, updateCategory, deleteItem, addVariant }
 }

@@ -12,6 +12,7 @@ const data = vi.hoisted(() => ({
     { id: 'lays', name: 'Lays', unit: 'pack', current_stock: 2, group_id: 'chips', category_id: 'snacks' },
     { id: 'tuc', name: 'Tuc', unit: 'pack', current_stock: 0, group_id: 'chips', category_id: 'snacks' },
   ],
+  last: null,
   grocery: [{ id: 'g-milk', name: 'Milk', pantry_item_id: 'milk', completed: false, in_cart: false }],
 }))
 const fake = (rows) => ({ useRows: () => ({ rows, loaded: true }) })
@@ -32,11 +33,24 @@ vi.mock('../../hooks/useInventoryCategories', () => {
   return { useInventoryCategories: () => ({ parents, subsByParent: new Map(parents.map((p) => [p.id, []])), addCategory: vi.fn(), addSubcategory: vi.fn() }) }
 })
 const remember = vi.fn()
+const rememberBudget = vi.fn()
+// What the suggestion door answers for a few names (lib/categorySuggest.js
+// has its own tests): HOME chips, and budget chips for a row not added to HOME.
+const homeChip = (categoryId, label) => ({ categoryId, subcategoryId: null, expenseCategoryId: null, source: 'keywords', label })
+const HOME_CHIPS = { milk: [homeChip('dairy', 'Dairy')], shampoo: [homeChip('toiletries', 'Toiletries'), homeChip('dairy', 'Dairy')], chips: [homeChip('snacks', 'Snacks')] }
+const BUDGET_CHIPS = { gift: [{ categoryId: null, subcategoryId: null, expenseCategoryId: 'dining', source: 'name', label: 'Dining' }] }
 vi.mock('../../hooks/useCategorySuggestions', () => ({
   useCategorySuggestions: () => ({
-    suggest: (name) => ({ milk: 'dairy', shampoo: 'toiletries', chips: 'snacks' })[name.trim().toLowerCase()] ? { categoryId: { milk: 'dairy', shampoo: 'toiletries', chips: 'snacks' }[name.trim().toLowerCase()], subcategoryId: null, source: 'keywords' } : null,
+    suggest: (name) => HOME_CHIPS[name.trim().toLowerCase()]?.[0] ? { ...HOME_CHIPS[name.trim().toLowerCase()][0], subcategoryId: null } : null,
+    suggestions: (name) => HOME_CHIPS[name.trim().toLowerCase()] ?? [],
+    budgetSuggestions: (name) => BUDGET_CHIPS[name.trim().toLowerCase()] ?? [],
     remember,
+    rememberBudget,
   }),
+}))
+vi.mock('../../hooks/useLastPrice', () => ({ useLastPrice: () => data.last }))
+vi.mock('../../hooks/useCategoryCreation', () => ({
+  useCategoryCreation: () => ({ homeCategories: [], homeMains: [], expenseCategories: [], moneyMains: [], ctx: { expenseCategories: [], inventoryCategories: [], mapRows: [] }, createHome: vi.fn(), createMoney: vi.fn() }),
 }))
 const recordMoneyPurchase = vi.fn()
 vi.mock('../../hooks/usePurchase', () => ({ recordMoneyPurchase: (...args) => recordMoneyPurchase(...args) }))
@@ -49,6 +63,9 @@ afterEach(() => {
   cleanup()
   recordMoneyPurchase.mockReset()
   addExpenseOnce.mockReset()
+  remember.mockReset()
+  rememberBudget.mockReset()
+  data.last = null
 })
 
 const expenseCategories = [
@@ -142,5 +159,63 @@ describe('MONEY Add expense: the purchase form', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add expense|Save purchase/ }))
     expect(await screen.findAllByText('Enter the price (0 if it was free).')).toHaveLength(2)
     expect(recordMoneyPurchase).not.toHaveBeenCalled()
+  })
+
+  it('chips under the name: tapping one fills the HOME category and the budget category follows the mapping', () => {
+    form()
+    type('Name', 'Shampoo')
+    // the first chip is what the name already filled in; tap the second
+    expect(screen.getByRole('button', { name: 'Toiletries' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Dairy' }))
+    expect(screen.getByLabelText('Item category').value).toBe('dairy')
+    expect(screen.getByLabelText('Budget category').value).toBe('groceries')
+    expect(screen.getByRole('button', { name: 'Dairy' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a pick other than the first chip is remembered for the name (with the chips that were on offer)', async () => {
+    recordMoneyPurchase.mockResolvedValue({ error: null })
+    form()
+    type('Name', 'Shampoo')
+    type('Price', '4')
+    fireEvent.click(screen.getByRole('button', { name: 'Dairy' }))
+    fireEvent.click(screen.getByRole('button', { name: /Add expense|Save purchase/ }))
+    await waitFor(() => expect(remember).toHaveBeenCalledTimes(1))
+    expect(remember.mock.calls[0].slice(0, 3)).toEqual(['Shampoo', 'dairy', null])
+    expect(remember.mock.calls[0][3].chips).toHaveLength(2)
+  })
+
+  it('a row with Add to HOME off gets budget chips; the pick is its budget category and is remembered as such', async () => {
+    addExpenseOnce.mockResolvedValue({ error: null })
+    form()
+    type('Name', 'Gift')
+    expect(screen.getByLabelText('Add to HOME').checked).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Dining' }))
+    expect(screen.getByLabelText('Budget category').value).toBe('dining')
+    type('Price', '10')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €10.00' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
+    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ categoryId: 'dining', description: 'Gift' })
+    expect(rememberBudget.mock.calls[0].slice(0, 2)).toEqual(['Gift', 'dining'])
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('"+ New category" is offered under the name, as an inline row (no popup)', () => {
+    form()
+    expect(screen.queryByRole('button', { name: /New category/ })).toBeNull()
+    type('Name', 'Zzz thing')
+    expect(screen.getByRole('button', { name: /New category/ })).toBeTruthy()
+  })
+
+  it('an item bought before fills in the last normal price and its unit; typing a price by hand stops it', () => {
+    data.last = { price: 2.5, quantity: 500, unit: 'gr', source: 'trip', at: 1 }
+    form()
+    type('Name', 'Rice')
+    expect(screen.getByLabelText('Price').value).toBe('2.50')
+    expect(screen.getByLabelText('Quantity').value).toBe('500')
+    expect(screen.getByLabelText('Unit').value).toBe('gr')
+    type('Price', '3')
+    data.last = { price: 9, quantity: 1, unit: 'kg', source: 'trip', at: 2 }
+    type('Name', 'Rice 2')
+    expect(screen.getByLabelText('Price').value).toBe('3')
   })
 })

@@ -5,7 +5,11 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [] }) }))
 vi.mock('../hooks/useFlow', () => ({ useFlow: () => ({ ready: false }) }))
-vi.mock('../hooks/useCategorySuggestions', () => ({ useCategorySuggestions: () => ({ suggest: () => null, remember: () => {} }) }))
+vi.mock('../hooks/useCategorySuggestions', () => ({ useCategorySuggestions: () => ({ suggest: () => null, suggestions: () => [], budgetSuggestions: () => [], remember: () => {}, rememberBudget: () => {} }) }))
+vi.mock('../hooks/useLastPrice', () => ({ useLastPrice: () => null }))
+vi.mock('../hooks/useCategoryCreation', () => ({
+  useCategoryCreation: () => ({ homeCategories: [], homeMains: [], expenseCategories: [], moneyMains: [], ctx: { expenseCategories: [], inventoryCategories: [], mapRows: [] }, createHome: vi.fn(), createMoney: vi.fn() }),
+}))
 vi.mock('../hooks/usePurchase', () => ({ usePurchase: () => ({ confirmPurchase: vi.fn(async () => ({ error: null })) }) }))
 vi.mock('../hooks/useReceiptPhotos', () => ({ useReceiptPhotos: () => ({ photos: [], addPhoto: vi.fn(), deletePhoto: vi.fn() }) }))
 vi.mock('../hooks/useShopOrder', () => ({ useShopOrder: () => ({ positions: new Map(), savePositions: vi.fn() }) }))

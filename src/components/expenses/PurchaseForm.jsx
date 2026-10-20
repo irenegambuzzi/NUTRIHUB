@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Plus, Settings2, Trash2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
+import { CategoryChips } from '../ui/CategoryChips'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
@@ -12,7 +13,7 @@ import { ShopPicker } from './ShopPicker'
 import { ExpenseCategoryManager } from './ExpenseCategoryPicker'
 import { DEFAULT_UNIT, PAID_BY_OPTIONS } from '../../data/constants'
 import { cn } from '../../lib/cn'
-import { decimalProblem } from '../../lib/decimal'
+import { decimalProblem, moneyText } from '../../lib/decimal'
 import { localDateString } from '../../lib/expensePeriods'
 import { normName } from '../../lib/grocery'
 import { withGroupTotals } from '../../lib/groups'
@@ -20,6 +21,7 @@ import { money } from '../../lib/pricing'
 import {
   addsToHome,
   budgetOf,
+  defaultBudget,
   emptyRow,
   homeItemFor,
   homeLocked,
@@ -35,6 +37,7 @@ import {
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
+import { useLastPrice } from '../../hooks/useLastPrice'
 import { recordMoneyPurchase } from '../../hooks/usePurchase'
 import { addExpenseOnce } from '../../hooks/useExpenses'
 import { useShops } from '../../hooks/useShops'
@@ -65,7 +68,6 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const { ready: shopsReady } = useShops()
 
   const { parents, subsByParent, addCategory: addHomeCategory, addSubcategory } = useInventoryCategories()
-  const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const { rows: inventoryRows } = inventoryCategoryStore.useRows()
   const { rows: mapRows } = budgetMapStore.useRows()
   const { rows: pantryRows } = pantryStore.useRows()
@@ -74,6 +76,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const pantryItems = useMemo(() => withGroupTotals(pantryRows), [pantryRows])
   const orderedIds = useMemo(() => new Set(orders.filter((o) => o.status === 'on_the_way' && o.grocery_item_id).map((o) => o.grocery_item_id)), [orders])
   const budgetCtx = useMemo(() => ({ expenseCategories, inventoryCategories: inventoryRows, mapRows }), [expenseCategories, inventoryRows, mapRows])
+  // A HOME suggestion's budget category follows the mapping, like a row's.
+  const budgetFor = useCallback((pick) => defaultBudget(pick, budgetCtx) || null, [budgetCtx])
+  const { suggest, suggestions, budgetSuggestions, remember, rememberBudget } = useCategorySuggestions({ parents, subsByParent, expenseCategories, budgetFor })
 
   const lines = rows.map((row) => rowLine(row, pantryItems))
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
@@ -96,7 +101,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
       patch.suggested = Boolean(pick)
     }
     const known = homeItemFor(name, pantryItems)
-    if (!row.unitTouched) patch.unit = known?.unit ?? DEFAULT_UNIT
+    if (!row.unitTouched && !row.autoFilled) patch.unit = known?.unit ?? DEFAULT_UNIT
     if (normName(name) !== normName(row.name)) patch.variantId = undefined
     change(row.key, patch)
   }
@@ -113,8 +118,18 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     const { error } = plain ? await saveExpense(lines[0]) : await savePurchase()
     setBusy(false)
     if (error) return
-    for (const { row } of lines) if (row.categoryTouched && row.categoryId && row.name.trim()) remember(row.name, row.categoryId, row.subcategoryId || null)
+    for (const line of lines) rememberPicks(line)
     onClose?.()
+  }
+
+  // What was picked by hand is remembered for the name when it is not the
+  // first chip that was on offer: the HOME category, and for a row that is
+  // not added to HOME the budget category too.
+  const rememberPicks = ({ row, home }) => {
+    if (!row.name.trim()) return
+    if (row.categoryTouched && row.categoryId) remember(row.name, row.categoryId, row.subcategoryId || null, { chips: suggestions(row.name) })
+    const budgetId = budgetOf(row, budgetCtx)
+    if (!home && row.budgetTouched && budgetId) rememberBudget(row.name, budgetId, { chips: budgetSuggestions(row.name) })
   }
 
   const saveExpense = (line) =>
@@ -205,6 +220,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               subsByParent={subsByParent}
               onAddCategory={addHomeCategory}
               onAddSubcategory={addSubcategory}
+              chipsFor={(name, home) => (home ? suggestions(name) : budgetSuggestions(name))}
               onName={(name) => changeName(line.row, name)}
               onChange={(patch) => change(line.row.key, patch)}
               onManageBudget={() => setManaging(line.row.key)}
@@ -243,6 +259,14 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   )
 }
 
+// What a tapped (or newly made) chip fills in: the HOME category and sub
+// (the budget category then follows the mapping again), or — for a row not
+// added to HOME — the budget category itself.
+function pickPatch(pick, home) {
+  if (!home || pick.expenseCategoryId) return { budgetId: pick.expenseCategoryId, budgetTouched: true }
+  return { categoryId: pick.categoryId, subcategoryId: pick.subcategoryId ?? '', categoryTouched: true, suggested: false, budgetTouched: false, budgetId: '' }
+}
+
 // { mainId, subId } of a budget category id, for the category manager.
 function budgetPick(id, categories) {
   const c = categories.find((x) => x.id === id)
@@ -251,13 +275,30 @@ function budgetPick(id, categories) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
   const locked = homeLocked(row)
   const home = addsToHome(row)
   const entryNote = listEntryNote(line, listEntry)
   const label = (what) => (single ? what : `${what} of item ${index + 1}`)
   const badNumber = [row.priceText, row.quantityText, row.minText, row.packSizeText].find((t) => decimalProblem(t)) ?? ''
+  const chips = chipsFor(row.name, home)
+
+  // Bought before: the last normal price and the unit it was bought in fill
+  // in (until the price, quantity or unit is edited by hand). The store is
+  // never filled.
+  const last = useLastPrice(row.name)
+  const lastKey = last ? `${last.price}|${last.quantity}|${last.unit}` : ''
+  useEffect(() => {
+    if (row.priceEdited || row.unitTouched) return
+    if (last) {
+      const patch = { priceText: moneyText(last.price), quantityText: String(last.quantity), unit: last.unit, autoFilled: true }
+      if (patch.priceText !== row.priceText || patch.quantityText !== row.quantityText || patch.unit !== row.unit) onChange(patch)
+    } else if (row.autoFilled) {
+      onChange({ priceText: '', quantityText: '1', autoFilled: false })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastKey, row.priceEdited, row.unitTouched])
 
   return (
     <div role="group" aria-label={single ? 'Item' : `Item ${index + 1}`} className={cn('rounded-2xl border p-3 space-y-2', problem ? 'border-amber-400/60' : 'border-[var(--color-border)]')}>
@@ -270,13 +311,21 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCatego
         )}
       </div>
 
+      <CategoryChips
+        mode={home ? 'home' : 'budget'}
+        name={row.name}
+        chips={chips}
+        selected={home ? { categoryId: row.categoryId, subcategoryId: row.subcategoryId } : { expenseCategoryId: budgetId }}
+        onPick={(pick) => onChange(pickPatch(pick, home))}
+      />
+
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1">
           <span className="text-xs text-[var(--color-text-muted)]">€</span>
-          <DecimalInput value={row.priceText} onChange={(e) => onChange({ priceText: e.target.value })} placeholder="0.00" aria-label={label('Price')} className="w-24 text-sm p-2 text-right font-mono" />
+          <DecimalInput value={row.priceText} onChange={(e) => onChange({ priceText: e.target.value, priceEdited: true })} placeholder="0.00" aria-label={label('Price')} className="w-24 text-sm p-2 text-right font-mono" />
         </div>
         <div className="flex items-center gap-1">
-          <DecimalInput value={row.quantityText} onChange={(e) => onChange({ quantityText: e.target.value })} aria-label={label('Quantity')} className="w-16 text-sm p-2 text-right" />
+          <DecimalInput value={row.quantityText} onChange={(e) => onChange({ quantityText: e.target.value, priceEdited: true })} aria-label={label('Quantity')} className="w-16 text-sm p-2 text-right" />
           <Select value={row.unit} onChange={(e) => onChange({ unit: e.target.value, unitTouched: true })} aria-label={label('Unit')} className="w-auto text-xs p-2">
             <UnitOptions />
           </Select>

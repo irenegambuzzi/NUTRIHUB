@@ -53,6 +53,13 @@ describe('a purchase in the MONEY list', () => {
     expect(container.querySelectorAll('[data-purchase]')).toHaveLength(1)
   })
 
+  it('a line saved without a budget category carries the grey "No category" label', () => {
+    const loose = { id: 'e3', trip_id: 't1', category_id: null, amount: 1, paid_by: 'irene', expense_date: '2026-10-14', description: 'Mystery' }
+    row({ group: { date: '2026-10-14', items: [bread, loose], total: 3.5 } })
+    fireEvent.click(screen.getByRole('button', { name: /Conad/ }))
+    expect(screen.getAllByText('No category')).toHaveLength(1)
+  })
+
   it('opened: items by main category with subtotals, each with sub-category, quantity and amount', () => {
     const { container } = row()
     fireEvent.click(screen.getByRole('button', { name: /Conad/ }))

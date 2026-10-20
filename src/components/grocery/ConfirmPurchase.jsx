@@ -4,6 +4,8 @@ import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { NoCategoryLabel } from '../ui/NoCategoryLabel'
+import { FixCategory } from './FixCategory'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
@@ -36,7 +38,7 @@ import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 // second store). An entry ordered online and on the way (`openOrderOf`)
 // is never bought here: it says so, with "Cancel the order…"
 // (`onCancelOrder`) or "Take out of the cart".
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false }) {
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false }) {
   const { confirmPurchase } = usePurchase()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
   // One id per purchase: pressing Confirm again after a dropped connection
@@ -179,6 +181,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       onEdit={(patch) => edit(line.item.id, patch)}
       updatePricing={updatePricing}
       updatePayer={updatePayer}
+      onUpdateCategory={updateCategory}
       onRemove={() => toggleCart(cartItems.find((i) => i.id === line.item.id))}
     />
   )
@@ -318,10 +321,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // is left, so the other phone sees it.
 // `ordered`: the order on the way for this entry (it can't be bought
 // here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
+function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
+  const [fixing, setFixing] = useState(false)
 
   // A typed number that isn't one is kept as typed (and refused when
   // confirming), never swapped for the old value.
@@ -396,6 +400,13 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
           <p className="text-sm font-bold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
             <span className="truncate">{item.name}</span>
             {entryIsOneTime(item, pantry) && <OneTimeBadge className="shrink-0" />}
+            {!item.category_id && !pantry && (onUpdateCategory ? (
+              <button type="button" onClick={() => setFixing((v) => !v)} aria-label={`Choose a category for ${item.name}`} aria-expanded={fixing}>
+                <NoCategoryLabel className="shrink-0" />
+              </button>
+            ) : (
+              <NoCategoryLabel className="shrink-0" />
+            ))}
           </p>
           <p className="text-[10px] text-[var(--color-text-muted)]">
             {[item.category_id && categoryName(item.category_id), unitPrice, pantry ? `restocks "${pantry.name}"` : line.durable ? 'expense only' : 'new in the pantry'].filter(Boolean).join(' · ')}
@@ -405,6 +416,8 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
           <Trash2 size={14} />
         </button>
       </div>
+
+      {fixing && !item.category_id && <FixCategory item={item} onUpdateCategory={onUpdateCategory} onDone={() => setFixing(false)} />}
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1">
