@@ -47,9 +47,14 @@ export const STATUS_STYLES = {
   },
 }
 
-// The neutral grey "1×" label of a one-time purchase (grey is only used
-// for this).
+// The small round labels on item cards ("New Item", "1× purchase",
+// "Out of Stock" on SHOP…): one size, weight and padding for all.
+export const SMALL_LABEL = 'text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full'
+
+// The neutral grey "1× purchase" label of a one-time purchase (grey is
+// only used for this).
 export const ONE_TIME_BADGE = 'bg-zinc-500/25 text-zinc-300'
+export const ONE_TIME_LABEL = '1× purchase'
 
 export const EXPIRY_STYLES = {
   expired: STATUS_STYLES.expired.badge,

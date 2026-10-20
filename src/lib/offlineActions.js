@@ -1,4 +1,4 @@
-import { enqueue, flush, getQueue, registerHandler, setAfterSync } from './offlineQueue'
+import { dequeue, enqueue, flush, getQueue, registerHandler, setAfterSync } from './offlineQueue'
 import { groceryStore, pantryStore } from './stores'
 import { refreshStartedStores, setRefreshGate } from './tableStore'
 import { normalizeItem, syncShoppingForItem } from './inventory'
@@ -39,10 +39,22 @@ export function queueQuantity(item, quantity) {
   return { error: null }
 }
 
+// Returns the change's `opId`, to take it back (cancelQueuedStock).
 export function queueStock(item, delta, reason) {
-  enqueue('stock', { opId: crypto.randomUUID(), itemId: item.id, delta, reason }, { label: `the stock of "${item.name}"` })
+  const opId = crypto.randomUUID()
+  enqueue('stock', { opId, itemId: item.id, delta, reason }, { label: `the stock of "${item.name}"` })
   showStock(item, delta)
-  return { error: null }
+  return { error: null, opId }
+}
+
+// Undo of a stock change still waiting to be sent: it is taken out of the
+// queue, so it never reaches the database or the history, and the screen
+// shows the stock as before (`item` as shown now, `delta` the change).
+// False when it has been sent already.
+export function cancelQueuedStock(opId, item, delta) {
+  if (!dequeue((op) => op.type === 'stock' && op.payload?.opId === opId)) return false
+  showStock(item, -delta)
+  return true
 }
 
 // Puts an open entry in the cart (with the tap time, when known) or takes

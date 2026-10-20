@@ -112,44 +112,44 @@ function fakeDb(tables) {
   return writes
 }
 
-describe('the shopping list works at group level', () => {
+describe('the shopping list works per variant', () => {
   const grocery = (rows) => ({ grocery_items: rows, pantry_items: [chips, lays, pringles] })
 
-  it('a group going low gets one line, named after the group', async () => {
+  it('a group going low with no variant at 0 lists the variant with the least (1 of its unit), never the group', async () => {
     const writes = fakeDb(grocery([]))
     await syncShoppingForItem(chips)
     const inserts = writes.filter((w) => w.op === 'insert')
     expect(inserts).toHaveLength(1)
-    expect(inserts[0].rows[0]).toMatchObject({ name: 'Chips & Snacks', pantry_item_id: 'g', auto_generated: true, quantity: 4.5, unit: 'pcs' })
+    expect(inserts[0].rows[0]).toMatchObject({ name: 'Pringles', pantry_item_id: 'v2', auto_generated: true, quantity: 1, unit: 'pcs' })
   })
 
-  it('a variant changing checks the group instead, once, and drops its own automatic line', async () => {
-    const writes = fakeDb(grocery([{ id: 'own', pantry_item_id: 'v1', auto_generated: true, completed: false }]))
+  it('a variant changing checks its group; its own entry is the group\'s row now', async () => {
+    const writes = fakeDb(grocery([{ id: 'own', pantry_item_id: 'v2', auto_generated: true, completed: false }]))
     await syncShoppingForItem(lays)
-    expect(writes.find((w) => w.op === 'delete')).toEqual({ op: 'delete', table: 'grocery_items', ids: ['own'] })
-    expect(writes.filter((w) => w.op === 'insert').map((w) => w.rows[0].name)).toEqual(['Chips & Snacks'])
+    expect(writes).toEqual([])
   })
 
-  it('a group that is fine again loses its automatic line; manual lines stay', async () => {
+  it('a group that is fine again loses its automatic entries (old group-level ones too); manual ones stay', async () => {
     const full = [chips, { ...lays, current_stock: 20 }]
     const writes = fakeDb({
       pantry_items: full,
       grocery_items: [
         { id: 'auto', pantry_item_id: 'g', auto_generated: true, completed: false },
+        { id: 'variant', pantry_item_id: 'v1', auto_generated: true, completed: false },
         { id: 'manual', pantry_item_id: 'g', auto_generated: false, completed: false },
       ],
     })
     await syncShoppingForItem(chips)
-    expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['auto'] }])
+    expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['auto', 'variant'] }])
   })
 
-  it('an automatic line ordered online stays when the item is fine again (it leaves when the order arrives)', async () => {
+  it('an automatic entry ordered online stays when the group is fine again (it leaves when the order arrives)', async () => {
     const full = [chips, { ...lays, current_stock: 20 }]
     const writes = fakeDb({
       pantry_items: full,
       grocery_items: [
-        { id: 'auto', pantry_item_id: 'g', auto_generated: true, completed: false },
-        { id: 'ordered', pantry_item_id: 'g', auto_generated: true, completed: false },
+        { id: 'auto', pantry_item_id: 'v1', auto_generated: true, completed: false },
+        { id: 'ordered', pantry_item_id: 'v1', auto_generated: true, completed: false },
       ],
       orders: [{ id: 'o', grocery_item_id: 'ordered', status: 'on_the_way' }],
     })
@@ -157,10 +157,10 @@ describe('the shopping list works at group level', () => {
     expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['auto'] }])
   })
 
-  it('a low item with a line on the way gets no second line', async () => {
+  it('a low group with an entry on the way gets no second entry', async () => {
     const writes = fakeDb({
       pantry_items: [chips, lays, pringles],
-      grocery_items: [{ id: 'ordered', pantry_item_id: 'g', auto_generated: true, completed: false }],
+      grocery_items: [{ id: 'ordered', pantry_item_id: 'v2', auto_generated: true, completed: false }],
       orders: [{ id: 'o', grocery_item_id: 'ordered', status: 'on_the_way' }],
     })
     await syncShoppingForItem(chips)
@@ -180,7 +180,7 @@ describe('the shopping list works at group level', () => {
   })
 })
 
-describe('buying a group', () => {
+describe('buying a group-level entry from before', () => {
   const pantry = withGroupTotals([chips, lays, pringles, rice])
   const entry = { id: 'e', name: 'Chips & Snacks', pantry_item_id: 'g', quantity: 5, unit: 'pcs', payer: 'shared', category_id: 'snacks' }
 

@@ -7,6 +7,7 @@ import { parseLocalDate } from './week'
 import { parseDecimal } from './decimal'
 import { isOneTime } from './oneTime'
 import { listedOutVariants } from './groups'
+import { planGroupEntries, spareEntryIds, variantPurchase } from './groupShop'
 
 export { normalizeUnit, unitFactor }
 
@@ -202,11 +203,14 @@ export function pickDurableCategory(rows, subName) {
 
 export const isDurable = (row) => DURABLE_CATEGORY_IDS.includes(row?.category_id)
 
+// Writes one history row; returns its id (in a list, empty when nothing
+// changed).
 export async function logStockChange(item, change, newStock, reason) {
-  if (!change) return
-  must(
-    await supabase.from('stock_logs').insert([{ item_id: item.id, item_name: item.name, change, new_stock: newStock, unit: item.unit, reason }])
+  if (!change) return []
+  const rows = must(
+    await supabase.from('stock_logs').insert([{ item_id: item.id, item_name: item.name, change, new_stock: newStock, unit: item.unit, reason }]).select('id')
   )
+  return (rows ?? []).map((r) => r.id)
 }
 
 // The stock history entry and shopping list update after a stock change.
@@ -228,15 +232,47 @@ export function changeStock(item, delta, reason) {
 // entry — e.g. throw away 2 expired and add 4 bought: one +2 update,
 // logged as -2 discarded and +4 purchased.
 export async function changeStockParts(item, parts) {
+  return (await stockChangeWithLog(item, parts)).item
+}
+
+// As changeStockParts, also giving the ids of the history rows it wrote
+// ({ item, logIds }), so an Undo can take them away again. A history row
+// saved later by Retry is added to the same list.
+export async function stockChangeWithLog(item, parts) {
   const delta = round(parts.reduce((sum, p) => sum + p.change, 0))
   const data = must(await supabase.rpc('increment_stock', { item_id: item.id, delta }))
   if (!data?.id) throw new Error(`"${item.name}" is no longer in the pantry.`)
   const updated = normalizeItem(data)
+  const logIds = []
   for (const entry of stockLogEntries(Number(item.current_stock) || 0, Number(updated.current_stock), parts)) {
-    await followUp('the stock history', () => logStockChange(updated, entry.change, entry.newStock, entry.reason))
+    await followUp('the stock history', async () => logIds.push(...(await logStockChange(updated, entry.change, entry.newStock, entry.reason))))
   }
   await followUp('the shopping list', () => syncShoppingForItem(updated))
+  return { item: updated, logIds }
+}
+
+// Undo of a stock change: the stock goes back (`delta` added in one
+// database statement, never below 0) and the history rows the change wrote
+// (`logIds`) are deleted — no "Adjusted" row, so the change leaves no
+// trace. A row already gone (deleted on the other phone) is simply not
+// there. Returns the updated row.
+export async function undoStockChange(item, delta, logIds = []) {
+  const data = must(await supabase.rpc('increment_stock', { item_id: item.id, delta: round(delta) }))
+  if (!data?.id) throw new Error(`"${item.name}" is no longer in the pantry.`)
+  const updated = normalizeItem(data)
+  if (logIds.length) await followUp('the stock history', async () => must(await supabase.from('stock_logs').delete().in('id', logIds)))
+  await followUp('the shopping list', () => syncShoppingForItem(updated))
   return updated
+}
+
+// The history row of a stock change made offline and sent meanwhile (its
+// id isn't known on the phone): the newest one of that item with that
+// change and reason, or null.
+export async function latestLogId(itemId, change, reason) {
+  const rows = must(
+    await supabase.from('stock_logs').select('id').eq('item_id', itemId).eq('change', change).eq('reason', reason).order('created_at', { ascending: false }).limit(1)
+  )
+  return rows?.[0]?.id ?? null
 }
 
 // History entries for `parts` applied in order to `before`, as far as
@@ -292,25 +328,18 @@ export async function updateRows(table, ids, patch) {
 
 // Keeps the grocery list in step with stock: a Low, Out or Expired item
 // gets one auto-generated entry, and that entry disappears once the item
-// is fine again. Manually added entries are never touched. A group gets
-// its one entry also when a variant is at 0 ("Not urgent", see shopReason);
-// a one-time item never gets one, and its entry in the cart stays there.
-// Throws if the list couldn't be read or changed.
+// is fine again. Manually added entries are never touched. A one-time item
+// never gets one, and its entry in the cart stays there. A group and its
+// variants are judged together (syncGroup): each variant at 0 gets its own
+// entry, the group none. Throws if the list couldn't be read or changed.
 export async function syncShoppingForItem(item) {
-  if (item.group_id) return syncGroupOf(item)
-  let emptyGroup = false
-  if (item.is_group) {
-    // A group is judged on the total of its variants (a group with none
-    // yet isn't "out of stock", just not set up).
-    const variants = must(await supabase.from('pantry_items').select('id, name, current_stock, one_time, shop_dismissed_at').eq('group_id', item.id))
-    emptyGroup = variants.length === 0
-    item = { ...item, current_stock: round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0)), variants }
-  }
+  if (item.group_id) return syncGroup(item.group_id)
+  if (item.is_group) return syncGroup(item.id, item)
   const open = must(
-    await supabase.from('grocery_items').select('id, auto_generated, in_cart').eq('pantry_item_id', item.id).eq('completed', false)
+    await supabase.from('grocery_items').select('id, auto_generated, in_cart, created_at').eq('pantry_item_id', item.id).eq('completed', false)
   )
 
-  if (emptyGroup || !shopReason(item)) {
+  if (!restockReason(item)) {
     // An entry ordered online and on the way stays: it leaves the list
     // when the order arrives (or goes back to "to buy" if cancelled). So
     // does a one-time item's entry already in the cart.
@@ -321,23 +350,71 @@ export async function syncShoppingForItem(item) {
     return
   }
 
+  if (open.length > 1) await removeSpareEntries(item.id, open)
   if (open.length) return
   const { quantity, unit } = suggestedPurchase(item)
-  const result = await insertRows('grocery_items', [
-    {
-      name: item.name,
-      category_id: item.category_id,
-      subcategory_id: item.subcategory_id ?? null,
-      quantity,
-      unit,
-      ...priceFields(item),
-      payer: item.payer || 'shared',
-      completed: false,
-      pantry_item_id: item.id,
-      auto_generated: true,
-    },
-  ])
-  must(result)
+  must(await insertRows('grocery_items', [autoEntry(item, quantity, unit)]))
+  // The other phone may have added one at the same moment: one stays.
+  await removeSpareEntries(item.id)
+}
+
+// An automatic SHOP entry for a HOME item: its name, category, last price
+// and payer.
+function autoEntry(item, quantity, unit) {
+  return {
+    name: item.name,
+    category_id: item.category_id,
+    subcategory_id: item.subcategory_id ?? null,
+    quantity,
+    unit,
+    ...priceFields(item),
+    payer: item.payer || 'shared',
+    completed: false,
+    pantry_item_id: item.id,
+    auto_generated: true,
+  }
+}
+
+// Removes the automatic entries "to buy" that are one too many for an item
+// (see spareEntryIds), from `open` or as read now.
+async function removeSpareEntries(itemId, open = null) {
+  const rows = open ?? must(await supabase.from('grocery_items').select('id, auto_generated, in_cart, created_at').eq('pantry_item_id', itemId).eq('completed', false))
+  if (rows.length < 2) return
+  const spare = spareEntryIds(rows, await orderedEntryIds(rows.map((g) => g.id)))
+  if (spare.length) must(await supabase.from('grocery_items').delete().in('id', spare))
+}
+
+// A group and its variants on the SHOP list, judged together (see
+// planGroupEntries in groupShop.js): every variant at 0 (not one-time) has
+// its own entry, the group none; a group at or below its minimum with no
+// variant at 0 lists the variant with the least. `known`: the group row,
+// when the caller has it.
+async function syncGroup(groupId, known = null) {
+  const group = known ?? must(await supabase.from('pantry_items').select('*').eq('id', groupId).maybeSingle())
+  if (!group) return
+  const variants = must(await supabase.from('pantry_items').select('*').eq('group_id', groupId)).map(normalizeItem)
+  const ids = [groupId, ...variants.map((v) => v.id)]
+  const readOpen = async () => must(await supabase.from('grocery_items').select('id, pantry_item_id, auto_generated, in_cart, created_at').in('pantry_item_id', ids).eq('completed', false))
+  const total = round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0))
+  const groupNeeds = variants.length > 0 && Boolean(restockReason({ ...group, current_stock: total }))
+  const plan = async (open) => planGroupEntries({ group, variants, open, ordered: await orderedEntryIds(open.map((g) => g.id)), groupNeeds })
+
+  const { remove, add } = await plan(await readOpen())
+  if (remove.length) must(await supabase.from('grocery_items').delete().in('id', remove))
+  if (!add.length) return
+  must(
+    await insertRows(
+      'grocery_items',
+      add.map((v) => {
+        const { quantity, unit } = variantPurchase(v)
+        return autoEntry(v, quantity, unit)
+      })
+    )
+  )
+  // The other phone may have added the same entries at the same moment:
+  // judged again, one of each stays (the oldest).
+  const again = await plan(await readOpen())
+  if (again.remove.length) must(await supabase.from('grocery_items').delete().in('id', again.remove))
 }
 
 // The SHOP list entries among `ids` that have an order on the way
@@ -360,25 +437,4 @@ export async function toBuyEntriesOf(item) {
   const rows = [...linked, ...unlinked.filter((g) => (g.name || '').trim().toLowerCase() === key)].filter((g) => !g.in_cart)
   const ordered = await orderedEntryIds(rows.map((g) => g.id))
   return rows.filter((g) => !ordered.has(g.id))
-}
-
-// Marks variants as taken off the SHOP list by hand (`at` a time) or
-// clears the mark (`at` null), then judges the group again. The database
-// clears a mark by itself once the variant has stock.
-export async function setVariantsDismissed(group, variantIds, at) {
-  if (!variantIds.length) return []
-  const rows = must(await supabase.from('pantry_items').update({ shop_dismissed_at: at }).in('id', variantIds).select())
-  await syncShoppingForItem(group)
-  return rows
-}
-
-// A variant never goes on the list for itself: its own automatic entries
-// are removed and the group is checked instead.
-async function syncGroupOf(variant) {
-  const own = must(await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', variant.id).eq('completed', false))
-  const ordered = await orderedEntryIds(own.map((g) => g.id))
-  const autoIds = own.filter((g) => g.auto_generated && !ordered.has(g.id)).map((g) => g.id)
-  if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
-  const group = must(await supabase.from('pantry_items').select('*').eq('id', variant.group_id).maybeSingle())
-  if (group) await syncShoppingForItem(normalizeItem(group))
 }

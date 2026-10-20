@@ -6,12 +6,12 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
-import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
+import { EXPIRY_STYLES, RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryStyles'
 import { isOneTime } from '../../lib/oneTime'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 
 const newBadge = (
-  <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
+  <span className={cn(SMALL_LABEL, 'self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
 )
 
 // A group ("Chips & Snacks") as one card: the total of its variants,

@@ -7,6 +7,7 @@ import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { AddItemForm } from '../components/grocery/AddItemForm'
 import { BudgetCard } from '../components/grocery/BudgetCard'
 import { GroceryItemTile } from '../components/grocery/GroceryItemTile'
+import { GroupShopCard } from '../components/grocery/GroupShopCard'
 import { ReceiptsView } from '../components/grocery/ReceiptsView'
 import { QuickAdd } from '../components/grocery/QuickAdd'
 import { ShoppingMode } from '../components/grocery/ShoppingMode'
@@ -17,7 +18,7 @@ import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { inventoryCategoryColor } from '../lib/categoryColors'
 import { shopReason, syncShoppingForItem } from '../lib/inventory'
-import { listedOutVariants } from '../lib/groups'
+import { addableVariants, shopUnits } from '../lib/groupShop'
 import { entryIsOneTime } from '../lib/oneTime'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
@@ -70,12 +71,12 @@ export function GroceryPage() {
     updatePricing,
     updatePayer,
     deleteItem,
-    dismissVariant,
-    removeGroupRow,
+    addVariant,
     cartItems,
     pantryItems,
     pantryByName,
     pantryFor,
+    groupOf,
     reasonOf,
     totalOf,
     costOf,
@@ -140,26 +141,15 @@ export function GroceryPage() {
     if (result && !result.error) toggleCart({ ...item, in_cart: false })
   }
 
-  // An ordered entry stays until its order arrives or is cancelled. A
-  // "Not urgent" group row takes the variants it lists off the list too,
-  // so it doesn't come back by itself.
+  // An ordered entry stays until its order arrives or is cancelled.
   const removeItem = (item) => {
     if (openOrderOf(item)) return showToast({ message: `"${item.name}" is on the way — cancel the order first (On the way → Cancel / Return).`, tone: 'error' })
-    const group = pantryFor(item)
-    if (group?.is_group && reasonOf(item) === 'not-urgent') return removeGroupRow(item, group)
     return deleteItem(item)
   }
 
-  // What a tile needs to show a one-time purchase and a group's variants
-  // that are out (each with × to take it off the list).
-  const groupProps = (item) => {
-    const pantry = pantryFor(item)
-    return {
-      oneTime: entryIsOneTime(item, pantry),
-      outVariants: pantry?.is_group ? listedOutVariants(pantry.variants) : [],
-      onDismissVariant: pantry?.is_group ? (variant) => dismissVariant(pantry, variant) : null,
-    }
-  }
+  // The HOME items already on the list (to buy, in the cart or on the
+  // way): "+ Add another variant" offers only the others.
+  const listedIds = new Set([...items, ...onTheWay].map((e) => pantryFor(e)?.id).filter(Boolean))
 
   const arrive = async (order, pantry) => {
     if (pantry) return setArriving({ order, item: pantry })
@@ -185,12 +175,13 @@ export function GroceryPage() {
     flow.ready ? { onOrderOnline: () => setOrdering(item), orderFirst: Boolean(shopOf(item)?.is_online), usualShop: shopOf(item) } : {}
 
   const query = search.trim().toLowerCase()
-  // The names of a group's variants, so searching "Lays" finds the
-  // "Chips & Snacks" line.
+  // The names of a group's variants, so searching "Lays" finds a
+  // group-level line; a variant's row is also found by its group's name.
   const variantNamesOf = (g) => pantryFor(g)?.variants?.map((v) => v.name) ?? []
+  const searchNamesOf = (g) => [...variantNamesOf(g), groupOf(g)?.name].filter(Boolean)
   // Searching looks through every category, to buy and in the cart alike.
   const inCategory = query
-    ? (i) => matchesGrocerySearch(i, query, categoryName, variantNamesOf(i))
+    ? (i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))
     : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
@@ -221,6 +212,52 @@ export function GroceryPage() {
       for (const item of needsBuying) await syncShoppingForItem(item)
     })
     setSyncing(false)
+  }
+
+  // One entry's tile, or a group's card with a row per variant.
+  const renderUnit = (unit, { budget = false } = {}) => {
+    const budgetMarkOf = (e) => (budget && overBudget ? budgetPlan?.marks.get(e.id) : undefined)
+    if (unit.kind === 'group') {
+      return (
+        <GroupShopCard
+          key={unit.key}
+          card={unit}
+          reason={reasonOf(unit.entries[0])}
+          pantryFor={pantryFor}
+          totalOf={totalOf}
+          budgetMarkOf={budgetMarkOf}
+          categoryName={categoryName}
+          onToggle={checkOff}
+          onRemove={removeItem}
+          onUpdatePricing={updatePricing}
+          onUpdatePayer={updatePayer}
+          orderPropsOf={orderProps}
+          addable={addableVariants(unit.group, listedIds)}
+          onAddVariant={addVariant}
+          showList={Boolean(query)}
+        />
+      )
+    }
+    const item = unit.entry
+    return (
+      <GroceryItemTile
+        key={item.id}
+        item={item}
+        showList={Boolean(query)}
+        hint={variantHint(item, query, variantNamesOf(item))}
+        reason={reasonOf(item)}
+        pack={pantryFor(item)}
+        total={totalOf(item)}
+        budgetMark={budgetMarkOf(item)}
+        categoryName={categoryName}
+        onToggle={checkOff}
+        onDelete={removeItem}
+        onUpdatePricing={updatePricing}
+        onUpdatePayer={updatePayer}
+        oneTime={entryIsOneTime(item, pantryFor(item))}
+        {...orderProps(item)}
+      />
+    )
   }
 
   const quickAdd = (
@@ -419,25 +456,7 @@ export function GroceryPage() {
             </Card>
           ) : filteredItems.length === 0 ? null : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {filteredItems.map((item) => (
-                <GroceryItemTile
-                  key={item.id}
-                  item={item}
-                  showList={Boolean(query)}
-                  hint={variantHint(item, query, variantNamesOf(item))}
-                  reason={reasonOf(item)}
-                  pack={pantryFor(item)}
-                  total={totalOf(item)}
-                  budgetMark={overBudget ? budgetPlan?.marks.get(item.id) : undefined}
-                  categoryName={categoryName}
-                  onToggle={checkOff}
-                  onDelete={removeItem}
-                  onUpdatePricing={updatePricing}
-                  onUpdatePayer={updatePayer}
-                  {...orderProps(item)}
-                  {...groupProps(item)}
-                />
-              ))}
+              {shopUnits(filteredItems, groupOf, pantryFor).map((unit) => renderUnit(unit, { budget: true }))}
             </div>
           )}
 
@@ -454,24 +473,7 @@ export function GroceryPage() {
                 </p>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {filteredDurables.map((item) => (
-                  <GroceryItemTile
-                    key={item.id}
-                    item={item}
-                    showList={Boolean(query)}
-                    hint={variantHint(item, query, variantNamesOf(item))}
-                    reason={reasonOf(item)}
-                    pack={pantryFor(item)}
-                    total={totalOf(item)}
-                    categoryName={categoryName}
-                    onToggle={checkOff}
-                    onDelete={removeItem}
-                    onUpdatePricing={updatePricing}
-                    onUpdatePayer={updatePayer}
-                    {...orderProps(item)}
-                    {...groupProps(item)}
-                  />
-                ))}
+                {shopUnits(filteredDurables, groupOf, pantryFor).map((unit) => renderUnit(unit))}
               </div>
             </div>
           )}
@@ -488,7 +490,9 @@ export function GroceryPage() {
             budget={groceryBudget}
             search={search}
             pantryFor={pantryFor}
+            groupOf={groupOf}
             variantNamesOf={variantNamesOf}
+            searchNamesOf={searchNamesOf}
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
           />

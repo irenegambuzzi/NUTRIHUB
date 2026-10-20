@@ -65,14 +65,13 @@ export function newVariantFields(group, name, extra = {}) {
   }
 }
 
-// The variants a group's SHOP row lists as out: at 0, not one-time (a
-// finished 1× variant is never bought by itself) and not taken off the
-// list by hand (shop_dismissed_at, cleared by the database once it is
-// restocked). A–Z.
+// The variants of a group that are out and need buying: at 0 and not
+// one-time (a finished 1× variant is never bought by itself). Each has its
+// own SHOP entry (lib/groupShop.js). A–Z. (pantry_items.shop_dismissed_at
+// from supabase/023 is no longer used: a variant at 0 always stays on the
+// list until it is bought or restocked.)
 export function listedOutVariants(variants = []) {
-  return variants
-    .filter((v) => (Number(v.current_stock) || 0) <= 0 && !isOneTime(v) && !v.shop_dismissed_at)
-    .sort((a, b) => a.name.localeCompare(b.name))
+  return variants.filter((v) => (Number(v.current_stock) || 0) <= 0 && !isOneTime(v)).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 // Variants in buying order (the SHOP row and Confirm purchase): those at 0
@@ -82,8 +81,9 @@ export function variantOrder(variants = []) {
   return [...variants].sort((a, b) => (Number(a.current_stock) || 0) - (Number(b.current_stock) || 0) || a.name.localeCompare(b.name))
 }
 
-// The variant Confirm purchase picks for a group line until the user
-// chooses: the first one the SHOP row lists as out, else none.
+// The variant Confirm purchase picks for a group-level line (an entry from
+// before each variant had its own) until the user chooses: the first one
+// out, else none.
 export function firstOutVariant(variants = []) {
   const listed = new Set(listedOutVariants(variants).map((v) => v.id))
   return variantOrder(variants).find((v) => listed.has(v.id)) ?? null

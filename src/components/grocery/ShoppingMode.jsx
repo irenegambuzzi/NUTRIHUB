@@ -6,11 +6,11 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { isDurable, shopReason } from '../../lib/inventory'
 import { byCartOrder } from '../../lib/grocery'
-import { listedOutVariants } from '../../lib/groups'
+import { shopUnits, unitItem } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
-import { RESTOCK_LABELS } from '../../lib/inventoryStyles'
+import { RESTOCK_LABELS, SMALL_LABEL } from '../../lib/inventoryStyles'
 import { money } from '../../lib/pricing'
-import { GROCERY_LIST_LABELS, listOf, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
+import { GROCERY_LIST_LABELS, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { groupByCategory, moveCategoryWrites, moveItemWrites, routeOrder } from '../../lib/shopMode'
 import { useShopOrder } from '../../hooks/useShopOrder'
@@ -37,8 +37,10 @@ function rememberSort(sort) {
 // left is shown in the order of the shop, shared by both phones: either
 // by category (categories in aisle order) or as "my route", where each
 // item can be put anywhere, whatever its category. Items not arranged
-// yet go where their category is.
-export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, variantNamesOf = () => [], onCheck, onConfirm }) {
+// yet go where their category is. A group is one card ("Chips &
+// Snacks") with a row per variant, each tapped into the cart on its own
+// (`groupOf(entry)`, see lib/groupShop.js).
+export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   const { positions, savePositions } = useShopOrder()
@@ -47,12 +49,23 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
   const open = items.filter((i) => !i.in_cart)
   // In the order they went into the cart, oldest first.
   const inCart = items.filter((i) => i.in_cart).sort(byCartOrder)
-  const groups = groupByCategory(open, positions, defaultOrder)
-  const route = routeOrder(open, positions, defaultOrder)
+  // What's left as tiles and group cards, placed in the shop by name and
+  // category (a card by its group's).
+  const units = (list) => shopUnits(list, groupOf, pantryFor)
+  const placed = units(open).map((unit) => ({ ...unitItem(unit), id: unit.key, unit }))
+  const groups = groupByCategory(placed, positions, defaultOrder)
+  const route = routeOrder(placed, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
 
   const query = search.trim().toLowerCase()
-  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, variantNamesOf(i))) : []
+  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))) : []
+
+  const show = (unit, extra = {}) =>
+    unit.kind === 'group' ? (
+      <ShopGroupCard key={unit.key} card={unit} pantryFor={pantryFor} totalOf={totalOf} onCheck={onCheck} showList={extra.showList} />
+    ) : (
+      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} />
+    )
 
   const setSort = (next) => {
     setSortState(next)
@@ -121,9 +134,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
                     <h3 className="text-xs font-extrabold uppercase text-[var(--color-text-muted)]">
                       {GROCERY_LIST_LABELS[cart ? 'inCart' : 'toBuy']} ({list.length})
                     </h3>
-                    {list.map((item) => (
-                      <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} showCategory showList hint={variantHint(item, query, variantNamesOf(item))} />
-                    ))}
+                    {units(list).map((unit) => show(unit, { showCategory: true, showList: true }))}
                   </section>
                 )
               )
@@ -156,11 +167,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
             )}
           />
         ) : (
-          <div className="space-y-2">
-            {route.map((item) => (
-              <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} showCategory />
-            ))}
-          </div>
+          <div className="space-y-2">{route.map((placedUnit) => show(placedUnit.unit, { showCategory: true }))}</div>
         )
       ) : (
         groups.map(({ categoryId, items: list }, index) => {
@@ -193,7 +200,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
                   </span>
                 )}
               </div>
-              {!arranging && list.map((item) => <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} />)}
+              {!arranging && list.map((placedUnit) => show(placedUnit.unit))}
             </section>
           )
         })
@@ -210,9 +217,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
             </button>
           </div>
           <p className="text-[10px] text-[var(--color-text-muted)]">Tap an item to take it out again. Nothing is added to the pantry or expenses until you confirm.</p>
-          {inCart.map((item) => (
-            <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} />
-          ))}
+          {units(inCart).map((unit) => show(unit))}
         </section>
       )}
 
@@ -249,12 +254,9 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 }
 
 // One big tile: tap to put it in the cart (or take it out again) — only
-// the cart changes; the purchase is confirmed separately. A group's tile
-// says which variants are out ("— out: …", "Not urgent" when the total is
-// still fine); a one-time purchase shows the grey "1×".
+// the cart changes; the purchase is confirmed separately. A one-time
+// purchase shows the grey "1× purchase".
 function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null }) {
-  const outVariants = pack?.is_group ? listedOutVariants(pack.variants) : []
-  const notUrgent = pack?.is_group && shopReason(pack) === 'not-urgent'
   return (
     <button
       onClick={() => onCheck(item)}
@@ -263,40 +265,76 @@ function ShopTile({ item, pack = null, total, onCheck, showCategory = false, sho
         item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]'
       )}
     >
-      <span
-        className={cn(
-          'w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0',
-          item.in_cart ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-checkbox-border)]'
-        )}
-      >
-        {item.in_cart && <Check size={16} />}
-      </span>
+      <CheckCircle checked={item.in_cart} />
       <span className="flex-1 min-w-0">
         <span className={cn('flex items-center gap-1.5 text-base font-bold min-w-0', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
           <span className="truncate">{item.name}</span>
           {entryIsOneTime(item, pack) && <OneTimeBadge className="shrink-0 no-underline" />}
-          {notUrgent && !item.in_cart && (
-            <span className={cn('shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full', RESTOCK_LABELS['not-urgent'].className)}>{RESTOCK_LABELS['not-urgent'].label}</span>
-          )}
         </span>
-        {outVariants.length > 0 && <span className="block text-xs text-[var(--color-text-soft)] truncate">— out: {outVariants.map((v) => v.name).join(', ')}</span>}
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           {showCategory && <CategoryIcon category={item.category_id} size={12} />}
           {formatPurchaseQuantity(item.quantity, item.unit, pack)}
           {hint && <span className="ml-1">· {hint}</span>}
-          {showList && (
-            <span
-              className={cn(
-                'ml-1 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border',
-                item.in_cart ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-soft)]'
-              )}
-            >
-              {GROCERY_LIST_LABELS[listOf(item)]}
-            </span>
-          )}
+          {showList && <ListLabel inCart={item.in_cart} />}
         </span>
       </span>
       <span className="text-sm font-mono font-bold text-[var(--color-accent)] shrink-0">{total === null ? '?' : total > 0 ? money(total) : ''}</span>
     </button>
+  )
+}
+
+// A group's card: its name ("Not urgent" when the total is still fine but
+// a variant is at 0) and a big row per variant, each tapped into the cart
+// on its own, variants at 0 first.
+function ShopGroupCard({ card, pantryFor, totalOf, onCheck, showList = false }) {
+  const { group, entries, inCart } = card
+  const notUrgent = !inCart && shopReason(group) === 'not-urgent'
+  return (
+    <section aria-label={`${group.name} (group)`} className={cn('rounded-2xl border px-3 py-2 space-y-1', inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]')}>
+      <p className="flex items-center gap-1.5 px-1 text-xs font-extrabold text-[var(--color-text-soft)] min-w-0">
+        <CategoryIcon category={group.category_id} size={12} />
+        <span className="truncate">{group.name}</span>
+        {notUrgent && <span className={cn(SMALL_LABEL, 'shrink-0', RESTOCK_LABELS['not-urgent'].className)}>{RESTOCK_LABELS['not-urgent'].label}</span>}
+        {showList && <ListLabel inCart={inCart} />}
+      </p>
+      {entries.map((entry) => {
+        const pack = pantryFor(entry)
+        const total = totalOf(entry)
+        return (
+          <button key={entry.id} onClick={() => onCheck(entry)} className="w-full flex items-center gap-3 rounded-xl px-1 py-2 text-left min-h-12 active:scale-[0.99] transition">
+            <CheckCircle checked={entry.in_cart} />
+            <span className="flex-1 min-w-0">
+              <span className={cn('flex items-center gap-1.5 text-base font-bold min-w-0', entry.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
+                <span className="truncate">{entry.name}</span>
+                {entryIsOneTime(entry, pack) && <OneTimeBadge className="shrink-0 no-underline" />}
+              </span>
+              <span className="block text-xs text-[var(--color-text-muted)]">{formatPurchaseQuantity(entry.quantity, entry.unit, pack)}</span>
+            </span>
+            <span className="text-sm font-mono font-bold text-[var(--color-accent)] shrink-0">{total === null ? '?' : total > 0 ? money(total) : ''}</span>
+          </button>
+        )
+      })}
+    </section>
+  )
+}
+
+function CheckCircle({ checked }) {
+  return (
+    <span
+      className={cn(
+        'w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0',
+        checked ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-checkbox-border)]'
+      )}
+    >
+      {checked && <Check size={16} />}
+    </span>
+  )
+}
+
+function ListLabel({ inCart }) {
+  return (
+    <span className={cn('ml-1 border', SMALL_LABEL, inCart ? 'bg-[var(--color-primary)] border-transparent text-white' : 'border-[var(--color-border)] text-[var(--color-text-soft)]')}>
+      {GROCERY_LIST_LABELS[inCart ? 'inCart' : 'toBuy']}
+    </span>
   )
 }

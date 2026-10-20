@@ -14,6 +14,8 @@ const { ItemTile } = await import('./inventory/ItemTile')
 const { GroupTile } = await import('./inventory/GroupTile')
 const { FinishedItems } = await import('./inventory/FinishedItems')
 const { GroceryItemTile } = await import('./grocery/GroceryItemTile')
+const { GroupShopCard } = await import('./grocery/GroupShopCard')
+const { shopUnits } = await import('../lib/groupShop')
 const { AddItemForm } = await import('./grocery/AddItemForm')
 const { ConfirmPurchase } = await import('./grocery/ConfirmPurchase')
 const { ShoppingMode } = await import('./grocery/ShoppingMode')
@@ -68,9 +70,9 @@ describe('HOME editor: one-time purchase (1×)', () => {
 describe('HOME tiles', () => {
   const tile = (item) => render(<ItemTile item={item} onAdjust={() => {}} onDiscard={() => {}} onEdit={() => {}} onDelete={() => {}} onSendToGrocery={() => {}} />)
 
-  it('a 1× item shows the grey "1×", no Low/Out and no minimum, and never turns yellow or red', () => {
+  it('a 1× item shows the grey "1× purchase", no Low/Out and no minimum, and never turns yellow or red', () => {
     const { container } = tile({ ...sun, current_stock: 1 })
-    expect(screen.getByText('1×').className).toContain('bg-zinc-500/25')
+    expect(screen.getByText('1× purchase').className).toContain('bg-zinc-500/25')
     expect(screen.queryByText('Low')).toBeNull()
     expect(screen.queryByText(/^min /)).toBeNull()
     expect(container.firstChild.className).toContain('34,197,94')
@@ -81,7 +83,17 @@ describe('HOME tiles', () => {
     tile({ ...sun, one_time: false })
     expect(screen.getByText('Low')).toBeTruthy()
     expect(screen.getByText(/min 3 pcs/)).toBeTruthy()
-    expect(screen.queryByText('1×')).toBeNull()
+    expect(screen.queryByText('1× purchase')).toBeNull()
+  })
+
+  it('"1× purchase" has exactly the size, weight and padding of "New Item" (only the colour differs)', () => {
+    render(<ItemTile item={{ ...sun, current_stock: 1 }} isNew onAdjust={() => {}} onDiscard={() => {}} onEdit={() => {}} onDelete={() => {}} onSendToGrocery={() => {}} />)
+    const shape = (el) => el.className.split(/\s+/).filter((c) => /^(text-\[|font-|uppercase|px-|py-|rounded-|leading-)/.test(c)).sort()
+    const oneTime = screen.getByText('1× purchase')
+    const fresh = screen.getByText('New Item')
+    expect(shape(oneTime)).toEqual(shape(fresh))
+    expect(shape(oneTime)).toEqual(['font-bold', 'px-1.5', 'py-0.5', 'rounded-full', 'text-[9px]', 'uppercase'])
+    expect(oneTime.className).toContain('zinc')
   })
 
   it('a 1× variant shows the grey label inside its group', () => {
@@ -90,7 +102,7 @@ describe('HOME tiles', () => {
       <GroupTile group={group} variants={[{ ...sun, group_id: 'g' }]} newIds={new Set()} onAdjust={() => {}} onDiscard={() => {}} onEdit={() => {}} onDelete={() => {}} onSendToGrocery={() => {}} onAddVariant={() => {}} onTakeOut={() => {}} onRestock={() => {}} />
     )
     fireEvent.click(screen.getByRole('button', { name: /Variants/ }))
-    expect(screen.getByText('1×')).toBeTruthy()
+    expect(screen.getByText('1× purchase')).toBeTruthy()
   })
 })
 
@@ -128,28 +140,106 @@ const chips = withGroupTotals([
 ])
 const row = { id: 'e1', name: 'Chips & Snacks', category_id: 'misc', quantity: 1, unit: 'pcs', pantry_item_id: 'g', in_cart: false, completed: false, created_at: '2026-10-01' }
 
+// Each variant at 0 has its own entry (lib/groupShop.js).
+const variantEntry = (variant, extra = {}) => ({ id: `e-${variant.id}`, name: variant.name, category_id: 'misc', quantity: 1, unit: 'pcs', price: 0, pantry_item_id: variant.id, auto_generated: true, in_cart: false, completed: false, created_at: '2026-10-01', ...extra })
+const [chipsGroup] = chips
+const variantById = new Map(chipsGroup.variants.map((v) => [v.id, v]))
+const pantryOfEntry = (e) => variantById.get(e.pantry_item_id) ?? (e.pantry_item_id === 'g' ? chipsGroup : null)
+
 describe('SHOP list tiles', () => {
   const tile = (props) =>
-    render(<GroceryItemTile item={row} reason="not-urgent" categoryName={() => 'Misc'} onToggle={() => {}} onDelete={() => {}} onUpdatePricing={() => {}} onUpdatePayer={() => {}} {...props} />)
+    render(<GroceryItemTile item={row} reason="new" categoryName={() => 'Misc'} onToggle={() => {}} onDelete={() => {}} onUpdatePricing={() => {}} onUpdatePayer={() => {}} {...props} />)
 
-  it('a group row lists its variants at 0, light sky "Not urgent", each with ×', () => {
-    const onDismissVariant = vi.fn()
-    const { container } = tile({ outVariants: chips[0].variants.filter((v) => v.current_stock === 0).sort((a, b) => a.name.localeCompare(b.name)), onDismissVariant })
-    expect(container.textContent).toContain('— out: Chips - di verdure al sale marino, Patatine teriyaki')
-    expect(screen.getByText('Not urgent').className).toContain('sky')
-    expect(container.firstChild.className).toContain('56,189,248')
-    // Not the blue of "New Item".
-    expect(container.firstChild.className).not.toContain('59,130,246')
-    fireEvent.click(screen.getByRole('button', { name: 'Take Patatine teriyaki off the SHOP list' }))
-    expect(onDismissVariant).toHaveBeenCalledWith(expect.objectContaining({ id: 'pr' }))
-  })
-
-  it('a 1× entry shows the grey "1×", in "to buy" and in the cart', () => {
+  it('a 1× entry shows the grey "1× purchase", in "to buy" and in the cart', () => {
     tile({ item: { ...row, pantry_item_id: null, name: 'Balloons' }, reason: 'new', oneTime: true })
-    expect(screen.getByText('1×')).toBeTruthy()
+    expect(screen.getByText('1× purchase')).toBeTruthy()
     cleanup()
     tile({ item: { ...row, pantry_item_id: null, name: 'Balloons', in_cart: true }, reason: 'new', oneTime: true })
-    expect(screen.getByText('1×')).toBeTruthy()
+    expect(screen.getByText('1× purchase')).toBeTruthy()
+  })
+})
+
+describe("a group's card on the SHOP list", () => {
+  const entries = [variantEntry(variantById.get('pr'), { price: 2.49 }), variantEntry(variantById.get('cv'))]
+  const card = (props = {}) => {
+    const handlers = { onToggle: vi.fn(), onRemove: vi.fn(), onAddVariant: vi.fn(), onUpdatePricing: vi.fn(async () => ({ error: null })) }
+    const [unit] = shopUnits(props.entries ?? entries, () => chipsGroup, pantryOfEntry)
+    const utils = render(
+      <GroupShopCard
+        card={unit}
+        reason="not-urgent"
+        pantryFor={pantryOfEntry}
+        totalOf={(e) => Number(e.price) || 0}
+        categoryName={() => 'Misc'}
+        onUpdatePayer={() => {}}
+        addable={[variantById.get('lays')]}
+        {...handlers}
+        {...props}
+      />
+    )
+    return { ...utils, ...handlers }
+  }
+
+  it('is one card named after the group, light sky "Not urgent", with a row per variant (its quantity and price)', () => {
+    const { container } = card()
+    expect(screen.getAllByRole('region', { name: 'Chips & Snacks (group)' })).toHaveLength(1)
+    expect(screen.getByText('Not urgent').className).toContain('sky')
+    expect(container.firstChild.className).toContain('56,189,248')
+    expect(container.firstChild.className).not.toContain('59,130,246')
+    expect(screen.getByText('Patatine teriyaki')).toBeTruthy()
+    expect(screen.getByText('Chips - di verdure al sale marino')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: /^Buy more / })).toHaveLength(2)
+    expect(screen.getByText('€2.49')).toBeTruthy()
+  })
+
+  it('tapping one variant puts only that one in the cart', () => {
+    const { onToggle } = card()
+    fireEvent.click(screen.getByText('Patatine teriyaki'))
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onToggle).toHaveBeenCalledWith(entries[0])
+  })
+
+  it('− / + changes only that row, in its own unit', async () => {
+    const { onUpdatePricing } = card()
+    fireEvent.click(screen.getByRole('button', { name: 'Buy more Patatine teriyaki' }))
+    await vi.waitFor(() => expect(onUpdatePricing).toHaveBeenCalled())
+    expect(onUpdatePricing.mock.calls[0][0]).toBe(entries[0])
+    expect(onUpdatePricing.mock.calls[0][1]).toEqual({ quantity: 2 })
+  })
+
+  it('has no delete for the card or the automatic rows; a row added by hand has ×', () => {
+    const { onRemove } = card({ entries: [...entries, variantEntry(variantById.get('lays'), { auto_generated: false })] })
+    expect(screen.queryByRole('button', { name: /Remove (Chips & Snacks|Patatine|Chips -)/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Lays' }))
+    expect(onRemove).toHaveBeenCalledWith(expect.objectContaining({ pantry_item_id: 'lays' }))
+  })
+
+  it('"+ Add another variant" offers variants with stock and adds the chosen one', () => {
+    const { onAddVariant } = card()
+    fireEvent.click(screen.getByRole('button', { name: /Add another variant/ }))
+    const select = screen.getByRole('combobox', { name: 'Add another variant of Chips & Snacks' })
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a variant…', 'Lays (5 pcs at home)'])
+    fireEvent.change(select, { target: { value: 'lays' } })
+    expect(onAddVariant).toHaveBeenCalledWith(variantById.get('lays'))
+  })
+
+  it('in the cart it shows only what is in the cart, and offers no new variant', () => {
+    const [unit] = shopUnits([{ ...entries[0], in_cart: true }], () => chipsGroup, pantryOfEntry)
+    render(<GroupShopCard card={unit} reason="not-urgent" pantryFor={pantryOfEntry} totalOf={() => 2.49} categoryName={() => 'Misc'} onToggle={() => {}} onRemove={() => {}} onUpdatePricing={() => {}} onUpdatePayer={() => {}} addable={[variantById.get('lays')]} onAddVariant={() => {}} />)
+    expect(screen.getByText('Patatine teriyaki')).toBeTruthy()
+    expect(screen.queryByText('Chips - di verdure al sale marino')).toBeNull()
+    expect(screen.queryByText('Not urgent')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Add another variant/ })).toBeNull()
+  })
+
+  it('"Order online" is per variant row', () => {
+    const order = vi.fn()
+    card({ orderPropsOf: (e) => ({ onOrderOnline: () => order(e.id) }) })
+    const buttons = screen.getAllByRole('button', { name: /Order online/ })
+    expect(buttons).toHaveLength(2)
+    // Rows: variants at 0 first, A–Z between equals.
+    fireEvent.click(buttons[0])
+    expect(order).toHaveBeenCalledWith('e-cv')
   })
 })
 
@@ -192,9 +282,22 @@ describe('Confirm purchase', () => {
     expect(select.value).toBe('cv')
   })
 
-  it('shows the grey "1×" on a one-time line', () => {
+  it('shows the grey "1× purchase" on a one-time line', () => {
     confirm([{ ...row, id: 'e2', name: 'Balloons', pantry_item_id: null, one_time: true, in_cart: true }], [])
-    expect(screen.getByText('1×')).toBeTruthy()
+    expect(screen.getByText('1× purchase')).toBeTruthy()
+  })
+
+  it("puts a group's variants in one card, each its own line with its own price", () => {
+    const cart = [variantEntry(variantById.get('cv'), { in_cart: true, price: 1.99 }), variantEntry(variantById.get('pr'), { in_cart: true, price: 2.49 })]
+    render(
+      <ConfirmPurchase cartItems={cart} pantryItems={[...chips, ...chipsGroup.variants]} categoryName={() => 'Misc'} totalOf={(e) => Number(e.price)} updatePricing={vi.fn()} updatePayer={vi.fn()} toggleCart={vi.fn()} onClose={() => {}} />
+    )
+    const groupCard = screen.getByRole('group', { name: 'Chips & Snacks (group)' })
+    expect(within(groupCard).getByRole('textbox', { name: 'Total for Patatine teriyaki' }).value).toBe('2.49')
+    expect(within(groupCard).getByRole('textbox', { name: 'Total for Chips - di verdure al sale marino' }).value).toBe('1.99')
+    // Each restocks its own variant: no variant question.
+    expect(screen.queryByRole('combobox', { name: /^Variant for/ })).toBeNull()
+    expect(screen.getByText(/restocks "Patatine teriyaki"/)).toBeTruthy()
   })
 
   it('lists the cart in the order it was given (oldest in the cart first)', () => {
@@ -218,11 +321,16 @@ describe('Shopping mode', () => {
     expect(text.indexOf('Second')).toBeLessThan(text.indexOf('Third'))
   })
 
-  it('a group tile says which variants are out', () => {
-    const { container } = render(
-      <ShoppingMode items={[row]} parents={parents} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} pantryFor={() => chips[0]} onCheck={() => {}} onConfirm={() => {}} />
+  it("a group is one card with a row per variant; a tap puts only that one in the cart", () => {
+    const entries = [variantEntry(variantById.get('pr')), variantEntry(variantById.get('cv'))]
+    const onCheck = vi.fn()
+    render(
+      <ShoppingMode items={entries} parents={parents} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} pantryFor={pantryOfEntry} groupOf={() => chipsGroup} onCheck={onCheck} onConfirm={() => {}} />
     )
-    expect(container.textContent).toContain('— out: Chips - di verdure al sale marino, Patatine teriyaki')
-    expect(container.textContent).toContain('Not urgent')
+    const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
+    expect(within(card).getByText('Not urgent')).toBeTruthy()
+    fireEvent.click(within(card).getByText('Patatine teriyaki'))
+    expect(onCheck).toHaveBeenCalledWith(entries[0])
+    expect(onCheck).toHaveBeenCalledTimes(1)
   })
 })

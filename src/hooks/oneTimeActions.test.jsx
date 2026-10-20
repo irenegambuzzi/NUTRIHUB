@@ -6,8 +6,9 @@ import { renderHook } from '@testing-library/react'
 // cart time, with the database and the stock functions replaced.
 const db = vi.hoisted(() => ({ calls: [], toBuy: [], rows: [] }))
 const toasts = vi.hoisted(() => [])
+const net = vi.hoisted(() => ({ offline: false }))
 
-vi.mock('../lib/connection', async (importOriginal) => ({ ...(await importOriginal()), isOffline: () => false }))
+vi.mock('../lib/connection', async (importOriginal) => ({ ...(await importOriginal()), isOffline: () => net.offline }))
 vi.mock('../lib/feedback', () => ({
   showToast: (t) => (toasts.push(t), t),
   toastSaveError: vi.fn(),
@@ -55,15 +56,22 @@ vi.mock('../lib/inventory', async (importOriginal) => {
   return {
     ...real,
     changeStock: vi.fn(async (item, delta) => ({ ...item, current_stock: Math.max(0, Number(item.current_stock) + delta) })),
+    stockChangeWithLog: vi.fn(async (item, parts) => ({
+      item: { ...item, current_stock: Math.max(0, Number(item.current_stock) + parts.reduce((sum, p) => sum + p.change, 0)) },
+      logIds: ['log1'],
+    })),
+    undoStockChange: vi.fn(async (item, delta) => ({ ...item, current_stock: Number(item.current_stock) + delta })),
+    latestLogId: vi.fn(async () => 'sentLog'),
+    orderedEntryIds: vi.fn(async () => new Set()),
     updateRows: vi.fn(async (table, id, patch) => ({ data: [{ ...db.saved, ...patch }], error: null })),
     syncShoppingForItem: vi.fn(async () => {}),
     insertRows: vi.fn(async (table, rows) => ({ data: rows, error: null })),
     toBuyEntriesOf: vi.fn(async () => db.toBuy),
-    setVariantsDismissed: vi.fn(async (group, ids, at) => ids.map((id) => ({ id, shop_dismissed_at: at }))),
   }
 })
 
 const inventory = await import('../lib/inventory')
+const { getQueue, resetQueueForTest } = await import('../lib/offlineQueue')
 const { usePantryItems } = await import('./usePantryItems')
 const { useGroceryItems } = await import('./useGroceryItems')
 
@@ -75,17 +83,22 @@ beforeEach(() => {
   db.toBuy = []
   db.rows = []
   db.saved = sun
+  net.offline = false
+  resetQueueForTest({ keepHandlers: true })
   vi.clearAllMocks()
 })
 
 describe('a one-time item used up in HOME', () => {
-  it('says it is finished, and Undo puts the stock back (logged as edited)', async () => {
+  it('says it is finished; Undo puts the stock back and deletes its "Used" row — no "Adjusted" row is written', async () => {
     const { result } = renderHook(() => usePantryItems())
     await result.current.adjustStock(sun, -1, 'used')
     const toast = toasts.find((t) => /finished/.test(t.message))
     expect(toast.message).toBe('"Sun cream" is finished — moved to Finished one-time items')
     await toast.action.onClick()
-    expect(inventory.changeStock).toHaveBeenLastCalledWith(expect.objectContaining({ id: 's', current_stock: 0 }), 1, 'edited')
+    expect(inventory.undoStockChange).toHaveBeenCalledWith(expect.objectContaining({ id: 's', current_stock: 0 }), 1, ['log1'])
+    // The only stock change written is the "used" one itself.
+    expect(inventory.stockChangeWithLog).toHaveBeenCalledTimes(1)
+    expect(inventory.changeStock).not.toHaveBeenCalled()
   })
 
   it('a normal item at 0 is just Out: no "finished" toast', async () => {
@@ -94,11 +107,49 @@ describe('a one-time item used up in HOME', () => {
     expect(toasts.some((t) => /finished/.test(t.message))).toBe(false)
   })
 
-  it('setting the stock to 0 in the editor finishes it too', async () => {
+  it('setting the stock to 0 in the editor finishes it too; Undo takes its "Adjusted" row away again', async () => {
     const { result } = renderHook(() => usePantryItems())
     db.saved = sun
     await result.current.updateItem(sun, { name: 'Sun cream', current_stock: 0 })
-    expect(toasts.some((t) => /is finished/.test(t.message))).toBe(true)
+    const toast = toasts.find((t) => /is finished/.test(t.message))
+    await toast.action.onClick()
+    expect(inventory.undoStockChange).toHaveBeenCalledWith(expect.objectContaining({ id: 's' }), 1, ['log1'])
+    expect(inventory.stockChangeWithLog).toHaveBeenCalledTimes(1)
+  })
+
+  it('offline: Undo takes the change out of the queue, so it is never sent (no history at all)', async () => {
+    net.offline = true
+    const { result } = renderHook(() => usePantryItems())
+    await result.current.adjustStock(sun, -1, 'used')
+    expect(getQueue()).toHaveLength(1)
+    const toast = toasts.find((t) => /finished/.test(t.message))
+    await toast.action.onClick()
+    expect(getQueue()).toHaveLength(0)
+    expect(inventory.undoStockChange).not.toHaveBeenCalled()
+  })
+
+  it('made offline and sent meanwhile: Undo finds its history row and deletes it', async () => {
+    net.offline = true
+    const { result } = renderHook(() => usePantryItems())
+    await result.current.adjustStock(sun, -1, 'used')
+    const toast = toasts.find((t) => /finished/.test(t.message))
+    resetQueueForTest({ keepHandlers: true })
+    net.offline = false
+    await toast.action.onClick()
+    expect(inventory.latestLogId).toHaveBeenCalledWith('s', -1, 'used')
+    expect(inventory.undoStockChange).toHaveBeenCalledWith(expect.objectContaining({ id: 's' }), 1, ['sentLog'])
+  })
+})
+
+describe('discarding expired stock', () => {
+  it('Undo puts the stock and the date back and deletes the "Discarded" row (nothing new in History)', async () => {
+    const milk = { id: 'm', name: 'Milk', unit: 'btl', current_stock: 2, min_stock: 1, expiry_date: '2020-01-01', category_id: 'dairy' }
+    const { result } = renderHook(() => usePantryItems())
+    await result.current.discardExpired(milk)
+    const toast = toasts.find((t) => /Discarded 2 btl/.test(t.message))
+    await toast.action.onClick()
+    expect(inventory.undoStockChange).toHaveBeenCalledWith(expect.objectContaining({ id: 'm', expiry_date: '2020-01-01' }), 2, ['log1'])
+    expect(inventory.stockChangeWithLog).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -174,29 +225,22 @@ describe('the cart time', () => {
   })
 })
 
-describe('a group row on the SHOP list', () => {
-  const group = { id: 'g', name: 'Chips & Snacks', is_group: true, variants: [{ id: 'tuc', name: 'Tuc', current_stock: 0 }, { id: 'pr', name: 'Pringles', current_stock: 0 }, { id: 'lays', name: 'Lays', current_stock: 5 }] }
+describe('"+ Add another variant"', () => {
+  const lays = { id: 'lays', name: 'Lays', unit: 'pcs', current_stock: 5, category_id: 'snacks', group_id: 'g', price: 1.5, price_qty: 1, price_unit: 'pcs', packaging_unit: 'pack', quantity_per_pack: 4 }
 
-  it('× on a variant takes just that one off, with Undo', async () => {
+  it('adds an entry typed by hand for the variant: 1 of its pack, its last price', async () => {
+    db.rows = []
     const { result } = renderHook(() => useGroceryItems())
-    await result.current.dismissVariant(group, group.variants[0])
-    expect(inventory.setVariantsDismissed).toHaveBeenCalledWith(group, ['tuc'], expect.any(String))
-    const toast = toasts.find((t) => /"Tuc" taken off the SHOP list/.test(t.message))
-    await toast.action.onClick()
-    expect(inventory.setVariantsDismissed).toHaveBeenLastCalledWith(group, ['tuc'], null)
+    await result.current.addVariant(lays)
+    const [row] = inventory.insertRows.mock.calls[0][1]
+    expect(row).toMatchObject({ name: 'Lays', pantry_item_id: 'lays', quantity: 1, unit: 'pack', price: 1.5, completed: false })
+    expect(row).not.toHaveProperty('auto_generated')
   })
 
-  it('deleting a "Not urgent" row dismisses every listed variant; Undo clears the marks and puts the row back', async () => {
-    db.rows = [{ id: 'e1', name: 'Chips & Snacks', pantry_item_id: 'g' }]
+  it('never a second entry for the same variant', async () => {
+    db.rows = [{ id: 'e1', pantry_item_id: 'lays' }]
     const { result } = renderHook(() => useGroceryItems())
-    await result.current.removeGroupRow({ id: 'e1', name: 'Chips & Snacks' }, group)
-    const marks = db.calls.filter((c) => c.table === 'pantry_items' && c.op === 'update')
-    expect(marks[0].patch.shop_dismissed_at).toEqual(expect.any(String))
-    expect(marks[0].filters).toContainEqual(['in', 'id', ['pr', 'tuc']])
-    const toast = toasts.find((t) => t.message === 'Removed "Chips & Snacks"')
-    await toast.action.onClick()
-    const cleared = db.calls.filter((c) => c.table === 'pantry_items' && c.op === 'update').at(-1)
-    expect(cleared.patch).toEqual({ shop_dismissed_at: null })
-    expect(db.calls.find((c) => c.op === 'upsert' && c.table === 'grocery_items').rows).toEqual(db.rows)
+    await result.current.addVariant(lays)
+    expect(inventory.insertRows).not.toHaveBeenCalled()
   })
 })

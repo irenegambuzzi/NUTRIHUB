@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
@@ -13,8 +13,9 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { editPatch, editedItem, purchaseLine } from '../../lib/purchase'
+import { editPatch, editedItem, pantryItemFor, purchaseLine } from '../../lib/purchase'
 import { variantOrder } from '../../lib/groups'
+import { shopUnits } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
@@ -97,6 +98,20 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
   const allLines = itemsFor(edits).map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+  // A group's lines together in one card, one line per variant (each its
+  // own stock and its own expense), variants at 0 first.
+  const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
+  const lineOf = new Map(allLines.map((l) => [l.item.id, l]))
+  const groupOfItem = (item) => {
+    const entry = pantryItemFor(item, pantryItems)
+    if (!entry) return null
+    return entry.is_group ? entry : entry.group_id ? pantryById.get(entry.group_id) ?? null : null
+  }
+  const lineUnits = shopUnits(
+    allLines.map((l) => l.item),
+    groupOfItem,
+    (item) => pantryItemFor(item, pantryItems)
+  )
   const lines = allLines.filter((l) => inTrip(l.item))
   const items = lines.map((l) => l.item)
   const total = items.reduce((sum, i) => sum + (totalOf(i) ?? 0), 0)
@@ -146,6 +161,27 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (leftInCart > 0) showToast({ message: `${leftInCart} item${leftInCart === 1 ? '' : 's'} stay in the cart — confirm ${leftInCart === 1 ? 'it' : 'them'} as another trip (e.g. the other store).`, duration: 8000 })
     onClose()
   }
+
+  const purchaseLineFor = (line) => (
+    <PurchaseLine
+      key={line.item.id}
+      line={line}
+      ordered={openOrderOf(line.item)}
+      onCancelOrder={onCancelOrder}
+      inTrip={inTrip(line.item)}
+      onToggleTrip={splitTrips ? () => toggleLater(line.item.id) : null}
+      answer={answers[line.item.id] ?? {}}
+      total={totalOf(line.item)}
+      categoryName={categoryName}
+      onAnswer={(patch) => answer(line.item.id, patch)}
+      onDateValidity={(ok) => reportDate(line.item.id, ok)}
+      onNumberValidity={reportNumber}
+      onEdit={(patch) => edit(line.item.id, patch)}
+      updatePricing={updatePricing}
+      updatePayer={updatePayer}
+      onRemove={() => toggleCart(cartItems.find((i) => i.id === line.item.id))}
+    />
+  )
 
   return (
     <div data-unsaved className="fixed inset-0 z-40 bg-[var(--color-bg)] flex flex-col pt-[env(safe-area-inset-top)]">
@@ -197,26 +233,18 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
         )}
 
         <section className="space-y-2">
-          {allLines.map((line) => (
-            <PurchaseLine
-              key={line.item.id}
-              line={line}
-              ordered={openOrderOf(line.item)}
-              onCancelOrder={onCancelOrder}
-              inTrip={inTrip(line.item)}
-              onToggleTrip={splitTrips ? () => toggleLater(line.item.id) : null}
-              answer={answers[line.item.id] ?? {}}
-              total={totalOf(line.item)}
-              categoryName={categoryName}
-              onAnswer={(patch) => answer(line.item.id, patch)}
-              onDateValidity={(ok) => reportDate(line.item.id, ok)}
-              onNumberValidity={reportNumber}
-              onEdit={(patch) => edit(line.item.id, patch)}
-              updatePricing={updatePricing}
-              updatePayer={updatePayer}
-              onRemove={() => toggleCart(cartItems.find((i) => i.id === line.item.id))}
-            />
-          ))}
+          {lineUnits.map((unit) =>
+            unit.kind === 'group' ? (
+              <div key={unit.key} role="group" aria-label={`${unit.group.name} (group)`} className="rounded-3xl border border-[var(--color-border)] p-2 space-y-2">
+                <p className="px-1 text-xs font-extrabold text-[var(--color-text-soft)] flex items-center gap-1.5">
+                  <CategoryIcon category={unit.group.category_id} size={13} /> {unit.group.name}
+                </p>
+                {unit.entries.map((item) => purchaseLineFor(lineOf.get(item.id)))}
+              </div>
+            ) : (
+              purchaseLineFor(lineOf.get(unit.entry.id))
+            )
+          )}
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 

@@ -1,12 +1,12 @@
 import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
-import { insertRows, setVariantsDismissed, updateRows } from '../lib/inventory'
-import { listedOutVariants } from '../lib/groups'
+import { insertRows, updateRows } from '../lib/inventory'
+import { variantPurchase } from '../lib/groupShop'
+import { priceFields } from '../lib/pricing'
 import { budgetResolver } from '../lib/budgetContext'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { showToast } from '../lib/feedback'
-import { groceryStore, pantryStore } from '../lib/stores'
+import { groceryStore } from '../lib/stores'
 import { localDateString } from '../lib/week'
 import { isOffline } from '../lib/connection'
 import { queueCart, queueQuantity, setCart } from '../lib/offlineActions'
@@ -192,54 +192,39 @@ export function useGroceryItems() {
     [removeWithUndo]
   )
 
-  // × on one variant of a group's SHOP row: that variant is off the list
-  // until it is restocked and runs out again (the database clears the mark
-  // on restock). The row goes when nothing else needs buying. Undo puts it
-  // back.
-  const dismissVariant = useCallback(
-    async (group, variant) => {
-      const refreshBoth = () => Promise.all([pantryStore.refresh(), fetchItems()])
-      const mark = (at) =>
-        attempt(
-          async () => {
-            pantryStore.upsertLocal(await setVariantsDismissed(group, [variant.id], at))
-            await fetchItems()
-          },
-          { onFail: refreshBoth }
-        )
-      const { error } = await mark(new Date().toISOString())
-      if (!error) showToast({ message: `"${variant.name}" taken off the SHOP list`, action: { label: 'Undo', onClick: () => mark(null) } })
-      return { error }
-    },
+  // "+ Add another variant" in a group's card: an entry for a variant that
+  // still has stock (e.g. on offer), 1 of its purchase unit at its last
+  // price. Added by hand, so it can be removed again (× on its row) and
+  // the list never takes it away by itself. Never a second entry for the
+  // same variant.
+  const addVariant = useCallback(
+    (variant) =>
+      attempt(
+        async () => {
+          const open = must(await supabase.from('grocery_items').select('id').eq('pantry_item_id', variant.id).eq('completed', false))
+          if (open.length) return groceryStore.refresh()
+          const { quantity, unit } = variantPurchase(variant)
+          const rows = must(
+            await insertRows('grocery_items', [
+              {
+                name: variant.name,
+                category_id: variant.category_id,
+                subcategory_id: variant.subcategory_id ?? null,
+                quantity,
+                unit,
+                ...priceFields(variant),
+                payer: variant.payer || 'shared',
+                completed: false,
+                pantry_item_id: variant.id,
+              },
+            ])
+          )
+          groceryStore.upsertLocal(rows)
+        },
+        { onFail: fetchItems }
+      ),
     [fetchItems]
   )
 
-  // Deleting a "Not urgent" group row: every variant it lists is taken off
-  // the list (as with ×), so the row doesn't come back by itself; Undo
-  // clears those marks and puts the row back exactly.
-  const removeGroupRow = useCallback(
-    (entry, group) => {
-      const ids = listedOutVariants(group.variants).map((v) => v.id)
-      const refreshBoth = () => Promise.all([pantryStore.refresh(), fetchItems()])
-      return deleteWithUndo({
-        message: `Removed "${entry.name}"`,
-        remove: async () => {
-          const rows = must(await supabase.from('grocery_items').delete().eq('id', entry.id).select())
-          groceryStore.removeLocal([entry.id])
-          if (ids.length) pantryStore.upsertLocal(must(await supabase.from('pantry_items').update({ shop_dismissed_at: new Date().toISOString() }).in('id', ids).select()))
-          return rows
-        },
-        restore: async (rows) => {
-          if (ids.length) pantryStore.upsertLocal(must(await supabase.from('pantry_items').update({ shop_dismissed_at: null }).in('id', ids).select()))
-          if (rows.length) must(await supabase.from('grocery_items').upsert(rows))
-          await fetchItems()
-        },
-        onFail: refreshBoth,
-      })
-    },
-    [fetchItems]
-  )
-
-
-  return { items, addItem, toggleCart, updatePricing, updatePayer, deleteItem, dismissVariant, removeGroupRow }
+  return { items, addItem, toggleCart, updatePricing, updatePayer, deleteItem, addVariant }
 }

@@ -8,7 +8,7 @@ import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatSto
 import { isOneTime } from '../../lib/oneTime'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { formatUnitPrice } from '../../lib/pricing'
-import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
+import { EXPIRY_STYLES, RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryStyles'
 
 export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
@@ -58,7 +58,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
           <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', STATUS_STYLES[status].badge)}>{STOCK_STATUS_LABELS[status]}</span>
         )}
         {isNew && (
-          <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
+          <span className={cn(SMALL_LABEL, 'self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
         )}
         {expiry !== 'none' && (
           <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1', EXPIRY_STYLES[expiry])}>

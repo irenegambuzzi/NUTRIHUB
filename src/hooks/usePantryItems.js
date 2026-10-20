@@ -1,11 +1,11 @@
 import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, toBuyEntriesOf, updateRows, upsertRows } from '../lib/inventory'
+import { afterStockChange, insertRows, latestLogId, normalizeItem, orderedEntryIds, stockChangeWithLog, syncShoppingForItem, toBuyEntriesOf, undoStockChange, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { groceryStore, pantryStore, stockLogStore } from '../lib/stores'
 import { isOffline } from '../lib/connection'
-import { queueStock } from '../lib/offlineActions'
+import { cancelQueuedStock, queueStock } from '../lib/offlineActions'
 import { withGroupTotals } from '../lib/groups'
 import { becameFinished, isOneTime } from '../lib/oneTime'
 
@@ -30,7 +30,6 @@ export const ITEM_FIELDS = [
   'group_id',
   'usual_shop_id',
   'one_time',
-  'shop_dismissed_at',
 ]
 
 function pickFields(source) {
@@ -40,12 +39,41 @@ function pickFields(source) {
 }
 
 // A one-time item just used up: it moves to "Finished one-time items".
-// Undo puts its stock back (`restore(amount)`).
-function announceFinished(item, amount, restore) {
+// Undo (`undo()`) puts its stock back, which brings it back to the grid.
+function announceFinished(item, amount, undo) {
   showToast({
     message: `"${item.name}" is finished — moved to Finished one-time items`,
-    action: amount > 0 ? { label: 'Undo', onClick: () => restore(amount) } : null,
+    action: amount > 0 ? { label: 'Undo', onClick: undo } : null,
   })
+}
+
+// Undo of a stock change saved online: the stock goes back (`amount`) and
+// its history rows (`logIds`) are deleted, so it leaves no trace.
+function undoSaved(item, amount, logIds) {
+  return attempt(
+    async () => {
+      const restored = await undoStockChange(item, amount, logIds)
+      pantryStore.upsertLocal([restored])
+      stockLogStore.removeLocal(logIds)
+    },
+    { onFail: pantryStore.refresh }
+  )
+}
+
+// Undo of a stock change made offline (`opId`, which took `amount`):
+// still waiting, it is simply never sent; sent meanwhile, its history row
+// is looked up and undone like any other.
+async function undoQueued(item, opId, amount, reason) {
+  if (cancelQueuedStock(opId, item, -amount)) return { error: null }
+  return attempt(
+    async () => {
+      const logId = await latestLogId(item.id, -amount, reason)
+      const restored = await undoStockChange(item, amount, logId ? [logId] : [])
+      pantryStore.upsertLocal([restored])
+      if (logId) stockLogStore.removeLocal([logId])
+    },
+    { onFail: pantryStore.refresh }
+  )
 }
 
 // Marking an item one-time takes it off "to buy": its open SHOP entries
@@ -86,23 +114,25 @@ export function usePantryItems() {
     return { data }
   }, [])
 
-  // A one-time item used up says so, with Undo (its stock back, logged as
-  // "edited").
+  // A one-time item used up says so, with Undo: the stock back and the
+  // "Used" row gone from History (nothing new is written).
   const adjustStock = useCallback(
-    async function adjust(item, delta, reason = delta > 0 ? 'restocked' : 'used') {
+    async (item, delta, reason = delta > 0 ? 'restocked' : 'used') => {
       const change = Math.round(delta * 100) / 100
       const before = Number(item.current_stock) || 0
-      const finished = (after) => becameFinished(item, after) && announceFinished(after, before, (amount) => adjust(after, amount, 'edited'))
+      // What this tap really took away (stock never goes below 0).
+      const taken = (after) => Math.round((before - (Number(after.current_stock) || 0)) * 100) / 100
       // No signal: kept and sent later (see offlineActions.js).
       if (isOffline()) {
-        const result = queueStock(item, change, reason)
-        finished({ ...item, current_stock: Math.max(0, before + change) })
-        return result
+        const { error, opId } = queueStock(item, change, reason)
+        const after = { ...item, current_stock: Math.max(0, before + change) }
+        if (becameFinished(item, after)) announceFinished(after, taken(after), () => undoQueued(after, opId, taken(after), reason))
+        return { error }
       }
-      const { data, error } = await attempt(() => changeStock(item, change, reason), { onFail: fetchItems })
+      const { data, error } = await attempt(() => stockChangeWithLog(item, [{ change, reason }]), { onFail: fetchItems })
       if (error) return { error }
-      pantryStore.upsertLocal([data])
-      finished(data)
+      pantryStore.upsertLocal([data.item])
+      if (becameFinished(item, data.item)) announceFinished(data.item, taken(data.item), () => undoSaved(data.item, taken(data.item), data.logIds))
       return { error: null }
     },
     [fetchItems]
@@ -127,7 +157,7 @@ export function usePantryItems() {
           console.error(readError)
         }
       }
-      const { data, error } = await attempt(
+      const { data: result, error } = await attempt(
         () =>
           inSteps(async (onFail) => {
             let saved = item
@@ -136,11 +166,12 @@ export function usePantryItems() {
               const original = Object.fromEntries(Object.keys(patch).map((k) => [k, item[k] ?? null]))
               onFail(async () => must(await updateRows('pantry_items', item.id, original)))
             }
-            return delta ? changeStock(saved, delta, 'edited') : saved
+            return delta ? stockChangeWithLog(saved, [{ change: delta, reason: 'edited' }]) : { item: saved, logIds: [] }
           }),
         { retry: false, onFail: fetchItems }
       )
       if (error) return { error }
+      const data = result.item
       pantryStore.upsertLocal([data])
       if (!delta) await followUp('the shopping list', () => syncShoppingForItem(data))
       // Moved into or out of a group: both groups are judged again.
@@ -157,16 +188,19 @@ export function usePantryItems() {
         )
       }
       if (flagging) await takeOffShopList(data, toBuy)
-      if (becameFinished(item, data)) announceFinished(data, Number(item.current_stock) || 0, (amount) => adjustStock(data, amount, 'edited'))
+      // Undo puts the stock back and takes away its "Adjusted" row; the
+      // other fields saved stay.
+      const taken = Math.round(((Number(item.current_stock) || 0) - (Number(data.current_stock) || 0)) * 100) / 100
+      if (becameFinished(item, data)) announceFinished(data, taken, () => undoSaved(data, taken, result.logIds))
       return { data }
     },
-    [fetchItems, adjustStock]
+    [fetchItems]
   )
 
 
   // Throws away an expired item's stock (logged as "discarded") and
   // clears its expiry date, which described the stock that's gone. Undo
-  // puts both back.
+  // puts both back and takes the "Discarded" row away again.
   const discardExpired = useCallback(
     async (item) => {
       const amount = Number(item.current_stock) || 0
@@ -176,12 +210,12 @@ export function usePantryItems() {
           inSteps(async (onFail) => {
             await setExpiry(null)
             onFail(() => setExpiry(item.expiry_date))
-            return changeStock({ ...item, expiry_date: null }, -amount, 'discarded')
+            return stockChangeWithLog({ ...item, expiry_date: null }, [{ change: -amount, reason: 'discarded' }])
           }),
         { onFail: fetchItems }
       )
       if (error) return { error }
-      pantryStore.upsertLocal([data])
+      pantryStore.upsertLocal([data.item])
 
       const undo = () =>
         attempt(
@@ -189,8 +223,9 @@ export function usePantryItems() {
             inSteps(async (onFail) => {
               await setExpiry(item.expiry_date)
               onFail(() => setExpiry(null))
-              const restored = await changeStock({ ...data, expiry_date: item.expiry_date }, amount, 'edited')
+              const restored = await undoStockChange({ ...data.item, expiry_date: item.expiry_date }, amount, data.logIds)
               pantryStore.upsertLocal([restored])
+              stockLogStore.removeLocal(data.logIds)
             }),
           { onFail: fetchItems }
         )
@@ -214,20 +249,38 @@ export function usePantryItems() {
         showToast({ message: `"${item.name}" still has variants — move them out of the group first.`, tone: 'error' })
         return
       }
+      // Its automatic SHOP entries still "to buy" go with it (in the cart
+      // or on the way they stay): a deleted variant is no longer listed in
+      // its group's card. Undo puts them back.
+      const resyncGroup = () => {
+        const group = item.group_id && pantryStore.getSnapshot().rows.find((r) => r.id === item.group_id)
+        return group ? followUp('the shopping list', () => syncShoppingForItem(group)) : null
+      }
       return deleteWithUndo({
         message: `Deleted "${item.name}"`,
         remove: async () => {
-          const grocery = must(await supabase.from('grocery_items').select('id').eq('pantry_item_id', item.id))
+          const grocery = must(await supabase.from('grocery_items').select('*').eq('pantry_item_id', item.id))
+          const ordered = await orderedEntryIds(grocery.map((g) => g.id))
+          const listed = grocery.filter((g) => g.auto_generated && !g.completed && !g.in_cart && !ordered.has(g.id))
+          if (listed.length) {
+            must(await supabase.from('grocery_items').delete().in('id', listed.map((g) => g.id)))
+            groceryStore.removeLocal(listed.map((g) => g.id))
+          }
           const history = must(await supabase.from('stock_logs').select('id').eq('item_id', item.id))
           const [row] = must(await supabase.from('pantry_items').delete().eq('id', item.id).select())
           pantryStore.removeLocal([item.id])
-          return { row, groceryIds: grocery.map((g) => g.id), logIds: history.map((l) => l.id) }
+          await resyncGroup()
+          const kept = grocery.filter((g) => !listed.includes(g))
+          return { row, groceryIds: kept.map((g) => g.id), listed, logIds: history.map((l) => l.id) }
         },
-        restore: async ({ row, groceryIds, logIds }) => {
+        restore: async ({ row, groceryIds, listed = [], logIds }) => {
           if (row) must(await supabase.from('pantry_items').upsert(row))
           if (groceryIds.length) must(await supabase.from('grocery_items').update({ pantry_item_id: item.id }).in('id', groceryIds))
+          if (listed.length) must(await supabase.from('grocery_items').upsert(listed))
           if (logIds.length) must(await supabase.from('stock_logs').update({ item_id: item.id }).in('id', logIds))
           await fetchItems()
+          await groceryStore.refresh()
+          await resyncGroup()
         },
         onFail: fetchItems,
       })

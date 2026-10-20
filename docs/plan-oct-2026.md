@@ -158,7 +158,7 @@ All new/replaced functions: `search_path = public`, household check
 | `grocery_items.cart_added_at timestamptz` | When the entry went into the cart. Set/cleared **by the database** (trigger `grocery_items_cart_time`) on every path: a tap, the offline queue, Reopen, Confirm, Order online, Arrived. If the app sends a value with `in_cart: true` (the tap time, e.g. from the offline queue) that value is kept. Leaving the cart → null. Backfill: entries in the cart at 023 time got `created_at`. |
 | `grocery_items.one_time boolean default false` (nullable; null = false) | A SHOP entry for something not in HOME yet that is 1×. When Confirm creates the HOME item it inherits it. |
 | `pantry_items.one_time boolean not null default false` | One-time purchase. Constraint `pantry_items_one_time_not_group`: a group can't be 1× (variants can). "Finished" is derived: `one_time and current_stock <= 0`. |
-| `pantry_items.shop_dismissed_at timestamptz` | A group variant taken off the SHOP list by hand. Cleared **by the database** as soon as `current_stock > 0` (trigger `pantry_items_shop_dismissed`), so it can come back when it runs out again. |
+| `pantry_items.shop_dismissed_at timestamptz` | **Unused since round 3B (20/10/2026).** Was: a group variant taken off the SHOP list by hand (the × per variant, removed). The column and its trigger `pantry_items_shop_dismissed` stay in the database; the app neither reads nor writes it, and existing values are ignored. |
 | `shopping_trips.source text` (`shop` default, `money`, `merged`) | Where the purchase was made: SHOP Confirm purchase, the MONEY purchase form, or by merging old expenses. Every existing trip is `shop`. |
 | `shopping_trips.coupon_kind` (`percent`/`amount`), `coupon_value`, `coupon_total` (€, default 0) | The coupon of the whole purchase. |
 | `shopping_trip_items.line_kind` (`shop` default, `money`) | A line from a SHOP entry, or typed in MONEY. |
@@ -473,12 +473,20 @@ name" still hold; a snapshot from before 023 is still put back by Reopen.
 - `src/pages/GroceryPage.jsx`, `src/components/grocery/ShoppingMode.jsx`,
   `src/components/grocery/ConfirmPurchase.jsx` — cart lists in cart order.
 - `src/lib/inventory.js` — `restockReason` / `displayReason` / stats for
-  1×; `syncShoppingForItem` / `syncGroupOf` for the new group rule.
+  1×; `syncShoppingForItem` → `syncGroup` (round 3B: one entry per variant,
+  see NOTE 1); `stockChangeWithLog` / `undoStockChange` (Undo leaves no
+  trace).
+- new in 3B: `src/lib/groupShop.js` (+ test) — `planGroupEntries`,
+  `groupsToTidy`, `shopUnits` (cards), `addableVariants`, `variantPurchase`;
+  `src/hooks/useShopTidy.js`; `src/components/grocery/GroupShopCard.jsx`,
+  `EntryControls.jsx`, `src/hooks/useEntryEditing.js`;
+  `src/lib/stockUndo.test.js`.
 - new `src/lib/oneTime.js` (+ test) — `isOneTime`, `isFinished(item)`,
   `splitFinished(items)`.
-- `src/hooks/usePantryItems.js` — `ITEM_FIELDS` + `one_time`,
-  `shop_dismissed_at`; "finished" toast with Undo; flagging takes the item
-  off "to buy".
+- `src/hooks/usePantryItems.js` — `ITEM_FIELDS` + `one_time` (3B: no
+  `shop_dismissed_at`); "finished" toast with Undo; flagging takes the item
+  off "to buy"; deleting an item takes its automatic "to buy" entries with
+  it (Undo puts them back).
 - `src/components/inventory/ItemEditor.jsx` — 1× toggle (new and edit, not
   for groups), minimum field hidden while on.
 - `src/pages/PantryPage.jsx` — collapsed "Finished one-time items".
@@ -487,8 +495,9 @@ name" still hold; a snapshot from before 023 is still put back by Reopen.
 - `src/components/grocery/AddItemForm.jsx` (More options) — 1× toggle for a
   new SHOP entry not in HOME.
 - `src/components/grocery/GroceryItemTile.jsx`, `ShoppingMode.jsx`
-  (`ShopTile`), `ConfirmPurchase.jsx` — 1× label; group row "— out: …",
-  × per variant, "Not urgent" colour.
+  (`ShopTile`, `ShopGroupCard`), `ConfirmPurchase.jsx` — "1× purchase"
+  label; one card per group with a row per variant (3B; the round-3 group
+  row "— out: …" and × per variant are gone).
 - `src/lib/inventoryStyles.js` — `not-urgent` style (sky) and a neutral
   grey `oneTime` badge.
 - `src/lib/purchase.js` — prefill the variant of a group line with the
@@ -497,8 +506,10 @@ name" still hold; a snapshot from before 023 is still put back by Reopen.
 ### Data used
 
 `grocery_items.cart_added_at` (trigger keeps it right), `grocery_items.one_time`,
-`pantry_items.one_time`, `pantry_items.shop_dismissed_at` (trigger clears it
-on restock), constraint `pantry_items_one_time_not_group`;
+`pantry_items.one_time`, constraint `pantry_items_one_time_not_group`;
+`grocery_items.pantry_item_id` = the variant for group entries (3B);
+`stock_logs` rows deleted by Undo (3B). `pantry_items.shop_dismissed_at` is
+**not used** (3B);
 `confirm_shopping_trip` (inherits 1× for new items; revives a finished 1× item
 by name).
 
@@ -520,13 +531,21 @@ by name).
 2. Finished = 1× and stock ≤ 0. A finished item is hidden from the HOME grid
    and listed in a collapsed section "Finished one-time items (N)" at the
    bottom; never deleted. When a stock change makes a 1× item finished, toast
-   "'Sun cream' is finished — moved to Finished one-time items" with Undo
-   (puts the stock back with reason `edited`).
+   "'Sun cream' is finished — moved to Finished one-time items" with Undo.
+   **3B:** Undo puts the stock back and deletes the history row(s) of the
+   change (`undoStockChange`); it never writes an "Adjusted" row, so History
+   shows nothing for it. A row already gone (deleted on the other phone) is
+   skipped without an error. Offline: the queued change is taken out of the
+   queue (never sent); sent meanwhile, its row is looked up and deleted. The
+   same holds for every Undo that changes stock (also "Discard expired").
+   An undone 1× item goes back to the normal grid.
 3. The flag can be removed any time, also from the Finished section ("Not
    one-time"). Then the item is a normal item again: at stock 0 it is Out and
    goes on the SHOP list like any Out item (say so in the button's hint).
-4. Grey "1×" label (neutral grey badge) in HOME tiles, SHOP list, ShoppingMode
-   and Confirm purchase. A 1× item never turns yellow/red: `restockReason` and
+4. Grey "1× purchase" label (3B; was "1×") in HOME tiles, SHOP list, cart,
+   ShoppingMode and Confirm purchase: neutral grey, and exactly the size,
+   weight and padding of "New Item" (shared `SMALL_LABEL`, so it is shown in
+   capitals like NEW ITEM). A 1× item never turns yellow/red: `restockReason` and
    `displayReason` return null for it; its minimum is ignored; the minimum
    field is hidden in the editor while 1× is on (the stored value is kept).
    1× items don't count in the Low/Out stat tiles; finished ones don't count
@@ -542,34 +561,76 @@ by name).
 8. No existing item becomes 1× by itself (023 changed none).
 9. MONEY expenses and trips are always kept (nothing here deletes them).
 
-**NOTE 1. Group variants in SHOP**
+**NOTE 1. Group variants in SHOP** (rewritten in round 3B, 20/10/2026,
+after the iPhone test: one card per group, one row per variant)
 
-- A group gets ONE SHOP entry (as today, `pantry_item_id` = the group) when
-  its total ≤ its minimum **or** at least one variant is at 0 (and that
-  variant is not 1× and not dismissed). The minimum stays on the group.
-  Variants never get entries of their own (as today).
-- The row: "Chips & Snacks — out: Pringles, Tuc" (out variants, not 1×, not
-  dismissed). Colour from the group: red total 0; yellow total ≤ min; sky
-  light blue + "Not urgent" when the total is above the minimum but a variant
-  is at 0.
-- Order: in the default priority sort (and the budget plan) red and yellow
-  on top, "Not urgent" at the bottom (`PRIORITY = ['out','low','expired',
-  'new','stocked','not-urgent']`). Other sorts (A–Z, price, recent) and
-  ShoppingMode's shop order stay as they are.
-- Inside a group row (opened) and in Confirm purchase's variant select:
-  variants at 0 first, then lowest to highest stock. Confirm purchase
-  pre-selects the first out variant (the user can change it). HOME's group
-  tile keeps its A–Z variant list.
-- Removing one variant by hand (× on its name in the row) sets its
-  `shop_dismissed_at`; it doesn't come back until it is restocked (the
-  database clears the mark when its stock goes above 0) and then runs out
-  again. If no listed variant is left and the group isn't low, the row goes
-  away.
-- Deleting a whole "Not urgent" row by hand dismisses every variant it
-  listed (Undo clears those marks and puts the row back). Deleting a
-  yellow/red row works as for any Low/Out item today.
-- Stock from Confirm purchase goes to the variant, never the group (true
-  since 022; the confirm screen must still require a variant).
+- **Entries.** Every variant at stock 0 that is not 1× has its OWN SHOP
+  entry (`grocery_items.pantry_item_id` = the variant, `auto_generated`).
+  The group itself never gets an entry. A variant's entry asks for 1 of its
+  purchase unit (its pack when it has one) at its last price
+  (`variantPurchase`). The minimum stays on the group.
+- **Group low without a variant at 0** (total ≤ minimum, every variant still
+  has some): the variant with the least stock gets an entry, unless one of
+  the group's variants is already on the list (so the row doesn't jump from
+  variant to variant); it goes when the group is above its minimum again.
+- **Which entries go** (`planGroupEntries`): a variant restocked loses its
+  automatic entries (an order on the way stays; a 1× variant's entry in the
+  cart stays); entries typed by hand ("+ Add another variant") are never
+  removed by the list.
+- **Never a second entry for the same variant**: before adding, any open
+  entry of the variant counts (to buy, in the cart, on the way, typed by
+  hand). Two automatic "to buy" entries for one variant (two phones at the
+  same moment) → the oldest stays; next to an entry in the cart / on the way
+  / typed by hand, the automatic "to buy" one goes. After every insert the
+  group is judged again, so a race converges on one. Normal items get the
+  same clean-up. Every path goes through `syncShoppingForItem` → `syncGroup`:
+  stock changes (also from the offline queue), "Add all…", Reopen,
+  Confirm, Arrived / Cancel / Return (`syncListFor`), import.
+- **The list shows ONE card per group** "to buy" (and one in the cart),
+  grouping the entries by their variant's group (`shopUnits`), placed where
+  its first entry sorts. Same in Shop mode (one card, a big tappable row
+  per variant; placed in the shop by the group's name and category) and
+  Confirm purchase (one card, one line per variant). Inside a card: variants
+  at 0 first, then lowest to highest stock (a group-level entry last).
+- **A row** = one variant: name, its stock at home, quantity −/+ (its own
+  unit), price (prefilled from its last price, editable with payer), its
+  own tap → cart, its own "Order online", its own budget mark. Tap only
+  "Patatine teriyaki" → only that goes to the cart; "Chips & Snacks" stays
+  in "to buy" with "Chips - Patatine Peperoncino", and the card in the cart
+  shows only "Patatine teriyaki".
+- **Colour / label follow the GROUP**: red total 0, yellow total ≤ minimum,
+  sky + "Not urgent" when the total is above the minimum but a variant is at
+  0. Priority sort / budget plan: the entries of a group take the group's
+  reason, so "Not urgent" cards sink to the bottom.
+- **"+ Add another variant"** (card "to buy" only): a variant of the group
+  with stock above 0 that isn't listed yet (e.g. on offer) → an entry typed
+  by hand for it (`addVariant`); only these rows have ×.
+- **No × per variant, no delete for the card** (the round-3 × and its
+  `shop_dismissed_at` are gone; the card's trash icon is removed rather than
+  limited to added rows, because those already have their own ×). A variant
+  at 0 always stays visible until it is bought or its stock goes above 0. To
+  stop it coming back: mark it 1× or delete it in HOME (deleting an item
+  takes its automatic "to buy" entries with it; Undo puts them back).
+- **HOME "Add to grocery list" on a group** adds an entry for the variant
+  that needs it most and isn't listed yet (never a group entry).
+- **Confirm purchase**: each variant is its own line → its own stock
+  increase and its own expense (e.g. €2.49 for Patatine teriyaki), never a
+  group total. Stock always goes to a variant (022).
+- **Old group-level entries** (round 3 and before): the ones still "to buy"
+  (automatic) are replaced by per-variant entries; those in a cart, ordered
+  online (on the way) or bought are never touched — they are shown as a row
+  of the group's card ("You choose the variant when confirming") and bought
+  exactly as before (Confirm asks the variant, pre-selecting the first out;
+  Reopen of an old trip puts the group-level entry back in the cart, which
+  still works). A group entry typed by hand (e.g. QuickAdd "Chips & Snacks")
+  is shown the same way and never removed by the list.
+- **Data clean-up of the live data is app code, no SQL** (`useShopTidy`):
+  when the SHOP list is open, the app works out from the rows already on the
+  phone which groups are not right (`groupsToTidy`: a group-level automatic
+  entry "to buy", a variant with two entries, a variant at 0 with none) and
+  judges only those groups again, each at most once per app start. Nothing
+  is read or written when the list is already right, so in practice it runs
+  once; it is safe to repeat. No `supabase/024` was needed.
 
 ### Edge cases
 
@@ -584,10 +645,14 @@ by name).
 - 1× flag on "Batteries", which has an open auto entry in the cart → entry
   stays in the cart.
 - Group "Chips & Snacks" min 4: Lays 5, Pringles 0, Tuc 0 → total 5 > 4 →
-  sky "Not urgent — out: Pringles, Tuc". × on Tuc → "— out: Pringles". Buy
-  Tuc later (restock +2) → its mark is cleared; when Tuc is 0 again it shows
-  again.
-- Same group, Lays 3, Pringles 0 → total 3 ≤ 4 → yellow, "— out: Pringles".
+  one sky "Not urgent" card with two rows, Pringles and Tuc, each 1 pcs at
+  its last price. Tap Tuc → Tuc in the cart's "Chips & Snacks" card,
+  Pringles stays "to buy". Confirm → Tuc +1, one expense for Tuc.
+- Same group, Lays 3, Pringles 0 → total 3 ≤ 4 → yellow card, row Pringles.
+- Lays 3, Pringles 1 (nothing at 0), min 4 → yellow card, row Pringles (the
+  least); Lays then drops to 0.5 → the row stays Pringles (it doesn't jump).
+- The live duplicate "Chips & Snacks" (two group-level entries "to buy") →
+  both replaced by a row per variant at 0, once.
 - A 1× variant at 0 → never listed; hidden in the group.
 
 ### iPhone checklist
@@ -603,11 +668,13 @@ by name).
 5. SHOP → More options → new item "Balloons" with 1× → Confirm purchase →
    HOME has "Balloons" with 1×.
 6. Mark an item that is "to buy" in SHOP as 1× → it leaves "to buy".
-7. A group with one variant at 0 but total above its minimum → one sky "Not
-   urgent" row at the bottom of the SHOP list listing that variant.
-8. × on that variant → it disappears; restock it in HOME, use it to 0 → it
-   is listed again.
-9. Confirm a group row → the out variant is pre-selected.
+7. (3B) A group with variants at 0 → ONE card, each variant at 0 its own
+   row with quantity and price; sky "Not urgent" at the bottom when the
+   total is above the minimum.
+8. (3B) Tap one variant → only it goes to the cart; the card stays in "to
+   buy" with the others.
+9. (3B) "+ Add another variant" adds a variant with stock; × removes it.
+10. (3B) A 1× item at 1 → − → Undo → stock 1, nothing in History.
 
 ---
 
@@ -677,7 +744,15 @@ free. The item details (quantity, unit, normal price, discounts) live on the
   is `durable: true` (expense only). On: an existing HOME item (same name,
   not a group; or picked) → stock goes up by the quantity converted to its
   unit (`purchasedQuantity`; ask the pack size inline if needed, as Confirm
-  does); a finished 1× item comes back; a group → pick a variant inline.
+  does); a finished 1× item comes back; a group → pick a variant inline
+  (never stock to the group itself).
+- **Groups (since round 3B): one line per variant.** Every line has its own
+  quantity, price and expense; two variants of one group bought together
+  are two lines, never one group line or a group total. A variant's SHOP
+  entry is its own (`pantry_item_id` = the variant), so the `list_entry_id`
+  of a line restocking "Patatine teriyaki" is that variant's entry, and
+  closing it leaves the other variants' rows in the group's card. The
+  purchase row's opened view lists the variants as separate items.
   New → created in HOME (gets "New Item" by itself) with 1× and Min.
 - If that HOME item has an open SHOP entry still "to buy", send it as
   `list_entry_id`: it leaves the SHOP list only if the stock really went into
@@ -930,6 +1005,10 @@ free. The item details (quantity, unit, normal price, discounts) live on the
   stay the normal price; only the expense gets the paid amount.
 - Where: MONEY purchase form and SHOP Confirm purchase = both kinds; Order
   online / Orders = per-item only (`orders.price` paid, `list_price` normal).
+- Groups (round 3B): a line is always one variant, so a per-item discount
+  belongs to one variant and the coupon is spread over the variants' lines
+  like any other lines (Patatine teriyaki €2.49 −50% and Peperoncino €1.99
+  are two lines). The "last price" kept is the variant's own.
 - MONEY always records what was really paid; the discount history is visible
   in the opened purchase / expense details.
 - Editing an expense amount by hand later doesn't change its line's discount
@@ -1220,8 +1299,8 @@ subs), `confirm_shopping_trip` line `travel_id`.
     Item".
 16. **MONEY sub colour = main colour also for income categories** (same
     screens, same rule). Say if income should keep its own sub colours.
-17. **Variant order (0 first, then lowest stock)** applies to the SHOP row and
-    Confirm purchase; HOME's group tile keeps A–Z. "Not urgent" at the bottom
+17. **Variant order (0 first, then lowest stock)** applies to the rows inside
+    a group's SHOP card, Shop mode card and Confirm purchase card; HOME's group tile keeps A–Z. "Not urgent" at the bottom
     applies to the default priority sort and the budget plan, not to A–Z/price
     or the shop route.
 18. **"Apply the mapping to past purchases"** must read only SHOP lines from
@@ -1264,3 +1343,27 @@ subs), `confirm_shopping_trip` line `travel_id`.
 32. Two phones merging the same expenses at the same time: the second request
     is refused ("already part of a purchase") — correct, but the toast must say
     so clearly.
+
+**Decisions made in round 3B (20/10/2026)**
+
+33. **One SHOP entry per variant, one card per group** replaces the round-3
+    group row; `shop_dismissed_at` (and its trigger) stay in the database
+    but are unused (item 7's second trigger now does nothing the app needs).
+34. **The group card has no delete**: a variant at 0 must stay visible; rows
+    added with "+ Add another variant" have their own ×.
+35. **A group at/below its minimum with no variant at 0** lists the variant
+    with the least stock (one row), so a low group never disappears from
+    the list just because nothing is at 0.
+36. **Clean-up in app code** (`useShopTidy`, once per group per app start,
+    only when something is wrong), not SQL: it uses the same rules as every
+    stock change, so it can't disagree with them. No `supabase/024`.
+37. **Deleting a HOME item takes its automatic "to buy" SHOP entries** with
+    it (Undo puts them back); otherwise a deleted variant would stay on the
+    list as an unlinked "New Item".
+38. **Undo of a stock change deletes its history rows** instead of writing
+    "Adjusted"; offline, the queued change is dropped from the queue.
+39. **"1× purchase" uses the shared `SMALL_LABEL`** of "New Item", so it is
+    in capitals like it.
+40. **An older app version on the other phone** still makes group-level
+    entries until it is reloaded; the tidy replaces them (once per app
+    start). Reload both iPhones after the deploy.

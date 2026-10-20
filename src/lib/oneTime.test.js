@@ -99,11 +99,11 @@ describe('group variants on the SHOP list', () => {
     expect(shopReason(chips({ Lays: 5, Pringles: 1 }))).toBeNull()
   })
 
-  it('never lists a one-time variant or one taken off the list by hand', () => {
+  it('never lists a one-time variant; an old "taken off" mark (shop_dismissed_at) no longer hides one', () => {
     const group = chips({ Lays: 5, Pringles: 0, Tuc: 0, Party: 0 }, { Party: { one_time: true }, Tuc: { shop_dismissed_at: '2026-10-20T10:00:00Z' } })
-    expect(listedOutVariants(group.variants).map((v) => v.name)).toEqual(['Pringles'])
-    const onlyHidden = chips({ Lays: 5, Tuc: 0, Party: 0 }, { Party: { one_time: true }, Tuc: { shop_dismissed_at: '2026-10-20T10:00:00Z' } })
-    expect(shopReason(onlyHidden)).toBeNull()
+    expect(listedOutVariants(group.variants).map((v) => v.name)).toEqual(['Pringles', 'Tuc'])
+    const onlyOneTime = chips({ Lays: 5, Party: 0 }, { Party: { one_time: true } })
+    expect(shopReason(onlyOneTime)).toBeNull()
   })
 
   it('a variant at 0 never needs buying by itself: only the group does', () => {
@@ -116,7 +116,7 @@ describe('group variants on the SHOP list', () => {
     expect(variantOrder(group.variants).map((v) => v.name)).toEqual(['Amica', 'Pringles', 'Tuc', 'Doritos', 'Lays'])
   })
 
-  it('Confirm purchase takes the first out variant until the user chooses', () => {
+  it('Confirm purchase of a group-level entry from before takes the first out variant until the user chooses', () => {
     const group = chips({ Lays: 5, Pringles: 0, Amica: 0 })
     const pantry = [group, ...group.variants]
     const entry = { id: 'e1', name: 'Chips & Snacks', pantry_item_id: 'g', quantity: 2, unit: 'pcs' }

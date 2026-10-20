@@ -58,6 +58,17 @@ export function enqueue(type, payload, { key = null, label = type } = {}) {
 }
 
 export const getQueue = () => queue
+
+// Takes back a queued change that hasn't been sent (`match(op)` finds it),
+// so it is never sent. False when there is none, or it is being sent right
+// now.
+export function dequeue(match) {
+  const op = queue.find(match)
+  if (!op || (syncing && queue[0] === op)) return false
+  queue = queue.filter((o) => o !== op)
+  update()
+  return true
+}
 export const isSyncing = () => syncing
 
 // Sends the queued changes in order. Stops at a network failure (tried

@@ -16,7 +16,8 @@ import { WhereToRecord } from '../components/ui/WhereToRecord'
 import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
 import { SORTS, matchesExpiryDeep, matchesStatus, searchRank } from '../lib/pantryFilters'
-import { groupsReady, newVariantFields } from '../lib/groups'
+import { groupsReady, newVariantFields, variantOrder } from '../lib/groups'
+import { variantPurchase } from '../lib/groupShop'
 import { showToast } from '../lib/feedback'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useNewItemIds } from '../hooks/useNewItemIds'
@@ -116,7 +117,34 @@ export function PantryPage() {
     applyQuickFilter('all', 'all')
   }
 
+  // A group never goes on the SHOP list itself: its variant that needs it
+  // most (at 0 first, then the lowest stock) and isn't listed yet does.
   const sendToGrocery = async (item) => {
+    if (item.is_group) {
+      const listed = new Set(groceryItems.map((g) => g.pantry_item_id).filter(Boolean))
+      const variants = variantOrder(items.filter((i) => i.group_id === item.id && !isFinished(i)))
+      const variant = variants.find((v) => !listed.has(v.id))
+      if (!variant) {
+        showToast({ message: variants.length ? `Every variant of "${item.name}" is already on the SHOP list.` : `"${item.name}" has no variants yet — add one first.` })
+        if (variants.length) navigate('/grocery')
+        return
+      }
+      const { quantity, unit } = variantPurchase(variant)
+      const { error } = await addGroceryItem({
+        name: variant.name,
+        categoryId: variant.category_id,
+        subcategoryId: variant.subcategory_id,
+        price: Number(variant.price) || 0,
+        priceQty: Number(variant.price) > 0 ? variant.price_qty ?? null : null,
+        priceUnit: Number(variant.price) > 0 ? variant.price_unit ?? null : null,
+        payer: variant.payer || 'shared',
+        quantity,
+        unit,
+        pantryItemId: variant.id,
+      })
+      if (!error) navigate('/grocery')
+      return
+    }
     const { quantity, unit } = suggestedPurchase(item)
     await addGroceryItem({
       name: item.name,
