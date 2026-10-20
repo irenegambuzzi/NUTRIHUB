@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { moveProblem, renameProblem } from './categoryEdit'
+import { deleteProblem, moveProblem, renameProblem } from './categoryEdit'
 
 const cats = [
   { id: 'o', name: 'Other', parent_id: null },
@@ -42,5 +42,23 @@ describe('moveProblem', () => {
     expect(moveProblem(cats, 'a', 'a', locked)).toBeTruthy()
     expect(moveProblem(cats, 'a', 'b', locked)).toBeTruthy()
     expect(moveProblem(cats, 'b', 'g', locked)).toBeTruthy()
+  })
+})
+
+describe('deleteProblem', () => {
+  const withHome = [...cats, { id: 'h', name: 'Home & Appliances', parent_id: null }, { id: 'hs', name: 'Home & Appliances', parent_id: 'g' }]
+
+  it("refuses Home & Appliances (Confirm purchase books durable items under it)", () => {
+    expect(deleteProblem(withHome, 'h', ['Home & Appliances'])).toBe('"Home & Appliances" can\'t be deleted.')
+  })
+
+  it('refuses any locked main category, but not a sub-category with the same name', () => {
+    expect(deleteProblem(withHome, 'o', ['Other'])).toMatch(/can't be deleted/)
+    expect(deleteProblem(withHome, 'hs', ['Home & Appliances'])).toBeNull()
+  })
+
+  it('lets other categories be deleted, and reports a missing one', () => {
+    expect(deleteProblem(withHome, 'a', ['Home & Appliances'])).toBeNull()
+    expect(deleteProblem(withHome, 'nope', [])).toBe('This category no longer exists.')
   })
 })

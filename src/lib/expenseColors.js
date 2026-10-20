@@ -103,12 +103,18 @@ export function pickColor(used = []) {
 // { id → '#RRGGBB' } for every category. `stored` is the saved rows
 // ({ category_id, color }). Categories without one are given colors
 // oldest first, so every phone works out the same ones.
-export function assignCategoryColors(categories, stored = []) {
-  const known = new Set(categories.map((c) => c.id))
+// With `subsFollowMain`, a sub-category has no color of its own: it shows
+// its main category's (for expenses). No color is worked out or saved for
+// it, and any color saved for it earlier is simply not used.
+export function assignCategoryColors(categories, stored = [], { subsFollowMain = false } = {}) {
+  const mainIds = new Set(categories.filter((c) => !c.parent_id).map((c) => c.id))
+  const followers = subsFollowMain ? categories.filter((c) => c.parent_id && mainIds.has(c.parent_id)) : []
+  const own = followers.length ? categories.filter((c) => !followers.includes(c)) : categories
+  const known = new Set(own.map((c) => c.id))
   const colors = new Map()
   for (const row of stored) if (known.has(row.category_id) && /^#[0-9A-F]{6}$/i.test(row.color ?? '')) colors.set(row.category_id, row.color.toUpperCase())
   const used = [...colors.values()]
-  const missing = categories
+  const missing = own
     .filter((c) => !colors.has(c.id))
     .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) || a.id.localeCompare(b.id))
   const fresh = []
@@ -118,6 +124,7 @@ export function assignCategoryColors(categories, stored = []) {
     colors.set(c.id, color)
     fresh.push({ category_id: c.id, color })
   }
+  for (const c of followers) colors.set(c.id, colors.get(c.parent_id))
   return { colors, fresh }
 }
 

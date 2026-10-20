@@ -39,7 +39,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full p-3 flex justify-between items-center gap-3 text-left">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color.hex }} />
+          <span data-dot="main" className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color.hex }} />
           {trip ? (
             <div className="min-w-0">
               <p className="font-bold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
@@ -81,7 +81,9 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
               {section.name && (
                 <p className="flex justify-between text-[10px] font-bold uppercase text-[var(--color-text-muted)] mb-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: styleFor(section.categoryId).hex }} />
+                    <span className="w-2.5 h-2.5 flex items-center justify-center shrink-0">
+                      <span data-dot="sub" className="w-[5px] h-[5px] rounded-full" style={{ background: styleFor(section.categoryId).hex }} />
+                    </span>
                     {section.name}
                   </span>
                   <span className="font-mono">€{section.total.toFixed(2)}</span>

@@ -116,7 +116,10 @@ export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 export const HIDDEN_CATEGORY_IDS = ['baby', 'automotive']
 
 // Display names that differ from what an older database may still have.
+// Used only while the stored name is still the original one below: once
+// someone renames the category in Manage, their name is shown.
 export const CATEGORY_NAME_OVERRIDES = { 'personal-care': 'Beauty Care' }
+export const CATEGORY_ORIGINAL_NAMES = { 'personal-care': 'Personal Care & Beauty' }
 
 export const PAID_BY_OPTIONS = [
   { value: 'irene', label: 'Irene' },

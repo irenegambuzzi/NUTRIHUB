@@ -33,3 +33,13 @@ export function moveProblem(categories, id, parentId, locked = []) {
   }
   return null
 }
+
+// Why `id` can't be deleted, or null when it can. `locked` is the list of
+// main category names that code needs (Other, Groceries, Home &
+// Appliances): they can't be deleted.
+export function deleteProblem(categories, id, locked = []) {
+  const category = categories.find((c) => c.id === id)
+  if (!category) return 'This category no longer exists.'
+  if (!category.parent_id && locked.includes(category.name)) return `"${category.name}" can't be deleted.`
+  return null
+}

@@ -8,10 +8,12 @@ import { assignCategoryColors, categoryStyle, UNCATEGORIZED_COLOR } from '../lib
 // categories (and the ones from before colors existed) get theirs worked
 // out the same way on every phone, then saved so they never change. If
 // the table isn't there yet, the worked-out colors are simply not saved.
-// Expense colors by default; income passes its own table.
-export function useCategoryColors(categories, { store = categoryColorStore, table = 'expense_category_colors' } = {}) {
+// Expense colors by default; income passes its own table. For expenses a
+// sub-category shows its main category's color (`subsFollowMain`); income
+// keeps a color of its own for each sub-category.
+export function useCategoryColors(categories, { store = categoryColorStore, table = 'expense_category_colors', subsFollowMain = false } = {}) {
   const { rows: stored, loaded, missing } = store.useRows()
-  const { colors, fresh } = useMemo(() => assignCategoryColors(categories, stored), [categories, stored])
+  const { colors, fresh } = useMemo(() => assignCategoryColors(categories, stored, { subsFollowMain }), [categories, stored, subsFollowMain])
 
   useEffect(() => {
     if (!loaded || missing || fresh.length === 0 || categories.length === 0 || isOffline()) return

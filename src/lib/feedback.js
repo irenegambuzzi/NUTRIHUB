@@ -71,7 +71,8 @@ export function toastSaveError(error, retry = null, message = SAVE_ERROR) {
   console.error(error)
   return showToast({
     message,
-    detail: error?.message ?? null,
+    // Not repeated when the message already says it.
+    detail: error?.message && error.message !== message ? error.message : null,
     tone: 'error',
     duration: 8000,
     action: retry ? { label: 'Retry', onClick: retry } : null,

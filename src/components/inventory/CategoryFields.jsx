@@ -13,6 +13,8 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
   const [adding, setAdding] = useState(null) // null | 'category' | 'sub'
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
+  // Why the typed name was refused (already used), shown under the field.
+  const [problem, setProblem] = useState('')
   const subs = subsByParent.get(categoryId) || []
 
   const create = async () => {
@@ -21,7 +23,9 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
     setBusy(true)
     const { data, error: addError } = adding === 'category' ? await onAddCategory(name) : await onAddSubcategory(categoryId, name)
     setBusy(false)
-    if (addError) return
+    // A name that is already used says where; other failures show a toast.
+    if (addError) return setProblem(addError.nameProblem ? addError.message : '')
+    setProblem('')
     onChange(adding === 'category' ? { categoryId: data.id, subcategoryId: '' } : { categoryId, subcategoryId: data.id })
     setAdding(null)
     setNewName('')
@@ -35,6 +39,7 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
           <Select
             value={adding === 'category' ? NEW : categoryId}
             onChange={(e) => {
+              setProblem('')
               if (e.target.value === NEW) return setAdding('category')
               setAdding(null)
               onChange({ categoryId: e.target.value, subcategoryId: '' })
@@ -58,6 +63,7 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
           <Select
             value={adding === 'sub' ? NEW : subcategoryId}
             onChange={(e) => {
+              setProblem('')
               if (e.target.value === NEW) return setAdding('sub')
               setAdding(null)
               onChange({ categoryId, subcategoryId: e.target.value })
@@ -82,7 +88,11 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
             autoFocus
             placeholder={adding === 'category' ? 'New category name' : 'New sub-category name'}
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
+            onChange={(e) => {
+              setNewName(e.target.value)
+              setProblem('')
+            }}
+            aria-invalid={Boolean(problem)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -101,6 +111,8 @@ export function CategoryFields({ categoryId, subcategoryId, parents, subsByParen
           </button>
         </div>
       )}
+
+      {adding && problem && <p className="text-[11px] text-rose-400">{problem}</p>}
 
       {labels && <CategoryKind kind="item" />}
 

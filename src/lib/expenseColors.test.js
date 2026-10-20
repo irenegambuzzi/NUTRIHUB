@@ -59,3 +59,46 @@ describe('category colors', () => {
     }
   })
 })
+
+describe('sub-categories take their main category\'s color (expenses)', () => {
+  const tree = [
+    { id: 'going', name: 'Going out', parent_id: null, created_at: '2026-01-01' },
+    { id: 'going:bars', name: 'Bars', parent_id: 'going', created_at: '2026-01-02' },
+    { id: 'going:food', name: 'Restaurants', parent_id: 'going', created_at: '2026-01-03' },
+    { id: 'home', name: 'Home', parent_id: null, created_at: '2026-01-04' },
+    { id: 'home:rent', name: 'Rent', parent_id: 'home', created_at: '2026-01-05' },
+  ]
+
+  it('shows a sub in its main\'s color and works out colors for mains only', () => {
+    const { colors, fresh } = assignCategoryColors(tree, [], { subsFollowMain: true })
+    expect(colors.get('going:bars')).toBe(colors.get('going'))
+    expect(colors.get('going:food')).toBe(colors.get('going'))
+    expect(colors.get('home:rent')).toBe(colors.get('home'))
+    expect(colors.get('going')).not.toBe(colors.get('home'))
+    expect(fresh.map((f) => f.category_id)).toEqual(['going', 'home'])
+  })
+
+  it('ignores colors saved for subs earlier (old expenses change too, the rows stay untouched)', () => {
+    const stored = [
+      { category_id: 'going', color: '#3B82F6' },
+      { category_id: 'going:bars', color: '#EF4444' },
+      { category_id: 'home', color: '#22C55E' },
+    ]
+    const { colors, fresh } = assignCategoryColors(tree, stored, { subsFollowMain: true })
+    expect(colors.get('going:bars')).toBe('#3B82F6')
+    expect(colors.get('home:rent')).toBe('#22C55E')
+    expect(fresh).toEqual([])
+  })
+
+  it('leaves income exactly as it is: every sub-category keeps a color of its own', () => {
+    const { colors, fresh } = assignCategoryColors(tree, [{ category_id: 'going:bars', color: '#EF4444' }])
+    expect(colors.get('going:bars')).toBe('#EF4444')
+    expect(new Set(colors.values()).size).toBe(5)
+    expect(fresh.map((f) => f.category_id)).toHaveLength(4)
+  })
+
+  it('gives a sub whose main is missing a color of its own', () => {
+    const { colors } = assignCategoryColors([{ id: 'x', name: 'X', parent_id: 'gone' }], [], { subsFollowMain: true })
+    expect(colors.get('x')).toMatch(/^#[0-9A-F]{6}$/)
+  })
+})

@@ -58,6 +58,7 @@ export function ExpenseCategoryManager({ value, onChange, categories, styleFor, 
       onRename={renameCategory}
       onMove={async (id, parentId) => clearIfPicked(id, await moveCategory(id, parentId))}
       onClose={onClose}
+      smallSubDots
     />
   )
 }

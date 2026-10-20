@@ -6,7 +6,8 @@ import { normName } from './grocery'
 //   memory   – what someone picked by hand for this name before (shared,
 //              supabase/011)
 //   pantry   – the pantry item with the same name
-//   keywords – the keyword list (lib/categoryGuess.js)
+//   keywords – the keyword list (lib/categoryGuess.js), only for categories
+//              that exist right now
 // Each layer: { source, suggest(name, context) → { categoryId,
 // subcategoryId } | null }. context: { memory (Map id → row),
 // pantryByName (Map), parents, subsByParent }.
@@ -25,7 +26,7 @@ export const SUGGESTERS = [
       return item?.category_id ? { categoryId: item.category_id, subcategoryId: item.subcategory_id } : null
     },
   },
-  { source: 'keywords', suggest: (name) => guessCategory(name) },
+  { source: 'keywords', suggest: (name, { parents, subsByParent } = {}) => guessCategory(name, { parents, subsByParent }) },
 ]
 
 // Slower layers, tried only when the ones above have no answer — the place
@@ -64,11 +65,12 @@ export async function suggestCategoryAsync(name, context) {
 
 // Whether a hand-picked category is worth remembering: not when it's what
 // the keywords already say and nothing else was remembered for the name.
-export function worthRemembering(name, categoryId, subcategoryId, memory) {
+// `available` is { parents, subsByParent }, as for the suggestion itself.
+export function worthRemembering(name, categoryId, subcategoryId, memory, available = null) {
   const key = normalizeName(name)
   if (!key || !categoryId) return false
   const existing = memory?.get(key)
   if (existing) return existing.category_id !== categoryId || (existing.subcategory_id ?? null) !== (subcategoryId ?? null)
-  const keywords = guessCategory(name)
+  const keywords = guessCategory(name, available)
   return !(keywords && keywords.categoryId === categoryId && (keywords.subcategoryId ?? null) === (subcategoryId ?? null))
 }

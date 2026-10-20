@@ -46,7 +46,7 @@ export function ExpensesPage() {
     moveCategory: moveIncomeCategory,
     deleteCategory: deleteIncomeCategory,
   } = useIncome(since)
-  const styleFor = useCategoryColors(categories)
+  const styleFor = useCategoryColors(categories, { subsFollowMain: true })
   const { byId: shopById, missing: shopsMissing } = useShops()
   const shopOf = (shopId) => (shopId ? shopById.get(shopId) : undefined)
   const incomeStyleFor = useCategoryColors(incomeCategories, { store: incomeCategoryColorStore, table: 'income_category_colors' })

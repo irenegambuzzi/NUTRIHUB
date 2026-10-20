@@ -23,7 +23,7 @@ export function useCategorySuggestions({ parents, subsByParent }) {
 
   const remember = useCallback(
     async (name, categoryId, subcategoryId = null) => {
-      if (isOffline() || !worthRemembering(name, categoryId, subcategoryId, memory)) return
+      if (isOffline() || !worthRemembering(name, categoryId, subcategoryId, memory, { parents, subsByParent })) return
       await followUp('the remembered category', async () => {
         const row = must(
           await supabase
@@ -35,7 +35,7 @@ export function useCategorySuggestions({ parents, subsByParent }) {
         categoryMemoryStore.upsertLocal([row])
       })
     },
-    [memory]
+    [memory, parents, subsByParent]
   )
 
   return { suggest, remember }

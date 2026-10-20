@@ -196,3 +196,42 @@ describe('guessCategory', () => {
     expect(guessCategory('Insetticida zanzare')).toEqual({ categoryId: 'household', subcategoryId: null })
   })
 })
+
+describe('guessCategory with the categories that exist now', () => {
+  const parentsOf = (...ids) => ids.map((id) => ({ id }))
+  const available = (parentIds, subs = {}) => ({ parents: parentsOf(...parentIds), subsByParent: new Map(Object.entries(subs).map(([p, list]) => [p, list.map((id) => ({ id }))])) })
+
+  it('answers as before when no categories are given', () => {
+    expect(guessCategory('pizza')).toEqual({ categoryId: 'frozen', subcategoryId: 'frozen:meals' })
+  })
+
+  it('suggests the sub-category when it exists', () => {
+    const live = available(['frozen'], { frozen: ['frozen:meals', 'frozen:ice-cream'] })
+    expect(guessCategory('pizza', live)).toEqual({ categoryId: 'frozen', subcategoryId: 'frozen:meals' })
+  })
+
+  it('falls back to the main category when only the sub-category is missing', () => {
+    const live = available(['frozen'], { frozen: ['frozen:ice-cream'] })
+    expect(guessCategory('pizza', live)).toEqual({ categoryId: 'frozen', subcategoryId: null })
+  })
+
+  it('falls back to the main when the sub-category was moved under another main', () => {
+    const live = available(['frozen', 'snacks'], { snacks: ['frozen:meals'] })
+    expect(guessCategory('pizza', live)).toEqual({ categoryId: 'frozen', subcategoryId: null })
+  })
+
+  it('ignores a rule whose main category is gone, silently', () => {
+    expect(guessCategory('pizza', available(['snacks']))).toBeNull()
+    expect(guessCategory('pizza', available([]))).toBeNull()
+  })
+
+  it('does not let a missing category turn a clear guess into "unclear"', () => {
+    // "tablet" is a medicine and an electronic device in the list: unclear with both.
+    expect(guessCategory('tablet')).toBeNull()
+    const ids = ['health', 'appliances', 'cleaning']
+    expect(guessCategory('tablet', available(ids))).toBeNull()
+    // With one of the two gone, the other decides.
+    expect(guessCategory('tablet', available(['health', 'cleaning']))).toMatchObject({ categoryId: 'health' })
+    expect(guessCategory('tablet', available(['appliances', 'cleaning']))).toMatchObject({ categoryId: 'appliances' })
+  })
+})

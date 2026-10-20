@@ -4,10 +4,12 @@ import { Button } from '../ui/Button'
 import { Input, Label, Select } from '../ui/Field'
 import { expenseUsageStore } from '../../lib/stores'
 import { moveProblem, renameProblem } from '../../lib/categoryEdit'
+import { DURABLE_EXPENSE_CATEGORY } from '../../data/constants'
 
-// Used by the grocery list (Groceries) and as the fallback for deleted
-// categories (Other), so neither can be removed here.
-const PROTECTED = ['Other', 'Groceries']
+// Used by the grocery list (Groceries), as the fallback for deleted
+// categories (Other) and for durable purchases (Home & Appliances), so none
+// of them can be removed here.
+const PROTECTED = ['Other', 'Groceries', DURABLE_EXPENSE_CATEGORY]
 
 const MOVE_UNSET = '__choose'
 
@@ -16,11 +18,12 @@ const MOVE_UNSET = '__choose'
 const EXPENSE_LOCKED = {
   Other: 'Where expenses go when a category is deleted.',
   Groceries: 'Used by the shopping list for purchases.',
-  'Home & Appliances': 'Used for home and appliance purchases.',
+  [DURABLE_EXPENSE_CATEGORY]: 'Used for home and appliance purchases.',
 }
 
 // Expense categories by default; income passes its own wording and usage
-// store — both work the same way.
+// store — both work the same way. `smallSubDots`: a sub-category's dot is
+// half the size of a main one's (expenses; income keeps equal dots).
 export function CategoryManager({
   categories,
   styleFor,
@@ -35,6 +38,7 @@ export function CategoryManager({
   usageStore = expenseUsageStore,
   protectedNames = PROTECTED,
   lockedHints = EXPENSE_LOCKED,
+  smallSubDots = false,
 }) {
   const [name, setName] = useState('')
   const [parentId, setParentId] = useState('')
@@ -94,12 +98,23 @@ export function CategoryManager({
     setError('')
   }
 
+  // The category's colour dot; a sub-category's is half the size, centred
+  // in the same space so the names line up.
+  const dot = (c, isSub) =>
+    isSub && smallSubDots ? (
+      <span className="w-2.5 h-2.5 flex items-center justify-center shrink-0">
+        <span data-dot="sub" className="w-[5px] h-[5px] rounded-full" style={{ background: styleFor(c.id).hex }} />
+      </span>
+    ) : (
+      <span data-dot="main" className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: styleFor(c.id).hex }} />
+    )
+
   const iconButton = 'text-[var(--color-icon-muted)] w-8 h-8 flex items-center justify-center disabled:opacity-30'
 
   const editRow = (c, isSub) => (
     <form key={c.id} onSubmit={saveEdit} className="flex items-center gap-2 py-1.5 text-xs">
       {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
-      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: styleFor(c.id).hex }} />
+      {dot(c, isSub)}
       {editing.mode === 'rename' ? (
         <Input autoFocus value={editing.value} onChange={(e) => setEditing({ ...editing, value: e.target.value })} aria-label={`New name for ${c.name}`} className="flex-1 min-w-0" />
       ) : (
@@ -135,7 +150,7 @@ export function CategoryManager({
       <div key={c.id} className="py-1.5 text-xs">
       <div className="flex items-center gap-2">
         {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
-        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: styleFor(c.id).hex }} />
+        {dot(c, isSub)}
         <span className="flex-1 min-w-0">
           <span className="block text-[var(--color-text)] truncate">{c.name}</span>
           <span className="block text-[10px] text-[var(--color-text-muted)]">
@@ -175,7 +190,7 @@ export function CategoryManager({
           </span>
         )}
       </div>
-      {hint && <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-[18px]">{hint} Locked: it can't be renamed or moved.</p>}
+      {hint && <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-[18px]">{hint} Locked: it can't be renamed, moved or deleted.</p>}
       </div>
     )
   }

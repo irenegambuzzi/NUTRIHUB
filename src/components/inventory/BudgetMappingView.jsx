@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, History, Info, X } from 'lucide-react'
+import { ChevronDown, History, Info, Settings2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Select } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { InventoryCategoryManager } from './InventoryCategoryManager'
 import { useExpenseCategories } from '../../hooks/useExpenses'
 import { FLOW_NOTICE, useFlow } from '../../hooks/useFlow'
 import { applyPastPurchases, previewPastPurchases, setBudgetMapping } from '../../hooks/useBudgetMap'
@@ -26,6 +27,7 @@ export function BudgetMappingView({ parents, subsByParent }) {
   const { rows: inventoryCategories } = inventoryCategoryStore.useRows()
   const [openIds, setOpenIds] = useState(() => new Set())
   const [preview, setPreview] = useState(null) // { changes, summary } | 'loading'
+  const [managing, setManaging] = useState(false)
 
   const ctx = useMemo(() => ({ mapRows: flow.mapRows, expenseCategories, inventoryCategories }), [flow.mapRows, expenseCategories, inventoryCategories])
   const byId = useMemo(() => new Map(expenseCategories.map((c) => [c.id, c])), [expenseCategories])
@@ -90,6 +92,10 @@ export function BudgetMappingView({ parents, subsByParent }) {
 
   return (
     <div className="space-y-3">
+      <Button type="button" variant="ghost" onClick={() => setManaging(true)} className="w-full text-xs min-h-9">
+        <Settings2 size={14} /> Manage categories
+      </Button>
+
       <Card className="space-y-1.5">
         <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Item category → Budget category</p>
         <p className="text-[11px] text-[var(--color-text-soft)] flex items-start gap-1.5">
@@ -137,6 +143,8 @@ export function BudgetMappingView({ parents, subsByParent }) {
           <History size={14} /> Apply the mapping to past purchases…
         </Button>
       </Card>
+
+      {managing && <InventoryCategoryManager onClose={() => setManaging(false)} />}
 
       {preview && <PastPurchasesPreview preview={preview} nameOf={nameOf} onClose={() => setPreview(null)} />}
     </div>

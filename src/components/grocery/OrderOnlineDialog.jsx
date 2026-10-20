@@ -25,7 +25,7 @@ export function OrderOnlineDialog({ entry, pantry, total, onClose }) {
   // The form takes its starting values once: it waits until the budget
   // categories and the mapping are loaded, so the prefilled one is right.
   const ready = categoriesLoaded && mapLoaded && itemCategoriesLoaded
-  const styleFor = useCategoryColors(categories)
+  const styleFor = useCategoryColors(categories, { subsFollowMain: true })
   const { mainCategories, subsOf } = useMemo(() => categoryTree(categories), [categories])
 
   const categoryId = useMemo(() => {

@@ -112,14 +112,31 @@ function findMatches(tokens) {
   return matches.filter((m) => !matches.some((o) => o.start <= m.start && o.end >= m.end && o.end - o.start > m.end - m.start))
 }
 
+// A rule as it applies to the categories that exist now. `available` is
+// { parents, subsByParent } (the categories on offer). A rule whose main
+// category is missing (deleted, merged away, never created) is dropped; if
+// only its sub-category is missing, it points to the main category alone.
+// Nothing is reported: a missing category just isn't suggested.
+function ruleFor(rule, available) {
+  if (!available?.parents) return rule
+  if (!available.parents.some((p) => p.id === rule.categoryId)) return null
+  if (!rule.subcategoryId) return rule
+  const subOk = (available.subsByParent?.get(rule.categoryId) || []).some((s) => s.id === rule.subcategoryId)
+  return subOk ? rule : { ...rule, subcategoryId: null }
+}
+
 // { categoryId, subcategoryId } or null. The most specific match wins:
 // more words beat fewer, and a word saying what the product is beats a
 // flavour or ingredient. If the best matches point to different main
-// categories, it's unclear and nothing is guessed.
-export function guessCategory(name) {
+// categories, it's unclear and nothing is guessed. With `available`, rules
+// for categories that don't exist are ignored *before* this is decided, so
+// a missing category can never make a clear answer "unclear".
+export function guessCategory(name, available = null) {
   const tokens = tokensOf(name)
   if (!tokens.length || tokens.join('').length < 2) return null
   const matches = findMatches(tokens)
+    .map((m) => ({ ...m, rule: ruleFor(m.rule, available) }))
+    .filter((m) => m.rule)
   if (!matches.length) return null
   const best = Math.max(...matches.map((m) => m.score))
   const top = matches.filter((m) => m.score === best).map((m) => m.rule)

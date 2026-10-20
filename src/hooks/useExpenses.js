@@ -2,6 +2,8 @@ import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
+import { deleteProblem } from '../lib/categoryEdit'
+import { DURABLE_EXPENSE_CATEGORY } from '../data/constants'
 import { updateRows } from '../lib/inventory'
 import { unitPriceFromTotal } from '../lib/pricing'
 import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore, orderStore, shopStore } from '../lib/stores'
@@ -66,6 +68,10 @@ export function useExpenseCategories() {
     async (id) => {
       const other = categories.find((c) => c.name === 'Other' && !c.parent_id)
       if (other?.id === id) return { error: { message: '"Other" holds moved expenses and can\'t be deleted.' } }
+      // Confirm purchase books durable items under "Home & Appliances", so
+      // it must always exist.
+      const locked = deleteProblem(categories, id, [DURABLE_EXPENSE_CATEGORY])
+      if (locked) return { error: { message: locked } }
       const ids = [id, ...categories.filter((c) => c.parent_id === id).map((c) => c.id)]
       const refreshAll = () => Promise.all([expenseCategoryStore.refresh(), refreshExpenses()])
       const result = await attempt(

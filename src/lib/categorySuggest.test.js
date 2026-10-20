@@ -35,6 +35,33 @@ describe('suggestCategory', () => {
   })
 })
 
+describe('suggestCategory when categories were deleted, merged or renamed', () => {
+  const live = (parentIds, subs = {}) => ({
+    parents: parentIds.map((id) => ({ id })),
+    subsByParent: new Map(parentIds.map((id) => [id, (subs[id] || []).map((s) => ({ id: s }))])),
+  })
+  const ctx = (c) => ({ memory: new Map(), pantryByName: new Map(), ...c })
+
+  it('suggests the main category alone when the sub-category is gone', () => {
+    expect(suggestCategory('Ice cream', ctx(live(['frozen'], { frozen: ['frozen:meals'] })))).toEqual({ categoryId: 'frozen', subcategoryId: null, source: 'keywords' })
+  })
+
+  it('gives no chip at all when the main category is gone', () => {
+    expect(suggestCategory('Ice cream', ctx(live(['snacks'])))).toBeNull()
+  })
+
+  it('does not throw for a rule pointing to a missing category', () => {
+    expect(() => suggestCategory('pizza', ctx(live([])))).not.toThrow()
+  })
+
+  it('remembers a hand pick that the filtered keywords would not have suggested', () => {
+    const available = live(['frozen'], { frozen: ['frozen:meals'] })
+    // The rule says frozen:ice-cream, but that sub is gone: the suggestion was "Frozen Food" alone.
+    expect(worthRemembering('Ice cream', 'frozen', null, new Map(), available)).toBe(false)
+    expect(worthRemembering('Ice cream', 'frozen', 'frozen:meals', new Map(), available)).toBe(true)
+  })
+})
+
 describe('suggestCategoryAsync', () => {
   afterEach(() => ASYNC_SUGGESTERS.splice(0))
 
