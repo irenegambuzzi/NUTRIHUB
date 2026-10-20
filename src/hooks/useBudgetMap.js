@@ -3,7 +3,7 @@ import { attempt, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { allExpenseStores, budgetMapStore } from '../lib/stores'
 import { loadBudgetContext } from '../lib/budgetContext'
-import { pastPurchaseChanges } from '../lib/budgetMap'
+import { pastPurchaseChanges, purchasedItemsByExpense } from '../lib/budgetMap'
 
 const refreshExpenses = () => Promise.all(allExpenseStores().map((s) => s.refresh()))
 
@@ -44,28 +44,23 @@ async function allRows(make) {
 const chunks = (ids, size = 150) => Array.from({ length: Math.ceil(ids.length / size) }, (_, i) => ids.slice(i * size, (i + 1) * size))
 
 // For "Apply the mapping to past purchases": every expense that came from a
-// purchase — a confirmed shopping trip, an item checked off on the list
+// purchase — a confirmed SHOP trip, an item checked off on the list
 // before trips, or an order made from the SHOP list — with the item
 // category of what was bought, and what the mapping would change. Nothing
 // is changed here. Returns { changes, summary } (see pastPurchaseChanges).
 export async function previewPastPurchases() {
   const ctx = await loadBudgetContext()
-  const itemByExpense = new Map()
+  const orderItems = []
   const orders = await supabase.from('orders').select('expense_id, pantry_item_id').not('expense_id', 'is', null).not('pantry_item_id', 'is', null)
   if (!orders.error && orders.data.length) {
     const pantryIds = [...new Set(orders.data.map((o) => o.pantry_item_id))]
     const items = new Map()
     for (const ids of chunks(pantryIds)) for (const p of must(await supabase.from('pantry_items').select('id, category_id, subcategory_id').in('id', ids))) items.set(p.id, p)
-    for (const o of orders.data) if (items.has(o.pantry_item_id)) itemByExpense.set(o.expense_id, items.get(o.pantry_item_id))
+    for (const o of orders.data) if (items.has(o.pantry_item_id)) orderItems.push([o.expense_id, items.get(o.pantry_item_id)])
   }
   const groceries = await allRows(() => supabase.from('grocery_items').select('id, expense_id, category_id, subcategory_id').not('expense_id', 'is', null).order('id'))
-  for (const g of groceries) itemByExpense.set(g.expense_id, { category_id: g.category_id, subcategory_id: g.subcategory_id })
-  // What was bought in a trip, as it was then (the list entry may be gone).
-  const tripItems = await allRows(() => supabase.from('shopping_trip_items').select('id, expense_id, grocery_snapshot').not('expense_id', 'is', null).order('id'))
-  for (const t of tripItems) {
-    const snap = t.grocery_snapshot ?? {}
-    itemByExpense.set(t.expense_id, { category_id: snap.category_id ?? null, subcategory_id: snap.subcategory_id ?? null })
-  }
+  const tripLines = await allRows(() => supabase.from('shopping_trip_items').select('id, expense_id, grocery_snapshot, line_kind').not('expense_id', 'is', null).order('id'))
+  const itemByExpense = purchasedItemsByExpense({ orderItems, groceries, tripLines })
   const expenses = []
   for (const ids of chunks([...itemByExpense.keys()])) expenses.push(...must(await supabase.from('expenses').select('id, category_id, amount, description, expense_date').in('id', ids)))
   return { ...pastPurchaseChanges(expenses, (id) => itemByExpense.get(id) ?? null, ctx), expenseCategories: ctx.expenseCategories }

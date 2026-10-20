@@ -34,8 +34,9 @@ function Sheet({ label, onClose, children }) {
   )
 }
 
-// The store of a whole shopping trip, changed at once: every expense of
-// the trip (in every budget category) and the trip itself. Undo is offered.
+// The store of a whole purchase, changed at once: every expense of the
+// purchase (in every budget category) and the purchase itself. Undo is
+// offered.
 export function TripStoreDialog({ trip, count, current, flowReady, onClose }) {
   const [shopId, setShopId] = useState(current ?? '')
   const [busy, setBusy] = useState(false)
@@ -46,9 +47,9 @@ export function TripStoreDialog({ trip, count, current, flowReady, onClose }) {
     if (!error) onClose()
   }
   return (
-    <Sheet label="Store of this trip" onClose={onClose}>
+    <Sheet label="Store of this purchase" onClose={onClose}>
       <p className="text-xs text-[var(--color-text-soft)]">
-        Shopping trip of {parseLocalDate(trip.trip_date).toLocaleDateString('en-GB')}: the store changes for all {count} of its expenses, in every budget category.
+        Purchase of {parseLocalDate(trip.trip_date).toLocaleDateString('en-GB')}: the store changes for all {count} of its expenses, in every budget category.
       </p>
       <ShopPicker value={shopId} onChange={setShopId} label="Bought at" />
       <div className="flex gap-2">
@@ -56,7 +57,7 @@ export function TripStoreDialog({ trip, count, current, flowReady, onClose }) {
           Cancel
         </Button>
         <Button type="button" className="flex-1" disabled={busy} onClick={save}>
-          {busy ? 'Saving…' : 'Save for the whole trip'}
+          {busy ? 'Saving…' : 'Save for the whole purchase'}
         </Button>
       </div>
     </Sheet>

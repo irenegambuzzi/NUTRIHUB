@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { budgetCategoryFor, defaultBudgetCategory, effectiveBudget, pastPurchaseChanges } from './budgetMap'
+import { budgetCategoryFor, defaultBudgetCategory, effectiveBudget, pastPurchaseChanges, purchasedItemsByExpense } from './budgetMap'
 import { pickDurableCategory } from './inventory'
 
 const expenseCategories = [
@@ -85,5 +85,26 @@ describe('applying the mapping to past purchases', () => {
   })
   it('with the default mapping changes nothing that was booked as before', () => {
     expect(pastPurchaseChanges(expenses.slice(0, 4), (id) => items[id] ?? null, ctx).changes).toEqual([])
+  })
+})
+
+describe('Apply the mapping to past purchases: what was bought', () => {
+  it('reads only SHOP lines: a MONEY line (budget chosen in the form) is never moved, not even through the SHOP entry it closed', () => {
+    const byExpense = purchasedItemsByExpense({
+      orderItems: [['e-order', { category_id: 'pet', subcategory_id: null }]],
+      groceries: [
+        { expense_id: 'e-shop', category_id: 'dairy', subcategory_id: null },
+        { expense_id: 'e-money', category_id: 'dairy', subcategory_id: null },
+      ],
+      tripLines: [
+        { expense_id: 'e-shop', line_kind: 'shop', grocery_snapshot: { category_id: 'dairy', subcategory_id: 'dairy:milk' } },
+        { expense_id: 'e-old', grocery_snapshot: { category_id: 'bakery' } },
+        { expense_id: 'e-money', line_kind: 'money', grocery_snapshot: { category_id: 'dairy' } },
+        { expense_id: 'e-dinner', line_kind: 'money', grocery_snapshot: { category_id: null } },
+      ],
+    })
+    expect([...byExpense.keys()].sort()).toEqual(['e-old', 'e-order', 'e-shop'])
+    expect(byExpense.get('e-shop')).toEqual({ category_id: 'dairy', subcategory_id: 'dairy:milk' })
+    expect(byExpense.get('e-old')).toEqual({ category_id: 'bakery', subcategory_id: null })
   })
 })

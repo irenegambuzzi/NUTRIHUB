@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { ExpenseForm } from '../components/expenses/ExpenseForm'
+import { PurchaseForm } from '../components/expenses/PurchaseForm'
+import { SelectExpenses } from '../components/expenses/MergeDialog'
 import { MoneyExplorer } from '../components/expenses/MoneyExplorer'
 import { ExpenseRow, TripRow } from '../components/expenses/EntryRows'
 import { BulkStoreDialog, TripStoreDialog } from '../components/expenses/StoreDialogs'
 import { useFlow } from '../hooks/useFlow'
-import { ExpenseGroup } from '../components/expenses/ExpenseGroup'
+import { ExpenseGroup, PurchaseGroup } from '../components/expenses/ExpenseGroup'
 import { CategoryTotals } from '../components/expenses/CategoryTotals'
 import { IncomeSection } from '../components/expenses/IncomeSection'
 import { MoneySummary } from '../components/expenses/MoneySummary'
@@ -14,25 +16,26 @@ import { useExpenses } from '../hooks/useExpenses'
 import { useIncome } from '../hooks/useIncome'
 import { useCategoryColors } from '../hooks/useCategoryColors'
 import { useShops } from '../hooks/useShops'
-import { incomeCategoryColorStore, tripStore } from '../lib/stores'
-import { bundleTrips, categoryTree, tripShopId } from '../lib/moneyList'
-import { reopenTrip } from '../hooks/usePurchase'
+import { incomeCategoryColorStore, orderStore, tripItemStore, tripStore } from '../lib/stores'
+import { bundleTrips, categoryTree, groupPurchases, purchasePart, tripShopId } from '../lib/moneyList'
+import { askUndoPurchase, reopenTrip } from '../hooks/usePurchase'
+import { splitPurchase } from '../hooks/useMerge'
 import { askDialog } from '../lib/feedback'
 import { PersonSelector } from '../components/expenses/PersonSelector'
 import { Button } from '../components/ui/Button'
 import { usePersonFilter } from '../lib/personFilter'
 import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
-import { newestFirst, newestGroupFirst } from '../lib/recency'
+import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
-import { Plus, Store, X } from 'lucide-react'
+import { ListChecks, Plus, Store, X } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
 
 export function ExpensesPage() {
   // Data is loaded from `since`; looking further back moves it earlier.
   const [since, setSince] = useState(currentExpensesSince)
-  const { expenses, categories, addExpense, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
+  const { expenses, categories, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
   const {
     income,
     missing: incomeMissing,
@@ -50,38 +53,69 @@ export function ExpensesPage() {
   const { byId: shopById, missing: shopsMissing } = useShops()
   const shopOf = (shopId) => (shopId ? shopById.get(shopId) : undefined)
   const incomeStyleFor = useCategoryColors(incomeCategories, { store: incomeCategoryColorStore, table: 'income_category_colors' })
-  // Shopping trips (supabase/014): with supabase/021 an expense list shows
-  // each trip's expenses as one row per budget category.
+  // Purchases (supabase/014; with supabase/021 and 023): a SHOP trip, a
+  // MONEY purchase or merged expenses — one row each in the expense list.
   const flow = useFlow()
   const { rows: trips } = tripStore.useRows()
+  const { rows: tripLines } = tripItemStore.useRows()
+  const { rows: orders } = orderStore.useRows()
   const tripById = useMemo(() => new Map(trips.map((t) => [t.id, t])), [trips])
+  const lineByExpense = useMemo(() => new Map(tripLines.filter((l) => l.expense_id).map((l) => [l.expense_id, l])), [tripLines])
+  const orderExpenseIds = useMemo(() => new Set(orders.map((o) => o.expense_id).filter(Boolean)), [orders])
   const [tripStoreFor, setTripStoreFor] = useState(null) // a trip
   const [bulkStore, setBulkStore] = useState(false)
-  const tripOf = (tripId, items) => tripById.get(tripId) ?? { id: tripId, trip_date: items[0].expense_date, shop_id: null }
+  const [selecting, setSelecting] = useState(false)
+  const tripOf = (tripId, items) => tripById.get(tripId) ?? { id: tripId, trip_date: items[0].expense_date, shop_id: null, source: 'shop' }
+  // Every loaded expense of a purchase (the whole purchase, whatever the
+  // filters show).
+  const tripExpenses = (tripId) => expenses.filter((e) => e.trip_id === tripId)
 
-  // An expense from a confirmed purchase: deleting it alone would leave the
-  // purchase's stock and history behind, so reopening the purchase (which
-  // undoes all of it) is offered first.
+  // An expense of a purchase: deleting it alone would leave the rest of
+  // the purchase as it is, so undoing the purchase the way it was made is
+  // offered first — Reopen (SHOP), Undo the whole purchase (MONEY), or
+  // for a merged expense taking it out of the purchase (Split), which
+  // never deletes it.
   const removeExpense = async (expense) => {
     if (!expense.trip_id) return deleteExpense(expense.id)
+    const source = expense.merged_at ? 'merged' : tripById.get(expense.trip_id)?.source ?? 'shop'
+    const name = `"${expense.description || 'This expense'}"`
+    const ask = {
+      shop: {
+        message: `${name} was recorded when a purchase was confirmed. Deleting only the expense leaves that purchase's stock and history as they are.`,
+        first: { value: 'reopen', label: 'Reopen purchase', hint: 'Undoes its stock, history and expenses; the items go back to the cart.' },
+      },
+      money: {
+        message: `${name} is part of a purchase entered in MONEY. Deleting only the expense leaves the rest of the purchase (and its HOME stock) as it is.`,
+        first: { value: 'undo', label: 'Undo the whole purchase', hint: 'Deletes all its expenses and takes back the stock it added to HOME.' },
+      },
+      merged: {
+        message: `${name} was merged into a purchase. Taking it out keeps it as a single expense, with the store it had before.`,
+        first: { value: 'split', label: 'Take it out of the purchase (Split)', hint: 'Nothing is deleted.' },
+      },
+    }[source]
     const answer = await askDialog({
-      title: 'Part of a confirmed purchase',
-      message: `"${expense.description || 'This expense'}" was recorded when a purchase was confirmed. Deleting only the expense leaves that purchase's stock and history as they are.`,
+      title: 'Part of a purchase',
+      message: ask.message,
       fields: [
         {
           name: 'how',
           type: 'choice',
-          value: 'reopen',
-          options: [
-            { value: 'reopen', label: 'Reopen purchase', hint: 'Undoes its stock, history and expenses; the items go back to the cart.' },
-            { value: 'expense', label: 'Delete expense only', hint: 'The purchase stays, marked incomplete in Receipts.' },
-          ],
+          value: ask.first.value,
+          options: [ask.first, { value: 'expense', label: 'Delete expense only', hint: source === 'merged' ? 'The expense is deleted; the rest of the purchase stays.' : 'The purchase stays, marked incomplete in Receipts.' }],
         },
       ],
       confirmLabel: 'Continue',
     })
     if (answer?.how === 'reopen') await reopenTrip(expense.trip_id)
+    else if (answer?.how === 'undo') await reopenTrip(expense.trip_id, null, 'money')
+    else if (answer?.how === 'split') await splitPurchase(expense.trip_id, [expense.id])
     else if (answer?.how === 'expense') await deleteExpense(expense.id)
+  }
+
+  // Reopen / Undo purchase / Split for a whole purchase, from its row.
+  const undoPurchase = (trip) => {
+    const all = tripExpenses(trip.id)
+    return askUndoPurchase(trip, { count: all.length, total: purchasePart(all, all).fullTotal })
   }
 
   const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} onEdit={setEditingExpense} onDelete={removeExpense} />
@@ -127,41 +161,50 @@ export function ExpensesPage() {
   const incomeTotal = sumAmounts(filteredIncome)
 
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
-  // One row per main category per day (e.g. one "Groceries" row for a
-  // shopping trip). The group with the most recent entry comes first (the
-  // newest day, and within a day the one entered last), and the expenses
-  // inside a group are newest first too. With supabase/021 a shopping
-  // trip is its own row in each budget category it touches ("Conad ·
-  // 16/10 · 10 items"), so every category total stays right.
-  const expenseGroups = (entries) => {
-    const map = new Map()
-    for (const e of [...entries].sort(newestFirst(expenseDate))) {
-      const main = mainOf(e.category_id)
-      const tripId = flow.ready && e.trip_id ? e.trip_id : null
-      const key = tripId ? `trip|${tripId}|${main?.id ?? 'none'}` : `${e.expense_date}|${main?.id ?? 'none'}`
-      if (!map.has(key)) map.set(key, { key, date: e.expense_date, main, items: [], total: 0, tripId })
-      const g = map.get(key)
-      g.items.push(e)
-      g.total += Number(e.amount || 0)
-    }
-    return [...map.values()]
-      .sort(newestGroupFirst(expenseDate, (g) => g.items))
-      .map((g) => (
-        <ExpenseGroup
+  // One row per purchase (SHOP trip, MONEY purchase or merged expenses,
+  // with supabase/021), and the other expenses one row per main category
+  // per day. The group with the most recent entry comes first (the newest
+  // day, and within a day the one entered last), and the expenses inside a
+  // group are newest first too. With a category filter on, a purchase row
+  // shows only that category's part "of total €80".
+  const subNameOf = (main) => (categoryId) => (categoryId && categoryId !== main?.id ? categories.find((c) => c.id === categoryId)?.name : null)
+  const expenseGroups = (entries) =>
+    groupPurchases(entries, { mainOf, tripsOn: flow.ready }).map((g) => {
+      if (!g.tripId) {
+        return (
+          <ExpenseGroup
+            key={g.key}
+            group={g}
+            color={styleFor(g.main?.id)}
+            styleFor={styleFor}
+            shopOf={shopOf}
+            subName={subNameOf(g.main)}
+            onEdit={setEditingExpense}
+            onDelete={removeExpense}
+          />
+        )
+      }
+      const trip = tripOf(g.tripId, g.items)
+      const all = tripExpenses(g.tripId)
+      return (
+        <PurchaseGroup
           key={g.key}
           group={g}
-          trip={g.tripId ? tripOf(g.tripId, g.items) : null}
-          tripShop={g.tripId ? shopOf(tripShopId(g.items, tripById.get(g.tripId))) : null}
-          onChangeTripStore={setTripStoreFor}
-          color={styleFor(g.main?.id)}
+          trip={trip}
+          shop={shopOf(tripShopId(all.length ? all : g.items, tripById.get(g.tripId)))}
+          fullTotal={purchasePart(g.items, all).fullTotal}
+          mainOf={mainOf}
+          subName={(categoryId) => (categoryId && mainOf(categoryId)?.id !== categoryId ? categories.find((c) => c.id === categoryId)?.name : null)}
           styleFor={styleFor}
-          shopOf={shopOf}
-          subName={(categoryId) => (categoryId && categoryId !== g.main?.id ? categories.find((c) => c.id === categoryId)?.name : null)}
+          lineOf={(e) => lineByExpense.get(e.id) ?? null}
           onEdit={setEditingExpense}
           onDelete={removeExpense}
+          onChangeStore={setTripStoreFor}
+          onUndo={undoPurchase}
+          onSplitMerged={(t) => splitPurchase(t.id)}
         />
-      ))
-  }
+      )
+    })
 
   return (
     <div className="space-y-6">
@@ -213,6 +256,11 @@ export function ExpensesPage() {
             <span className="text-xs font-mono font-bold text-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm">
               €{total.toFixed(2)}
             </span>
+            {!addingExpense && !selecting && flow.ready && (
+              <Button variant="ghost" onClick={() => setSelecting(true)} className="px-3 py-1.5 text-xs">
+                <ListChecks size={14} /> Select
+              </Button>
+            )}
             {!addingExpense && (
               <Button variant="ghost" onClick={() => setAddingExpense(true)} className="px-3 py-1.5 text-xs">
                 <Plus size={14} /> Add expense
@@ -230,11 +278,10 @@ export function ExpensesPage() {
         )}
 
         {addingExpense && (
-          <ExpenseForm
-            categories={categories}
+          <PurchaseForm
+            expenseCategories={categories}
             mainCategories={mainCategories}
             subsOf={subsOf}
-            onSubmit={addExpense}
             addCategory={addCategory}
             renameCategory={renameCategory}
             moveCategory={moveCategory}
@@ -246,39 +293,52 @@ export function ExpensesPage() {
 
         <CategoryTotals totals={totals} total={total} styleFor={styleFor} />
 
-        <MoneyExplorer
-          entries={filteredExpenses}
-          dateOf={expenseDate}
-          categoryOf={mainOf}
-          period={period}
-          offset={offset}
-          scope={paidByFilter}
-          styleFor={styleFor}
-          plural="expenses"
-          shopById={shopById}
-          shopsMissing={shopsMissing}
-          renderDefault={expenseGroups}
-          renderEntry={renderExpense}
-          renderEntries={
-            flow.ready
-              ? (items) =>
-                  bundleTrips(items).map((part) =>
-                    part.entry ? (
-                      renderExpense(part.entry)
-                    ) : (
-                      <TripRow
-                        key={part.key}
-                        part={part}
-                        trip={tripOf(part.tripId, part.items)}
-                        shop={shopOf(tripShopId(part.items, tripById.get(part.tripId)))}
-                        renderEntry={renderExpense}
-                        onChangeTripStore={setTripStoreFor}
-                      />
+        {selecting ? (
+          <SelectExpenses
+            expenses={sortNewestFirst(filteredExpenses, expenseDate)}
+            orderExpenseIds={orderExpenseIds}
+            names={namesOf}
+            shopOf={shopOf}
+            trips={trips}
+            allExpenses={expenses}
+            onDone={() => setSelecting(false)}
+          />
+        ) : (
+          <MoneyExplorer
+            entries={filteredExpenses}
+            dateOf={expenseDate}
+            categoryOf={mainOf}
+            period={period}
+            offset={offset}
+            scope={paidByFilter}
+            styleFor={styleFor}
+            plural="expenses"
+            shopById={shopById}
+            shopsMissing={shopsMissing}
+            renderDefault={expenseGroups}
+            renderEntry={renderExpense}
+            renderEntries={
+              flow.ready
+                ? (items) =>
+                    bundleTrips(items).map((part) =>
+                      part.entry ? (
+                        renderExpense(part.entry)
+                      ) : (
+                        <TripRow
+                          key={part.key}
+                          part={part}
+                          trip={tripOf(part.tripId, part.items)}
+                          shop={shopOf(tripShopId(part.items, tripById.get(part.tripId)))}
+                          fullTotal={purchasePart(part.items, tripExpenses(part.tripId)).fullTotal}
+                          renderEntry={renderExpense}
+                          onChangeTripStore={setTripStoreFor}
+                        />
+                      )
                     )
-                  )
-              : null
-          }
-        />
+                : null
+            }
+          />
+        )}
 
         {tripStoreFor && (
           <TripStoreDialog

@@ -227,3 +227,28 @@ export async function setExpensesShop(ids, shopId) {
   showToast({ message: `Store set for ${ids.length} expense${ids.length === 1 ? '' : 's'}`, duration: 8000, action: { label: 'Undo', onClick: undo } })
   return result
 }
+
+// One plain expense from the purchase form (a single row that is only an
+// expense): saved exactly like the old "Add expense". `id` is made once per
+// form, so pressing Save again can't save it twice. Undo deletes it again.
+export async function addExpenseOnce({ id, categoryId, amount, description, paidBy, expenseDate, shopId }) {
+  const result = await attempt(
+    async () => {
+      const row = { id, category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId) }
+      const rows = must(await supabase.from('expenses').upsert([row], { onConflict: 'id', ignoreDuplicates: true }).select())
+      allExpenseStores().forEach((s) => s.upsertLocal(rows))
+    },
+    { retry: false }
+  )
+  if (result.error) return result
+  const undo = () =>
+    attempt(
+      async () => {
+        must(await supabase.from('expenses').delete().eq('id', id))
+        allExpenseStores().forEach((s) => s.removeLocal([id]))
+      },
+      { onFail: refreshExpenses }
+    )
+  showToast({ message: `Expense saved · €${Number(amount).toFixed(2)}`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  return result
+}

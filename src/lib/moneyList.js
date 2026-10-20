@@ -137,3 +137,49 @@ export function tripShopId(items, trip) {
   if (ids.size === 1 && [...ids][0]) return [...ids][0]
   return trip?.shop_id ?? null
 }
+
+const round2 = (n) => Math.round(n * 100) / 100
+
+// The plain expense list: one group per purchase (SHOP trip, MONEY
+// purchase or merged expenses alike, when `tripsOn`), and the other
+// expenses one group per day and main category. The group with the most
+// recent expense comes first; inside a group the newest first.
+//   → [{ key, date, main, items, total, tripId }]  (main: null for a purchase)
+export function groupPurchases(entries, { mainOf, tripsOn = true }) {
+  const dateOf = (e) => e.expense_date
+  const map = new Map()
+  for (const e of [...entries].sort(newestFirst(dateOf))) {
+    const tripId = tripsOn && e.trip_id ? e.trip_id : null
+    const main = tripId ? null : mainOf(e.category_id)
+    const key = tripId ? `trip|${tripId}` : `${e.expense_date}|${main?.id ?? 'none'}`
+    if (!map.has(key)) map.set(key, { key, date: e.expense_date, main, items: [], total: 0, tripId })
+    const g = map.get(key)
+    g.items.push(e)
+    g.total = round2(g.total + amountOf(e))
+  }
+  return [...map.values()].sort(newestGroupFirst(dateOf, (g) => g.items))
+}
+
+// An opened purchase: its expenses by main category, each with a subtotal,
+// A–Z with "Uncategorized" last. `mainOf(categoryId)` → { id, name } | null.
+export function purchaseSections(items, mainOf) {
+  const map = new Map()
+  for (const e of items) {
+    const main = mainOf(e.category_id)
+    const key = categoryKeyOf(main)
+    if (!map.has(key)) map.set(key, { key, main, name: main?.name || 'Uncategorized', items: [], total: 0 })
+    const s = map.get(key)
+    s.items.push(e)
+    s.total = round2(s.total + amountOf(e))
+  }
+  return [...map.values()].sort((a, b) => (a.main ? 0 : 1) - (b.main ? 0 : 1) || a.name.localeCompare(b.name))
+}
+
+// With a category filter on, a purchase row shows only that category's
+// part: `items` are the expenses shown, `all` every loaded expense of the
+// purchase. { total: the part, fullTotal, partial }.
+export function purchasePart(items, all) {
+  const total = round2(sum(items))
+  const fullTotal = round2(sum(all.length ? all : items))
+  return { total, fullTotal, partial: fullTotal !== total }
+}

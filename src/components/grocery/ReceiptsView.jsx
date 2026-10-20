@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, ListChecks, RotateCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import { AlertTriangle, ListChecks, RotateCcw, ShoppingCart, Split, Trash2 } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { PhotoPicker, PhotoThumb, PhotoViewer } from './ReceiptPhoto'
 import { PriceCheck } from './PriceCheck'
 import { deleteExpenses, setReceiptLineAmount, useCategoryExpenses, useExpenseCategories } from '../../hooks/useExpenses'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
-import { deleteTripRecord, reopenTrip } from '../../hooks/usePurchase'
-import { goneSummary, tripState } from '../../lib/trips'
+import { askUndoPurchase, deleteTripRecord } from '../../hooks/usePurchase'
+import { goneSummary, purchaseUndo, tripState } from '../../lib/trips'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
-import { money } from '../../lib/pricing'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { groceryStore, pantryStore, tripExpenseStore, tripItemStore, tripStore } from '../../lib/stores'
 
@@ -80,23 +79,18 @@ export function ReceiptsView() {
     }
   }
 
-  // Undoes what's left of the purchase; parts deleted by hand are skipped
-  // and named afterwards.
-  const reopen = async ({ trip, items, total, state }) => {
-    const gone = goneSummary(state.lines)
-    const ok = await confirmDialog({
-      title: 'Reopen this purchase?',
-      message: `The ${items.length} item${items.length === 1 ? '' : 's'} (${money(total)}) go back to the cart, and the stock, history and expenses from this purchase are undone.${gone ? ` ${gone}` : ''}`,
-      confirmLabel: 'Reopen',
-    })
-    if (ok) await reopenTrip(trip.id, gone)
-  }
+  // Undoes what's left of the purchase the way it was made — Reopen (SHOP),
+  // Undo purchase (MONEY) or Split (merged expenses, never deleted); parts
+  // deleted by hand are skipped and named afterwards.
+  const reopen = ({ trip, items, total, state }) => askUndoPurchase(trip, { count: items.length + state.merged.length, total, gone: goneSummary(state.lines) })
 
   // Removes only the record of the purchase; stock and expenses stay.
-  const deleteRecord = async ({ trip, items }) => {
+  // Expenses merged into it become single expenses again first.
+  const deleteRecord = async ({ trip, items, state }) => {
+    const merged = state.merged.length
     const ok = await confirmDialog({
       title: 'Delete this purchase record?',
-      message: `Only the record of this purchase (${items.length} item${items.length === 1 ? '' : 's'}) is deleted — its stock, history and expenses stay as they are. You can undo it for a few seconds.`,
+      message: `Only the record of this purchase (${items.length} item${items.length === 1 ? '' : 's'}) is deleted — its stock, history and expenses stay as they are.${merged ? ` The ${merged} expense${merged === 1 ? '' : 's'} merged into it become single expenses again, with their own store.` : ''} You can undo it for a few seconds.`,
       confirmLabel: 'Delete record',
     })
     if (ok) await deleteTripRecord(trip)
@@ -181,6 +175,15 @@ export function ReceiptsView() {
                         <span className="font-mono">€{Number(e.amount).toFixed(2)}</span>
                       </div>
                     ))}
+                {trip &&
+                  receipt.state.merged.map((e) => (
+                    <div key={e.id} className="flex justify-between gap-2 text-xs text-[var(--color-text-soft)]">
+                      <span className="min-w-0">
+                        {e.description || 'Expense'} <span className="text-[10px] text-[var(--color-text-muted)]">· merged</span>
+                      </span>
+                      <span className="font-mono shrink-0">€{Number(e.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
                 {!trip && list.length === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">No checked-off items on this day.</p>}
               </div>
 
@@ -194,16 +197,18 @@ export function ReceiptsView() {
                 <div className="mt-2 flex flex-wrap gap-4">
                   <button
                     onClick={() => reopen(receipt)}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                    className="min-h-9 flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
                   >
-                    <RotateCcw size={12} /> Reopen purchase
+                    {purchaseUndo(trip.source).kind === 'split' ? <Split size={12} /> : <RotateCcw size={12} />} {purchaseUndo(trip.source).label}
                   </button>
-                  <button
-                    onClick={() => deleteRecord(receipt)}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-400"
-                  >
-                    <Trash2 size={12} /> Delete record
-                  </button>
+                  {purchaseUndo(trip.source).kind !== 'split' && (
+                    <button
+                      onClick={() => deleteRecord(receipt)}
+                      className="min-h-9 flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-400"
+                    >
+                      <Trash2 size={12} /> Delete record
+                    </button>
+                  )}
                 </div>
               )}
             </Card>

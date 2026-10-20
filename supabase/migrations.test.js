@@ -1,10 +1,15 @@
 // Runs every migration in a real Postgres (PGlite) and checks the shopping
 // trip functions from 014: confirming a cart all at once, sending the same
 // confirmation twice, a confirmation that fails half way, and reopening.
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
 import fs from 'node:fs'
 import path from 'node:path'
+
+// The app's own payload for a purchase typed in MONEY (round 4), sent to
+// the real function below.
+vi.mock('../src/lib/supabaseClient', () => ({ supabase: {} }))
+const { emptyRow, listEntryFor, moneyPurchasePayload, rowLine } = await import('../src/lib/moneyPurchase.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -1697,6 +1702,120 @@ describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, c
       expect(await row(`select source, expense_category_id from category_memory where id = 'vet visit 023'`)).toEqual({ source: 'ai', expense_category_id: pets })
       expect((await row(`select source from category_memory where id = 'basil seeds 023'`)).source).toBe('user')
       expect(await fails(`update category_memory set source = 'robot' where id = 'vet visit 023'`)).toMatch(/check/)
+    })
+  })
+
+  describe('round 4: the MONEY purchase form, as the app builds it', () => {
+    let groceries, toiletries, milk, entry, cartEntry, chips, lays, tuc
+    const form = (rows) => rows.map((r, i) => ({ ...emptyRow(i + 1), ...r }))
+    const pantry = async () => rows(`select id, name, unit, current_stock::float as current_stock, min_stock::float as min_stock, is_group, group_id, one_time, quantity_per_pack, packaging_unit from pantry_items`)
+    const linesFor = async (formRows) => {
+      const items = await pantry()
+      const withVariants = items.map((p) => (p.is_group ? { ...p, variants: items.filter((v) => v.group_id === p.id) } : p))
+      return form(formRows).map((r) => rowLine(r, withVariants))
+    }
+    const save = async (id, lines, extra = {}) => {
+      const grocery = await rows(`select id, name, pantry_item_id, completed, in_cart from grocery_items`)
+      const payload = moneyPurchasePayload({
+        id,
+        date: '2026-10-20',
+        at: '2026-10-20T10:00:00Z',
+        paidBy: 'shared',
+        lines,
+        budgetFor: (line) => (line.row.categoryId === 'toiletries' ? toiletries : groceries),
+        entryOf: (line) => listEntryFor(line.row.name, line.target, grocery),
+        ...extra,
+      })
+      return asMember(() => row(`select * from confirm_shopping_trip($1)`, [payload]))
+    }
+    const reopen = (id) => asMember(async () => (await row(`select reopen_shopping_trip($1) as n`, [id])).n)
+
+    beforeAll(async () => {
+      await asMember(async () => {
+        groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+        toiletries = (await row(`insert into expense_categories (name) values ('Toiletries R4') returning id`)).id
+        milk = (await row(`insert into pantry_items (name, unit, current_stock, min_stock, category_id) values ('Milk R4', 'btl', 3, 2, 'dairy') returning id`)).id
+        entry = (await row(`insert into grocery_items (name, quantity, unit, pantry_item_id, auto_generated, category_id) values ('Milk R4', 1, 'btl', $1, true, 'dairy') returning id`, [milk])).id
+        chips = (await row(`insert into pantry_items (name, unit, current_stock, min_stock, is_group, category_id) values ('Chips R4', 'pack', 0, 2, true, 'snacks') returning id`)).id
+        lays = (await row(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Lays R4', 'pack', 2, $1, 'snacks') returning id`, [chips])).id
+        tuc = (await row(`insert into pantry_items (name, unit, current_stock, group_id, category_id) values ('Tuc R4', 'pack', 0, $1, 'snacks') returning id`, [chips])).id
+      })
+    })
+
+    it('two rows with Add to HOME off: one purchase, two expenses, nothing in HOME; Undo leaves nothing', async () => {
+      const id = '24000000-0000-0000-0000-000000000001'
+      const start = await snapshot()
+      const lines = await linesFor([
+        { name: 'Test bread R4', priceText: '2', categoryId: 'bakery', addToHome: false },
+        { name: 'Test shampoo R4', priceText: '4', categoryId: 'toiletries', addToHome: false },
+      ])
+      const t = await save(id, lines)
+      expect({ source: t.source, total: Number(t.total) }).toEqual({ source: 'money', total: 6 })
+      expect(await rows(`select description, amount::float as amount, category_id, paid_by from expenses where trip_id = $1 order by amount`, [id])).toEqual([
+        { description: 'Test bread R4', amount: 2, category_id: groceries, paid_by: 'shared' },
+        { description: 'Test shampoo R4', amount: 4, category_id: toiletries, paid_by: 'shared' },
+      ])
+      expect((await row(`select count(*)::int as n from pantry_items where name like 'Test % R4'`)).n).toBe(0)
+      expect(await reopen(id)).toBe(2)
+      expect(await snapshot()).toEqual(start)
+    })
+
+    it('an existing HOME item: its stock goes up, its SHOP entry "to buy" leaves the list; Undo puts the stock back exactly, no History left', async () => {
+      const id = '24000000-0000-0000-0000-000000000002'
+      const start = await snapshot()
+      const lines = await linesFor([{ name: 'milk r4', priceText: '2,40', quantityText: '2', unit: 'btl', categoryId: 'dairy' }])
+      expect(lines[0]).toMatchObject({ home: true, add: 2, isNew: false })
+      await save(id, lines)
+      expect(await stockOf(milk)).toBe(5)
+      expect(await row(`select completed, trip_id from grocery_items where id = $1`, [entry])).toEqual({ completed: true, trip_id: id })
+      expect((await row(`select count(*)::int as n from stock_logs where item_id = $1`, [milk])).n).toBe(1)
+      // Pressed again (same id): saved once.
+      await save(id, lines)
+      expect(await stockOf(milk)).toBe(5)
+      expect((await row(`select count(*)::int as n from expenses where trip_id = $1`, [id])).n).toBe(1)
+
+      expect(await reopen(id)).toBe(1)
+      expect(await stockOf(milk)).toBe(3)
+      expect((await row(`select count(*)::int as n from stock_logs where item_id = $1`, [milk])).n).toBe(0)
+      expect(await row(`select completed, in_cart from grocery_items where id = $1`, [entry])).toEqual({ completed: false, in_cart: false })
+      expect(await snapshot()).toEqual(start)
+    })
+
+    it('an entry in the cart is never closed; a group gives its stock to the chosen variant, never to the group', async () => {
+      const id = '24000000-0000-0000-0000-000000000003'
+      await db.query(`update grocery_items set in_cart = true where id = $1`, [entry])
+      cartEntry = entry
+      const lines = await linesFor([
+        { name: 'Milk R4', priceText: '1.20', unit: 'btl', categoryId: 'dairy' },
+        { name: 'Chips R4', priceText: '1.99', unit: 'pack', categoryId: 'snacks' },
+      ])
+      // The group's first variant at 0 is taken until the user picks.
+      expect(lines[1].target.id).toBe(tuc)
+      await save(id, lines)
+      expect(await row(`select completed, in_cart from grocery_items where id = $1`, [cartEntry])).toEqual({ completed: false, in_cart: true })
+      expect(await stockOf(tuc)).toBe(1)
+      expect(await stockOf(lays)).toBe(2)
+      expect(await stockOf(chips)).toBe(0)
+      expect(await reopen(id)).toBe(2)
+      expect(await stockOf(tuc)).toBe(0)
+      await db.query(`update grocery_items set in_cart = false where id = $1`, [entry])
+    })
+
+    it('a new item is made in HOME with 1× and its minimum; Undo deletes it again', async () => {
+      const id = '24000000-0000-0000-0000-000000000004'
+      const lines = await linesFor([
+        { name: 'Sun cream R4', priceText: '9', categoryId: 'personal-care', oneTime: true },
+        { name: 'Soap R4', priceText: '1', categoryId: 'toiletries', minText: '2' },
+      ])
+      await save(id, lines)
+      expect(await rows(`select name, current_stock::float as stock, one_time, min_stock::float as min from pantry_items where name in ('Sun cream R4', 'Soap R4') order by name`)).toEqual([
+        { name: 'Soap R4', stock: 1, one_time: false, min: 2 },
+        { name: 'Sun cream R4', stock: 1, one_time: true, min: 0 },
+      ])
+      await reopen(id)
+      expect((await row(`select count(*)::int as n from pantry_items where name in ('Sun cream R4', 'Soap R4')`)).n).toBe(0)
+      await db.query(`delete from grocery_items where id = $1`, [entry])
+      await db.query(`delete from pantry_items where id = any($1)`, [[milk, lays, tuc, chips]])
     })
   })
 })

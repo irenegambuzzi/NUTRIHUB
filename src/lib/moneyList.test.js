@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChartFilters, formatWeekRange, groupEntries } from './moneyList'
+import { applyChartFilters, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections } from './moneyList'
 
 const food = { id: 'food', name: 'Groceries' }
 const fun = { id: 'fun', name: 'Going out' }
@@ -121,5 +121,45 @@ describe('shopping trips in the expense list', () => {
     expect(tripShopId([{ shop_id: 's1' }, { shop_id: 's1' }], { shop_id: null })).toBe('s1')
     expect(tripShopId([{ shop_id: 's1' }, { shop_id: null }], { shop_id: 's2' })).toBe('s2')
     expect(tripShopId([{ shop_id: null }], null)).toBeNull()
+  })
+})
+
+describe('one row per purchase', () => {
+  const groceries = { id: 'g', name: 'Groceries' }
+  const pets = { id: 'p', name: 'Pets' }
+  const mainOfId = (id) => ({ g: groceries, 'g:bread': groceries, p: pets })[id] ?? null
+  const x = (id, patch) => ({ id, expense_date: '2026-10-14', amount: 1, category_id: 'g', created_at: '2026-10-14T10:00:00Z', ...patch })
+  const list = [
+    x('bread', { trip_id: 't1', category_id: 'g:bread', amount: 2.5 }),
+    x('cat', { trip_id: 't1', category_id: 'p', amount: 20 }),
+    x('milk', { amount: 1.2, created_at: '2026-10-14T09:00:00Z' }),
+    x('beer', { expense_date: '2026-10-13', amount: 4 }),
+  ]
+
+  it('a purchase is one group, whatever its categories; other expenses by day and main category', () => {
+    const groups = groupPurchases(list, { mainOf: mainOfId })
+    expect(groups.map((g) => [g.key, g.total, g.items.map((i) => i.id)])).toEqual([
+      ['trip|t1', 22.5, ['bread', 'cat']],
+      ['2026-10-14|g', 1.2, ['milk']],
+      ['2026-10-13|g', 4, ['beer']],
+    ])
+  })
+
+  it('before supabase/021 a purchase is split per category as plain expenses', () => {
+    expect(groupPurchases(list, { mainOf: mainOfId, tripsOn: false }).map((g) => g.key)).toEqual(['2026-10-14|g', '2026-10-14|p', '2026-10-13|g'])
+  })
+
+  it('opened: by main category, A–Z, with a subtotal each (Uncategorized last)', () => {
+    const sections = purchaseSections([...list.slice(0, 2), x('x', { category_id: null, amount: 3 })], mainOfId)
+    expect(sections.map((s) => [s.name, s.total, s.items.map((i) => i.id)])).toEqual([
+      ['Groceries', 2.5, ['bread']],
+      ['Pets', 20, ['cat']],
+      ['Uncategorized', 3, ['x']],
+    ])
+  })
+
+  it('with a category filter on, only that part, "of total" the whole purchase', () => {
+    expect(purchasePart([list[1]], list.slice(0, 2))).toEqual({ total: 20, fullTotal: 22.5, partial: true })
+    expect(purchasePart(list.slice(0, 2), list.slice(0, 2))).toEqual({ total: 22.5, fullTotal: 22.5, partial: false })
   })
 })

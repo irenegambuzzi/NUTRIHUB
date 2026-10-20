@@ -96,3 +96,25 @@ export function pastPurchaseChanges(expenses, itemOf, ctx) {
   }
   return { changes, summary: [...byMove.values()].sort((a, b) => b.count - a.count || b.total - a.total) }
 }
+
+// For "Apply the mapping to past purchases": expense id → the { category_id,
+// subcategory_id } of what was bought. From orders (`orderItems`: [expense
+// id, HOME item]), SHOP entries checked off (`groceries`) and purchase
+// lines (`tripLines`, as bought then: their snapshot). Only SHOP lines
+// count (decision 18, supabase/023): a line typed in MONEY had its budget
+// category chosen in the form, so the mapping never moves it — not even
+// through the SHOP entry it took off the list.
+export function purchasedItemsByExpense({ orderItems = [], groceries = [], tripLines = [] }) {
+  const byExpense = new Map()
+  for (const [expenseId, item] of orderItems) byExpense.set(expenseId, item)
+  for (const g of groceries) byExpense.set(g.expense_id, { category_id: g.category_id, subcategory_id: g.subcategory_id })
+  for (const t of tripLines) {
+    if ((t.line_kind ?? 'shop') !== 'shop') {
+      byExpense.delete(t.expense_id)
+      continue
+    }
+    const snap = t.grocery_snapshot ?? {}
+    byExpense.set(t.expense_id, { category_id: snap.category_id ?? null, subcategory_id: snap.subcategory_id ?? null })
+  }
+  return byExpense
+}

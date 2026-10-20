@@ -78,10 +78,11 @@ export function IncomeRow({ entry, names, onEdit, onDelete }) {
   )
 }
 
-// The expenses of one shopping trip inside a sorted group: one line
-// ("Conad · 16/10 · 3 items"), opened to see and edit each expense, with
-// the store changeable for the whole trip.
-export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore }) {
+// The expenses of one purchase (SHOP, MONEY or merged) inside a sorted
+// group: one line ("Conad · 16/10 · 3 items"), opened to see and edit each
+// expense, with the store changeable for the whole purchase. `fullTotal`:
+// the whole purchase, when the group shows only a part of it.
+export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore, fullTotal = null }) {
   const [open, setOpen] = useState(false)
   const date = trip?.trip_date ?? part.items[0].expense_date
   const payers = [...new Set(part.items.map((e) => paidByLabel(e.paid_by)))]
@@ -92,7 +93,7 @@ export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore }) {
           <span className="flex items-center gap-1.5 text-[var(--color-text)] min-w-0">
             <ShoppingCart size={11} className="shrink-0 text-[var(--color-primary)]" />
             <span className="truncate">
-              {shop?.name ?? 'Shopping trip'} · {dateLabel(date).slice(0, 5)} · {part.items.length} items
+              {shop?.name ?? 'Purchase'} · {dateLabel(date).slice(0, 5)} · {part.items.length} items
             </span>
           </span>
           <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
@@ -100,7 +101,10 @@ export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore }) {
           </span>
         </span>
         <span className="flex items-center gap-1.5 shrink-0">
-          <span className="font-mono text-[var(--color-text-soft)]">€{part.total.toFixed(2)}</span>
+          <span className="text-right">
+            <span className="font-mono text-[var(--color-text-soft)] block">€{part.total.toFixed(2)}</span>
+            {fullTotal != null && Math.abs(fullTotal - part.total) > 0.004 && <span className="text-[10px] text-[var(--color-text-muted)] block">of total €{fullTotal.toFixed(2)}</span>}
+          </span>
           <ChevronDown size={13} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
         </span>
       </button>
@@ -109,7 +113,7 @@ export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore }) {
           {part.items.map(renderEntry)}
           {trip && onChangeTripStore && (
             <button type="button" onClick={() => onChangeTripStore(trip)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
-              <Store size={12} /> Change the store of the whole trip
+              <Store size={12} /> Change the store of the whole purchase
             </button>
           )}
         </div>

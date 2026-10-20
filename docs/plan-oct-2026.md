@@ -826,6 +826,49 @@ free. The item details (quantity, unit, normal price, discounts) live on the
 - Undo of a MONEY purchase that created "Sun cream" in HOME → the item is
   deleted again; the expenses are gone; stock of others back.
 
+### As built in round 4 (20/10/2026)
+
+Built as above, with these details (decided while building; none changes
+the database — no `supabase/024`):
+
+- **Files**: as listed, plus `src/lib/merge.js` (+ test: `selectBlock`,
+  `mergeProblem`, `mergeStore`, `joinablePurchases`, `mergeErrorMessage`),
+  `budgetMap.purchasedItemsByExpense` (decision 18, tested), `trips.purchaseUndo`
+  (Reopen / Undo purchase / Split by source), `PurchaseGroup` in
+  `ExpenseGroup.jsx` (the purchase row; `TripRow` stays for the sorted lists,
+  with "of total"), `SelectExpenses` + `MergeForm` in `MergeDialog.jsx`,
+  `addExpenseOnce` in `useExpenses.js`, `askUndoPurchase` in `usePurchase.js`.
+  `supabase/migrations.test.js` has a block "round 4" that sends the payload
+  built by `lib/moneyPurchase.js` to the real `confirm_shopping_trip`.
+- **One row = one normal expense** (item 21): a form with **one row and Add to
+  HOME off** is saved as one plain expense (no trip), exactly like the old
+  Add expense — editable with the old form, mergeable later; the name may be
+  empty as before. One row with Add to HOME on is a one-line MONEY purchase
+  (stock needs the purchase function). Two rows or more: one purchase. Both
+  have a fixed id per form (pressed twice → saved once) and a toast with Undo.
+- **Price 0** is accepted only with Add to HOME on ("Free: stock only, no
+  expense"; no expense row, as in SHOP — risk 29).
+- **Unit**: typing a name that is a HOME item (or group) takes its unit until
+  the unit is picked by hand, so the stock converts without asking; the pack
+  size is asked inline only when it still can't convert.
+- **Expired HOME item**: MONEY doesn't ask "throw away / keep" like SHOP; the
+  stock is added and the row says "Its stock in HOME has expired — check it
+  there after saving."
+- **Groups**: the variant select lists the existing variants (first at 0
+  pre-selected); a new variant is made in HOME, not in the form.
+- **The opened purchase row** also has Reopen purchase (SHOP) / Undo purchase
+  (MONEY) / Split (merged), each asking first, and "Split merged expenses" on
+  a SHOP/MONEY purchase that has merged expenses. Receipts shows the same
+  labels; a merged purchase has no "Delete record" there (Split is the way),
+  and lists its merged expenses ("· merged").
+- **Select** shows a flat list of the expenses of the period and person on
+  screen (charts hidden while selecting); purchase and order expenses have no
+  tick box and say why. One ticked expense can only join an existing
+  purchase; a new purchase needs two. The store of a new merged purchase must
+  be chosen when the expenses don't all share one.
+- **Delete record** with merged expenses: split first (stores back); its
+  Undo puts the record back (total without them) and merges them in again.
+
 ### iPhone checklist
 
 1. MONEY → Add expense → one row → Save: one expense, as before.
@@ -1367,3 +1410,13 @@ subs), `confirm_shopping_trip` line `travel_id`.
 40. **An older app version on the other phone** still makes group-level
     entries until it is reloaded; the tidy replaces them (once per app
     start). Reload both iPhones after the deploy.
+
+**Decisions made in round 4 (20/10/2026)** — confirmed by Irene before the
+round: decision 5 (option A: merged expenses take the purchase's store,
+Split gives each its old one back), item 21, decision 6, decisions 18 and 19.
+
+41. **One row with Add to HOME off is a plain expense**, not a one-line
+    purchase (see round 4 "As built"): it is what the old Add expense made.
+42. **MONEY doesn't ask about expired stock** (SHOP does); the row warns.
+43. **Reopen / Undo purchase / Split are also on the opened purchase row**
+    in MONEY, not only in Receipts.
