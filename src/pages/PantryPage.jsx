@@ -22,7 +22,9 @@ import { usePantryItems } from '../hooks/usePantryItems'
 import { useNewItemIds } from '../hooks/useNewItemIds'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
-import { daysUntil, expiryLabel, expiryState, restockReason, stockStatus, suggestedPurchase } from '../lib/inventory'
+import { daysUntil, expiryLabel, expiryState, restockReason, shownStatus, suggestedPurchase } from '../lib/inventory'
+import { isFinished, isOneTime, splitFinished } from '../lib/oneTime'
+import { FinishedItems } from '../components/inventory/FinishedItems'
 
 export function PantryPage() {
   const { items, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
@@ -30,11 +32,15 @@ export function PantryPage() {
   const { categories, pantryParents: parents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
   const newIds = useNewItemIds(items)
-  const topLevel = useMemo(() => items.filter((i) => !i.group_id), [items])
+  // Finished one-time items are listed apart, at the bottom (the group of
+  // a finished variant stays in the grid).
+  const { active: shownItems, finished: finishedItems } = useMemo(() => splitFinished(items), [items])
+  const topLevel = useMemo(() => shownItems.filter((i) => !i.group_id), [shownItems])
   const groupRows = useMemo(() => items.filter((i) => i.is_group), [items])
   const ready = groupsReady(items)
   const groupById = useMemo(() => new Map(groupRows.map((g) => [g.id, g])), [groupRows])
   const variantsOfGroup = useMemo(() => (g) => items.filter((i) => i.group_id === g.id).sort((a, b) => a.name.localeCompare(b.name)), [items])
+  const shownVariantsOf = (g) => variantsOfGroup(g).filter((v) => !isFinished(v))
   const [groupNotice, setGroupNotice] = useState(false)
 
   const [view, setView] = useState('items')
@@ -47,25 +53,27 @@ export function PantryPage() {
   const [sort, setSort] = useState('az')
 
   const stats = useMemo(() => {
-    const count = (fn) => items.filter(fn).length
+    const count = (fn) => shownItems.filter(fn).length
     return {
+      // Finished one-time items aren't counted; one-time items are never
+      // Low or Out.
       total: topLevel.length,
       // A variant has no threshold of its own: only items and groups count.
-      low: topLevel.filter((i) => stockStatus(i) === 'low').length,
-      out: topLevel.filter((i) => stockStatus(i) === 'out').length,
+      low: topLevel.filter((i) => !isOneTime(i) && shownStatus(i) === 'low').length,
+      out: topLevel.filter((i) => !isOneTime(i) && shownStatus(i) === 'out').length,
       expired: count((i) => expiryState(i) === 'expired'),
       expiringWeek: count((i) => expiryState(i) === 'week'),
       expiringMonth: count((i) => ['week', 'month'].includes(expiryState(i))),
       needBuying: count((i) => restockReason(i)),
     }
-  }, [items, topLevel])
+  }, [shownItems, topLevel])
 
   const expiryAlerts = useMemo(
     () =>
-      items
+      shownItems
         .filter((i) => ['expired', 'week', 'month'].includes(expiryState(i)))
         .sort((a, b) => daysUntil(a.expiry_date) - daysUntil(b.expiry_date)),
-    [items]
+    [shownItems]
   )
 
   const openShoppingCount = groceryItems.filter((g) => !g.completed).length
@@ -78,7 +86,7 @@ export function PantryPage() {
   const filteredItems = useMemo(() => {
     const sortFn = SORTS[sort].fn
     if (query) {
-      return items
+      return shownItems
         .map((i) => ({ item: i, rank: searchRank(i, query, categoryName, groupById.get(i.group_id)?.name) }))
         .filter((r) => r.rank >= 0)
         .sort((a, b) => a.rank - b.rank || sortFn(a.item, b.item))
@@ -91,7 +99,7 @@ export function PantryPage() {
         return matchesStatus(i, statusFilter) && matchesExpiryDeep(i, expiryFilter)
       })
       .sort(sortFn)
-  }, [items, topLevel, groupById, query, parentFilter, subFilter, statusFilter, expiryFilter, sort, categoryName])
+  }, [shownItems, topLevel, groupById, query, parentFilter, subFilter, statusFilter, expiryFilter, sort, categoryName])
 
   const filtersActive = parentFilter !== 'all' || statusFilter !== 'all' || expiryFilter !== 'all'
 
@@ -318,7 +326,7 @@ export function PantryPage() {
                   <GroupTile
                     key={item.id}
                     group={item}
-                    variants={variantsOfGroup(item)}
+                    variants={shownVariantsOf(item)}
                     newIds={newIds}
                     isNew={newIds.has(item.id)}
                     subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
@@ -349,6 +357,16 @@ export function PantryPage() {
             </div>
           )}
         </>
+      )}
+
+      {view === 'items' && (
+        <FinishedItems
+          items={query ? finishedItems.filter((i) => i.name.toLowerCase().includes(query)) : finishedItems}
+          groupName={(id) => groupById.get(id)?.name}
+          onNotOneTime={(item) => updateItem(item, { one_time: false })}
+          onEdit={(i) => setEditor({ item: i })}
+          onDelete={deleteItem}
+        />
       )}
 
       {view === 'history' && <HistoryView />}

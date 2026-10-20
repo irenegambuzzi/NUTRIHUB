@@ -1,9 +1,14 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ListOrdered } from 'lucide-react'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { isDurable } from '../../lib/inventory'
+import { isDurable, shopReason } from '../../lib/inventory'
+import { byCartOrder } from '../../lib/grocery'
+import { listedOutVariants } from '../../lib/groups'
+import { entryIsOneTime } from '../../lib/oneTime'
+import { RESTOCK_LABELS } from '../../lib/inventoryStyles'
 import { money } from '../../lib/pricing'
 import { GROCERY_LIST_LABELS, listOf, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
 import { formatPurchaseQuantity } from '../../lib/inventory'
@@ -40,7 +45,8 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
   const defaultOrder = parents.map((p) => p.id)
 
   const open = items.filter((i) => !i.in_cart)
-  const inCart = items.filter((i) => i.in_cart)
+  // In the order they went into the cart, oldest first.
+  const inCart = items.filter((i) => i.in_cart).sort(byCartOrder)
   const groups = groupByCategory(open, positions, defaultOrder)
   const route = routeOrder(open, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
@@ -108,6 +114,7 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
           ) : (
             [false, true].map((cart) => {
               const list = found.filter((i) => Boolean(i.in_cart) === cart)
+              if (cart) list.sort(byCartOrder)
               return (
                 list.length > 0 && (
                   <section key={String(cart)} className="space-y-2">
@@ -242,8 +249,12 @@ export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, bu
 }
 
 // One big tile: tap to put it in the cart (or take it out again) — only
-// the cart changes; the purchase is confirmed separately.
+// the cart changes; the purchase is confirmed separately. A group's tile
+// says which variants are out ("— out: …", "Not urgent" when the total is
+// still fine); a one-time purchase shows the grey "1×".
 function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null }) {
+  const outVariants = pack?.is_group ? listedOutVariants(pack.variants) : []
+  const notUrgent = pack?.is_group && shopReason(pack) === 'not-urgent'
   return (
     <button
       onClick={() => onCheck(item)}
@@ -261,9 +272,14 @@ function ShopTile({ item, pack = null, total, onCheck, showCategory = false, sho
         {item.in_cart && <Check size={16} />}
       </span>
       <span className="flex-1 min-w-0">
-        <span className={cn('block text-base font-bold truncate', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
-          {item.name}
+        <span className={cn('flex items-center gap-1.5 text-base font-bold min-w-0', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
+          <span className="truncate">{item.name}</span>
+          {entryIsOneTime(item, pack) && <OneTimeBadge className="shrink-0 no-underline" />}
+          {notUrgent && !item.in_cart && (
+            <span className={cn('shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full', RESTOCK_LABELS['not-urgent'].className)}>{RESTOCK_LABELS['not-urgent'].label}</span>
+          )}
         </span>
+        {outVariants.length > 0 && <span className="block text-xs text-[var(--color-text-soft)] truncate">— out: {outVariants.map((v) => v.name).join(', ')}</span>}
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           {showCategory && <CategoryIcon category={item.category_id} size={12} />}
           {formatPurchaseQuantity(item.quantity, item.unit, pack)}

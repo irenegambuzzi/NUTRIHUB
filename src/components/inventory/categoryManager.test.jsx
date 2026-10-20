@@ -54,12 +54,12 @@ describe('HOME Manage categories', () => {
     expect(screen.getByLabelText('Rename Frozen Food').closest('div').textContent).toContain('1 item')
   })
 
-  it('locks Move and Delete for Home & Appliances and explains it, but lets it be renamed', () => {
+  it('locks Rename, Move and Delete for Home & Appliances and explains it like MONEY', () => {
     open()
     expect(screen.getByLabelText('Move Home & Appliances').disabled).toBe(true)
     expect(screen.getByLabelText('Delete Home & Appliances').disabled).toBe(true)
-    expect(screen.getByLabelText('Rename Home & Appliances').disabled).toBe(false)
-    expect(screen.getByText(/It can be renamed, but not moved or deleted/)).toBeTruthy()
+    expect(screen.getByLabelText('Rename Home & Appliances').disabled).toBe(true)
+    expect(screen.getByText(/Used for home and appliance purchases\. Locked: it can't be renamed, moved or deleted\./)).toBeTruthy()
   })
 
   it('refuses to add a name that exists, with the place, without calling the database', () => {

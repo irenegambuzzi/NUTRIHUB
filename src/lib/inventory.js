@@ -5,6 +5,8 @@ import { priceFields } from './pricing'
 import { normalizeUnit, unitFactor } from './units'
 import { parseLocalDate } from './week'
 import { parseDecimal } from './decimal'
+import { isOneTime } from './oneTime'
+import { listedOutVariants } from './groups'
 
 export { normalizeUnit, unitFactor }
 
@@ -95,9 +97,9 @@ export function normalizeItem(item) {
 
 // Why an item needs buying: 'out' | 'expired' | 'low' | null. An item in
 // a group never needs buying on its own — the group, with its total and
-// its threshold, does.
+// its threshold, does. A one-time item (1×) never needs buying by itself.
 export function restockReason(item) {
-  if (item.group_id) return null
+  if (item.group_id || isOneTime(item)) return null
   const status = stockStatus(item)
   if (status === 'out') return 'out'
   if (expiryState(item) === 'expired') return 'expired'
@@ -105,9 +107,24 @@ export function restockReason(item) {
   return null
 }
 
+// Why an entry is on the SHOP list: restockReason, or 'not-urgent' for a
+// group whose total is fine but with a variant at 0 (`item.variants`, see
+// listedOutVariants).
+export function shopReason(item) {
+  const reason = restockReason(item)
+  if (reason) return reason
+  return item.is_group && listedOutVariants(item.variants).length > 0 ? 'not-urgent' : null
+}
+
+// The status HOME shows: a one-time item is never Low or Out (it is
+// finished at 0, see oneTime.js).
+export const shownStatus = (item) => (isOneTime(item) ? 'ok' : stockStatus(item))
+
 // The colour state of an item card: why it needs buying, or — for a
-// variant, which has no threshold of its own — out or expired.
+// variant, which has no threshold of its own — out or expired. A one-time
+// item never turns yellow or red (only purple when expired).
 export function displayReason(item) {
+  if (isOneTime(item)) return expiryState(item) === 'expired' ? 'expired' : null
   if (!item.group_id) return restockReason(item)
   if (stockStatus(item) === 'out') return 'out'
   return expiryState(item) === 'expired' ? 'expired' : null
@@ -275,7 +292,9 @@ export async function updateRows(table, ids, patch) {
 
 // Keeps the grocery list in step with stock: a Low, Out or Expired item
 // gets one auto-generated entry, and that entry disappears once the item
-// is fine again. Manually added entries are never touched.
+// is fine again. Manually added entries are never touched. A group gets
+// its one entry also when a variant is at 0 ("Not urgent", see shopReason);
+// a one-time item never gets one, and its entry in the cart stays there.
 // Throws if the list couldn't be read or changed.
 export async function syncShoppingForItem(item) {
   if (item.group_id) return syncGroupOf(item)
@@ -283,19 +302,21 @@ export async function syncShoppingForItem(item) {
   if (item.is_group) {
     // A group is judged on the total of its variants (a group with none
     // yet isn't "out of stock", just not set up).
-    const variants = must(await supabase.from('pantry_items').select('current_stock').eq('group_id', item.id))
+    const variants = must(await supabase.from('pantry_items').select('id, name, current_stock, one_time, shop_dismissed_at').eq('group_id', item.id))
     emptyGroup = variants.length === 0
-    item = { ...item, current_stock: round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0)) }
+    item = { ...item, current_stock: round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0)), variants }
   }
   const open = must(
-    await supabase.from('grocery_items').select('id, auto_generated').eq('pantry_item_id', item.id).eq('completed', false)
+    await supabase.from('grocery_items').select('id, auto_generated, in_cart').eq('pantry_item_id', item.id).eq('completed', false)
   )
 
-  if (emptyGroup || !restockReason(item)) {
+  if (emptyGroup || !shopReason(item)) {
     // An entry ordered online and on the way stays: it leaves the list
-    // when the order arrives (or goes back to "to buy" if cancelled).
+    // when the order arrives (or goes back to "to buy" if cancelled). So
+    // does a one-time item's entry already in the cart.
     const ordered = await orderedEntryIds(open.map((g) => g.id))
-    const autoIds = open.filter((g) => g.auto_generated && !ordered.has(g.id)).map((g) => g.id)
+    const keepInCart = isOneTime(item)
+    const autoIds = open.filter((g) => g.auto_generated && !ordered.has(g.id) && !(keepInCart && g.in_cart)).map((g) => g.id)
     if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
   }
@@ -321,11 +342,34 @@ export async function syncShoppingForItem(item) {
 
 // The SHOP list entries among `ids` that have an order on the way
 // (supabase/021); none before that update.
-async function orderedEntryIds(ids) {
+export async function orderedEntryIds(ids) {
   if (!ids.length) return new Set()
   const { data, error } = await supabase.from('orders').select('grocery_item_id').in('grocery_item_id', ids).eq('status', 'on_the_way')
   if (error) return new Set()
   return new Set(data.map((o) => o.grocery_item_id))
+}
+
+// The open SHOP entries of a pantry item that are still "to buy": not in a
+// cart and not ordered online. Entries without a link count when they
+// have the item's name (typed by hand). Whole rows, so they can be put
+// back exactly.
+export async function toBuyEntriesOf(item) {
+  const linked = must(await supabase.from('grocery_items').select('*').eq('pantry_item_id', item.id).eq('completed', false))
+  const unlinked = must(await supabase.from('grocery_items').select('*').is('pantry_item_id', null).eq('completed', false))
+  const key = (item.name || '').trim().toLowerCase()
+  const rows = [...linked, ...unlinked.filter((g) => (g.name || '').trim().toLowerCase() === key)].filter((g) => !g.in_cart)
+  const ordered = await orderedEntryIds(rows.map((g) => g.id))
+  return rows.filter((g) => !ordered.has(g.id))
+}
+
+// Marks variants as taken off the SHOP list by hand (`at` a time) or
+// clears the mark (`at` null), then judges the group again. The database
+// clears a mark by itself once the variant has stock.
+export async function setVariantsDismissed(group, variantIds, at) {
+  if (!variantIds.length) return []
+  const rows = must(await supabase.from('pantry_items').update({ shop_dismissed_at: at }).in('id', variantIds).select())
+  await syncShoppingForItem(group)
+  return rows
 }
 
 // A variant never goes on the list for itself: its own automatic entries

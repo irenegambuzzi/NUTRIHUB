@@ -16,7 +16,9 @@ import { useGroceryList } from '../hooks/useGroceryList'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { inventoryCategoryColor } from '../lib/categoryColors'
-import { restockReason, syncShoppingForItem } from '../lib/inventory'
+import { shopReason, syncShoppingForItem } from '../lib/inventory'
+import { listedOutVariants } from '../lib/groups'
+import { entryIsOneTime } from '../lib/oneTime'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
 import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
@@ -68,6 +70,8 @@ export function GroceryPage() {
     updatePricing,
     updatePayer,
     deleteItem,
+    dismissVariant,
+    removeGroupRow,
     cartItems,
     pantryItems,
     pantryByName,
@@ -136,10 +140,25 @@ export function GroceryPage() {
     if (result && !result.error) toggleCart({ ...item, in_cart: false })
   }
 
-  // An ordered entry stays until its order arrives or is cancelled.
+  // An ordered entry stays until its order arrives or is cancelled. A
+  // "Not urgent" group row takes the variants it lists off the list too,
+  // so it doesn't come back by itself.
   const removeItem = (item) => {
     if (openOrderOf(item)) return showToast({ message: `"${item.name}" is on the way — cancel the order first (On the way → Cancel / Return).`, tone: 'error' })
+    const group = pantryFor(item)
+    if (group?.is_group && reasonOf(item) === 'not-urgent') return removeGroupRow(item, group)
     return deleteItem(item)
+  }
+
+  // What a tile needs to show a one-time purchase and a group's variants
+  // that are out (each with × to take it off the list).
+  const groupProps = (item) => {
+    const pantry = pantryFor(item)
+    return {
+      oneTime: entryIsOneTime(item, pantry),
+      outVariants: pantry?.is_group ? listedOutVariants(pantry.variants) : [],
+      onDismissVariant: pantry?.is_group ? (variant) => dismissVariant(pantry, variant) : null,
+    }
   }
 
   const arrive = async (order, pantry) => {
@@ -180,7 +199,8 @@ export function GroceryPage() {
   const durableTotal = durableItems.filter((i) => !i.in_cart).reduce((sum, i) => sum + costOf(i), 0)
   // Only show chips for categories that actually have items on the list.
   const listCategories = parents.filter((p) => items.some((i) => i.category_id === p.id))
-  const needsBuying = pantryItems.filter((p) => restockReason(p))
+  // Also a group with a variant at 0 ("Not urgent").
+  const needsBuying = pantryItems.filter((p) => shopReason(p))
   const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + costOf(item), 0)
   const cartCount = cartItems.length
 
@@ -351,7 +371,7 @@ export function GroceryPage() {
                   disabled={syncing}
                   className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-accent)] disabled:opacity-50"
                 >
-                  <Sparkles size={13} /> {syncing ? 'Adding…' : `Add all ${needsBuying.length} low / out / expired pantry items`}
+                  <Sparkles size={13} /> {syncing ? 'Adding…' : `Add all ${needsBuying.length} pantry items that need buying`}
                 </button>
               )}
               {cartCount > 0 && (
@@ -415,6 +435,7 @@ export function GroceryPage() {
                   onUpdatePricing={updatePricing}
                   onUpdatePayer={updatePayer}
                   {...orderProps(item)}
+                  {...groupProps(item)}
                 />
               ))}
             </div>
@@ -448,6 +469,7 @@ export function GroceryPage() {
                     onUpdatePricing={updatePricing}
                     onUpdatePayer={updatePayer}
                     {...orderProps(item)}
+                    {...groupProps(item)}
                   />
                 ))}
               </div>

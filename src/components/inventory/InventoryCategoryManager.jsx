@@ -8,6 +8,7 @@ import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { categoryMemoryStore, groceryStore, pantryStore } from '../../lib/stores'
 import {
   APPLIANCES_ID,
+  LOCKED_HINT,
   deleteProblem,
   isUnused,
   mergeProblem,
@@ -23,7 +24,7 @@ import {
 const CHOOSE = '__choose'
 const MAIN = '__main'
 
-const APPLIANCES_HINT = "Used for home and appliance purchases. It can be renamed, but not moved or deleted."
+const APPLIANCES_HINT = `Used for home and appliance purchases. ${LOCKED_HINT}`
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
@@ -244,8 +245,14 @@ export function InventoryCategoryManager({ onClose }) {
             <span className="block text-[10px] text-[var(--color-text-muted)]">{plural(usage.items, 'item')}</span>
           </span>
           <span className="flex items-center shrink-0">
-            <button onClick={() => startEdit(c, 'rename')} title="Rename" aria-label={`Rename ${full(c)}`} className={`${iconButton} hover:text-[var(--color-primary)]`}>
-              <Pencil size={13} />
+            <button
+              onClick={() => startEdit(c, 'rename')}
+              disabled={appliances}
+              title={appliances ? "Can't be renamed" : 'Rename'}
+              aria-label={`Rename ${full(c)}`}
+              className={`${iconButton} hover:text-[var(--color-primary)]`}
+            >
+              {appliances ? <Lock size={13} /> : <Pencil size={13} />}
             </button>
             <button
               onClick={() => startEdit(c, 'move')}
@@ -254,7 +261,7 @@ export function InventoryCategoryManager({ onClose }) {
               aria-label={`Move ${full(c)}`}
               className={`${iconButton} hover:text-[var(--color-primary)]`}
             >
-              {appliances ? <Lock size={13} /> : <FolderInput size={13} />}
+              <FolderInput size={13} />
             </button>
             <button
               onClick={() => startDelete(c)}

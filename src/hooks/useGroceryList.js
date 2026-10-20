@@ -1,21 +1,16 @@
 import { useCallback, useMemo } from 'react'
 import { PAID_BY_OPTIONS } from '../data/constants'
-import { normName } from '../lib/grocery'
-import { isDurable, restockReason } from '../lib/inventory'
+import { inCartOrder, normName, PRIORITY, sortGroceryItems } from '../lib/grocery'
+import { isDurable, shopReason } from '../lib/inventory'
 import { lineTotal } from '../lib/pricing'
 import { useGroceryItems } from './useGroceryItems'
 import { usePantryItems } from './usePantryItems'
 import { useBudget } from './useBudget'
 import { orderStore } from '../lib/stores'
 
-// Reason order for each sort; 'stocked' = in the pantry and fine.
-// Budget planning always uses PRIORITY, whatever the chosen sort.
-export const PRIORITY = ['out', 'low', 'expired', 'new', 'stocked']
-const REASON_ORDERS = {
-  priority: PRIORITY,
-  low: ['low', 'out', 'expired', 'new', 'stocked'],
-  new: ['new', 'out', 'low', 'expired', 'stocked'],
-}
+// Reason order for each sort (lib/grocery.js); budget planning always
+// uses PRIORITY.
+export { PRIORITY }
 
 // The grocery list as the page shows it: each entry's reason and line
 // total, the totals and budget plan, and the cart. Tapping an item only
@@ -34,8 +29,9 @@ export function useGroceryList() {
   const items = useMemo(() => allItems.filter((i) => !openOrders.has(i.id)), [allItems, openOrders])
   const onTheWay = useMemo(() => allItems.filter((i) => openOrders.has(i.id)), [allItems, openOrders])
   // Everything in the cart, an entry ordered meanwhile on the other phone
-  // included: the confirm screen warns about that one.
-  const cartItems = useMemo(() => allItems.filter((i) => i.in_cart), [allItems])
+  // included: the confirm screen warns about that one. Oldest in the cart
+  // first.
+  const cartItems = useMemo(() => inCartOrder(allItems), [allItems])
   const { items: pantryItems } = usePantryItems()
   const { groceryBudget, saveGroceryBudget } = useBudget()
 
@@ -50,7 +46,7 @@ export function useGroceryList() {
     const cache = new Map()
     for (const g of items) {
       const p = pantryFor(g)
-      cache.set(g.id, isDurable(g) ? 'durable' : p ? restockReason(p) || 'stocked' : 'new')
+      cache.set(g.id, isDurable(g) ? 'durable' : p ? shopReason(p) || 'stocked' : 'new')
     }
     return (g) => cache.get(g.id) || 'new'
   }, [items, pantryFor])
@@ -60,20 +56,7 @@ export function useGroceryList() {
   const totalOf = useCallback((g) => lineTotal(g, pantryFor(g)), [pantryFor])
   const costOf = useCallback((g) => totalOf(g) ?? 0, [totalOf])
 
-  const sortItems = useCallback(
-    (list, mode) => {
-      const order = REASON_ORDERS[mode]
-      const rank = (g) => (order ? order.indexOf(reasonOf(g)) : 0)
-      const tie =
-        {
-          az: (a, b) => a.name.localeCompare(b.name),
-          price: (a, b) => costOf(b) - costOf(a),
-        }[mode] || ((a, b) => b.created_at.localeCompare(a.created_at))
-      // Checked-off items always sink to the bottom.
-      return [...list].sort((a, b) => Number(a.in_cart) - Number(b.in_cart) || rank(a) - rank(b) || tie(a, b))
-    },
-    [reasonOf, costOf]
-  )
+  const sortItems = useCallback((list, mode) => sortGroceryItems(list, mode, { reasonOf, costOf }), [reasonOf, costOf])
 
   // Durable purchases (Home & Appliances) get their own section and stay
   // out of the grocery totals and budget.

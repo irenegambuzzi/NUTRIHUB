@@ -1,4 +1,5 @@
 import { unitFactor } from './units'
+import { isOneTime } from './oneTime'
 
 // Item groups: a group is a pantry row with is_group = true ("Chips &
 // Snacks"); its variants are pantry rows with group_id = the group's id.
@@ -62,4 +63,28 @@ export function newVariantFields(group, name, extra = {}) {
     group_id: group.id,
     ...extra,
   }
+}
+
+// The variants a group's SHOP row lists as out: at 0, not one-time (a
+// finished 1× variant is never bought by itself) and not taken off the
+// list by hand (shop_dismissed_at, cleared by the database once it is
+// restocked). A–Z.
+export function listedOutVariants(variants = []) {
+  return variants
+    .filter((v) => (Number(v.current_stock) || 0) <= 0 && !isOneTime(v) && !v.shop_dismissed_at)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// Variants in buying order (the SHOP row and Confirm purchase): those at 0
+// first, then from the lowest stock to the highest; A–Z between equals.
+// HOME's group card keeps its A–Z list.
+export function variantOrder(variants = []) {
+  return [...variants].sort((a, b) => (Number(a.current_stock) || 0) - (Number(b.current_stock) || 0) || a.name.localeCompare(b.name))
+}
+
+// The variant Confirm purchase picks for a group line until the user
+// chooses: the first one the SHOP row lists as out, else none.
+export function firstOutVariant(variants = []) {
+  const listed = new Set(listedOutVariants(variants).map((v) => v.id))
+  return variantOrder(variants).find((v) => listed.has(v.id)) ?? null
 }

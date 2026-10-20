@@ -7,6 +7,8 @@ import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
+import { isOneTime } from '../../lib/oneTime'
+import { OneTimeBadge } from '../ui/OneTimeBadge'
 
 const newBadge = (
   <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
@@ -14,7 +16,8 @@ const newBadge = (
 
 // A group ("Chips & Snacks") as one card: the total of its variants,
 // coloured by that total and the group's own minimum like any item. Open
-// it to see and change each variant.
+// it to see and change each variant (A–Z; finished one-time variants are
+// not passed in: they are listed under "Finished one-time items").
 export function GroupTile({ group, variants, newIds, isNew, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery, onAddVariant, onTakeOut, onRestock }) {
   const [open, setOpen] = useState(false)
   const [restocking, setRestocking] = useState(false)
@@ -106,6 +109,7 @@ function VariantRow({ group, variant: v, isNew, onAdjust, onDiscard, onEdit, onT
           <p className="text-sm font-bold text-[var(--color-text)] break-words">{v.name}</p>
           <div className="flex flex-wrap items-center gap-1 mt-0.5">
             <span className="text-[11px] text-[var(--color-text-soft)]">{formatStock(v)}</span>
+            {isOneTime(v) && <OneTimeBadge />}
             {isNew && newBadge}
             {expiry !== 'none' && (
               <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1', EXPIRY_STYLES[expiry])}>

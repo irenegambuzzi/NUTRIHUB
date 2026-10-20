@@ -5,10 +5,14 @@
 // it, so they never count. MONEY categories have their own rules
 // (categoryEdit.js) and the two never check each other.
 
-// Home & Appliances: code looks it up by id, so it keeps its place (it can
-// still be renamed). Its items never have stock, so nothing moves into or
+// Home & Appliances: locked like its MONEY namesake — it can't be renamed,
+// moved or deleted (purchases of durable items rely on it). Its items
+// never have stock, so nothing moves into or
 // out of its tree either.
 export const APPLIANCES_ID = 'appliances'
+
+export const LOCKED_HINT = "Locked: it can't be renamed, moved or deleted."
+const locked = (category) => `"${category.name}" is locked: it can't be renamed, moved or deleted.`
 
 // "Frozen  Vegetables " and "frozen vegetables" are the same name. Accents
 // don't make a different name either ("Cafè" = "Cafe").
@@ -52,10 +56,11 @@ export function nameProblem(categories, name, exceptId = null) {
   return parent ? `"${other.name}" already exists in ${parent.name}.` : `"${other.name}" already exists as a main category.`
 }
 
-// Why `id` can't be renamed to `name`, or null. Renaming is always allowed
-// otherwise, Home & Appliances included.
+// Why `id` can't be renamed to `name`, or null.
 export function renameProblem(categories, id, name) {
-  if (!byId(categories, id)) return 'This category no longer exists.'
+  const category = byId(categories, id)
+  if (!category) return 'This category no longer exists.'
+  if (id === APPLIANCES_ID) return locked(category)
   return nameProblem(categories, name, id)
 }
 
@@ -64,7 +69,7 @@ export function renameProblem(categories, id, name) {
 export function moveProblem(categories, id, parentId) {
   const category = byId(categories, id)
   if (!category) return 'This category no longer exists.'
-  if (id === APPLIANCES_ID) return `"${category.name}" can't be moved (it can be renamed).`
+  if (id === APPLIANCES_ID) return locked(category)
   if ((category.parent_id ?? null) === (parentId ?? null)) return 'It is already there.'
   const target = parentId ? byId(categories, parentId) : null
   if (parentId) {
@@ -90,7 +95,7 @@ export function moveTargets(categories, id) {
 export function deleteProblem(categories, id) {
   const category = byId(categories, id)
   if (!category) return 'This category no longer exists.'
-  if (id === APPLIANCES_ID) return `"${category.name}" can't be deleted (it can be renamed).`
+  if (id === APPLIANCES_ID) return locked(category)
   return null
 }
 

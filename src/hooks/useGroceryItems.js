@@ -1,13 +1,15 @@
 import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
-import { insertRows, updateRows } from '../lib/inventory'
+import { insertRows, setVariantsDismissed, updateRows } from '../lib/inventory'
+import { listedOutVariants } from '../lib/groups'
 import { budgetResolver } from '../lib/budgetContext'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { groceryStore } from '../lib/stores'
+import { showToast } from '../lib/feedback'
+import { groceryStore, pantryStore } from '../lib/stores'
 import { localDateString } from '../lib/week'
 import { isOffline } from '../lib/connection'
-import { queueCart, queueQuantity } from '../lib/offlineActions'
+import { queueCart, queueQuantity, setCart } from '../lib/offlineActions'
 
 async function createExpense(item, amount, when = new Date()) {
   // The budget category from the item category (see lib/budgetMap.js).
@@ -54,6 +56,7 @@ export function useGroceryItems() {
       unit = DEFAULT_UNIT,
       payer = 'shared',
       pantryItemId = null,
+      oneTime = false,
     }) =>
       attempt(
         async () => {
@@ -71,6 +74,9 @@ export function useGroceryItems() {
                 payer,
                 completed: false,
                 pantry_item_id: pantryItemId,
+                // A new item not in HOME yet, bought once: Confirm purchase
+                // makes its HOME item one-time too (supabase/023).
+                ...(oneTime ? { one_time: true } : {}),
               },
             ])
           )
@@ -84,13 +90,18 @@ export function useGroceryItems() {
   // Tapping an item puts it in the cart or takes it out — nothing else
   // changes (no stock, history or expense) until the purchase is
   // confirmed. Shared live by both phones; kept and sent later offline.
+  // The tap time goes along as the cart time, only when it goes into the
+  // cart: an entry the other phone put in the cart first keeps its time.
   const toggleCart = useCallback(async (item) => {
     const inCart = !item.in_cart
-    if (isOffline()) return queueCart(item, inCart)
+    const at = new Date().toISOString()
+    if (isOffline()) return queueCart(item, inCart, at)
     const { error } = await attempt(
       async () => {
-        must(await supabase.from('grocery_items').update({ in_cart: inCart }).eq('id', item.id).eq('completed', false))
-        patchLocal(item.id, { in_cart: inCart })
+        const rows = must(await setCart(item.id, inCart, at))
+        // Already in the cart on the other phone: nothing changed here.
+        if (rows.length) groceryStore.upsertLocal(rows)
+        else await groceryStore.refresh()
       },
       { onFail: groceryStore.refresh }
     )
@@ -181,6 +192,54 @@ export function useGroceryItems() {
     [removeWithUndo]
   )
 
+  // × on one variant of a group's SHOP row: that variant is off the list
+  // until it is restocked and runs out again (the database clears the mark
+  // on restock). The row goes when nothing else needs buying. Undo puts it
+  // back.
+  const dismissVariant = useCallback(
+    async (group, variant) => {
+      const refreshBoth = () => Promise.all([pantryStore.refresh(), fetchItems()])
+      const mark = (at) =>
+        attempt(
+          async () => {
+            pantryStore.upsertLocal(await setVariantsDismissed(group, [variant.id], at))
+            await fetchItems()
+          },
+          { onFail: refreshBoth }
+        )
+      const { error } = await mark(new Date().toISOString())
+      if (!error) showToast({ message: `"${variant.name}" taken off the SHOP list`, action: { label: 'Undo', onClick: () => mark(null) } })
+      return { error }
+    },
+    [fetchItems]
+  )
 
-  return { items, addItem, toggleCart, updatePricing, updatePayer, deleteItem }
+  // Deleting a "Not urgent" group row: every variant it lists is taken off
+  // the list (as with ×), so the row doesn't come back by itself; Undo
+  // clears those marks and puts the row back exactly.
+  const removeGroupRow = useCallback(
+    (entry, group) => {
+      const ids = listedOutVariants(group.variants).map((v) => v.id)
+      const refreshBoth = () => Promise.all([pantryStore.refresh(), fetchItems()])
+      return deleteWithUndo({
+        message: `Removed "${entry.name}"`,
+        remove: async () => {
+          const rows = must(await supabase.from('grocery_items').delete().eq('id', entry.id).select())
+          groceryStore.removeLocal([entry.id])
+          if (ids.length) pantryStore.upsertLocal(must(await supabase.from('pantry_items').update({ shop_dismissed_at: new Date().toISOString() }).in('id', ids).select()))
+          return rows
+        },
+        restore: async (rows) => {
+          if (ids.length) pantryStore.upsertLocal(must(await supabase.from('pantry_items').update({ shop_dismissed_at: null }).in('id', ids).select()))
+          if (rows.length) must(await supabase.from('grocery_items').upsert(rows))
+          await fetchItems()
+        },
+        onFail: refreshBoth,
+      })
+    },
+    [fetchItems]
+  )
+
+
+  return { items, addItem, toggleCart, updatePricing, updatePayer, deleteItem, dismissVariant, removeGroupRow }
 }

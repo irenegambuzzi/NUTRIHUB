@@ -1,12 +1,13 @@
 import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, updateRows, upsertRows } from '../lib/inventory'
+import { afterStockChange, changeStock, insertRows, normalizeItem, syncShoppingForItem, toBuyEntriesOf, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
-import { pantryStore, stockLogStore } from '../lib/stores'
+import { groceryStore, pantryStore, stockLogStore } from '../lib/stores'
 import { isOffline } from '../lib/connection'
 import { queueStock } from '../lib/offlineActions'
 import { withGroupTotals } from '../lib/groups'
+import { becameFinished, isOneTime } from '../lib/oneTime'
 
 export const ITEM_FIELDS = [
   'name',
@@ -28,12 +29,45 @@ export const ITEM_FIELDS = [
   'is_group',
   'group_id',
   'usual_shop_id',
+  'one_time',
+  'shop_dismissed_at',
 ]
 
 function pickFields(source) {
   const out = {}
   for (const f of ITEM_FIELDS) if (f in source) out[f] = source[f] === '' ? null : source[f]
   return out
+}
+
+// A one-time item just used up: it moves to "Finished one-time items".
+// Undo puts its stock back (`restore(amount)`).
+function announceFinished(item, amount, restore) {
+  showToast({
+    message: `"${item.name}" is finished — moved to Finished one-time items`,
+    action: amount > 0 ? { label: 'Undo', onClick: () => restore(amount) } : null,
+  })
+}
+
+// Marking an item one-time takes it off "to buy": its open SHOP entries
+// that are neither in a cart nor ordered online (`entries`, read before
+// the change) are removed — typed by hand too. Undo puts them back
+// exactly; the item stays one-time.
+async function takeOffShopList(item, entries) {
+  if (!entries.length) return
+  const ids = entries.map((g) => g.id)
+  await deleteWithUndo({
+    message: `"${item.name}" is one-time: taken off the SHOP list`,
+    remove: async () => {
+      must(await supabase.from('grocery_items').delete().in('id', ids))
+      groceryStore.removeLocal(ids)
+      return entries
+    },
+    restore: async (rows) => {
+      must(await supabase.from('grocery_items').upsert(rows))
+      await groceryStore.refresh()
+    },
+    onFail: groceryStore.refresh,
+  })
 }
 
 export function usePantryItems() {
@@ -52,6 +86,28 @@ export function usePantryItems() {
     return { data }
   }, [])
 
+  // A one-time item used up says so, with Undo (its stock back, logged as
+  // "edited").
+  const adjustStock = useCallback(
+    async function adjust(item, delta, reason = delta > 0 ? 'restocked' : 'used') {
+      const change = Math.round(delta * 100) / 100
+      const before = Number(item.current_stock) || 0
+      const finished = (after) => becameFinished(item, after) && announceFinished(after, before, (amount) => adjust(after, amount, 'edited'))
+      // No signal: kept and sent later (see offlineActions.js).
+      if (isOffline()) {
+        const result = queueStock(item, change, reason)
+        finished({ ...item, current_stock: Math.max(0, before + change) })
+        return result
+      }
+      const { data, error } = await attempt(() => changeStock(item, change, reason), { onFail: fetchItems })
+      if (error) return { error }
+      pantryStore.upsertLocal([data])
+      finished(data)
+      return { error: null }
+    },
+    [fetchItems]
+  )
+
   // Saved from the item editor. The field changes and the stock change
   // are saved together (the fields are put back if the stock fails).
   const updateItem = useCallback(
@@ -60,6 +116,17 @@ export function usePantryItems() {
       // The edited stock is applied as a change from what the form started
       // with, so a concurrent change by someone else isn't overwritten.
       const delta = stock == null ? 0 : Math.round((Number(stock) - Number(item.current_stock)) * 100) / 100
+      // Becoming one-time: what is "to buy" now is read first, so it can
+      // be put back exactly (saving may already remove the automatic one).
+      const flagging = patch.one_time === true && !isOneTime(item) && !item.is_group
+      let toBuy = []
+      if (flagging && !isOffline()) {
+        try {
+          toBuy = await toBuyEntriesOf(item)
+        } catch (readError) {
+          console.error(readError)
+        }
+      }
       const { data, error } = await attempt(
         () =>
           inSteps(async (onFail) => {
@@ -89,22 +156,13 @@ export function usePantryItems() {
           must(await supabase.from('grocery_items').update({ name: data.name }).eq('pantry_item_id', item.id).eq('completed', false))
         )
       }
+      if (flagging) await takeOffShopList(data, toBuy)
+      if (becameFinished(item, data)) announceFinished(data, Number(item.current_stock) || 0, (amount) => adjustStock(data, amount, 'edited'))
       return { data }
     },
-    [fetchItems]
+    [fetchItems, adjustStock]
   )
 
-  const adjustStock = useCallback(
-    async (item, delta, reason = delta > 0 ? 'restocked' : 'used') => {
-      // No signal: kept and sent later (see offlineActions.js).
-      if (isOffline()) return queueStock(item, Math.round(delta * 100) / 100, reason)
-      const { data, error } = await attempt(() => changeStock(item, Math.round(delta * 100) / 100, reason), { onFail: fetchItems })
-      if (error) return { error }
-      pantryStore.upsertLocal([data])
-      return { error: null }
-    },
-    [fetchItems]
-  )
 
   // Throws away an expired item's stock (logged as "discarded") and
   // clears its expiry date, which described the stock that's gone. Undo

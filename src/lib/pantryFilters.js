@@ -1,4 +1,4 @@
-import { expiryState, stockFill, stockStatus } from './inventory'
+import { expiryState, shownStatus, stockFill } from './inventory'
 
 // Sorting, searching and filtering the pantry list.
 
@@ -15,7 +15,7 @@ export const SORTS = {
   stockAsc: { label: 'Stock: lowest first', fn: (a, b) => Number(a.current_stock) - Number(b.current_stock) || byName(a, b) },
   restock: {
     label: 'Needs restock first',
-    fn: (a, b) => STATUS_ORDER[stockStatus(a)] - STATUS_ORDER[stockStatus(b)] || stockFill(a) - stockFill(b),
+    fn: (a, b) => STATUS_ORDER[shownStatus(a)] - STATUS_ORDER[shownStatus(b)] || stockFill(a) - stockFill(b),
   },
   expiry: { label: 'Expiry date', fn: (a, b) => (a.expiry_date ?? '9999').localeCompare(b.expiry_date ?? '9999') },
   recent: { label: 'Newest', fn: (a, b) => b.created_at.localeCompare(a.created_at) },
@@ -39,8 +39,9 @@ export function matchesExpiry(item, filter) {
   return state === filter
 }
 
+// A one-time item is never Low or Out (see oneTime.js).
 export function matchesStatus(item, filter) {
-  const status = stockStatus(item)
+  const status = shownStatus(item)
   if (filter === 'all') return true
   if (filter === 'attention') return status !== 'ok'
   return status === filter

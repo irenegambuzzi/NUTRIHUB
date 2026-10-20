@@ -15,6 +15,7 @@ import { roundQuantity, unitFactor } from '../../lib/inventory'
 import { priceUnitOptions } from '../../lib/pricing'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
+import { OneTimeToggle } from './OneTimeToggle'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
@@ -40,6 +41,7 @@ function initialState(item, group, prefill) {
     price_qty: item?.price_qty ? String(item.price_qty) : '1',
     price_unit: item?.price_unit ?? '',
     usual_shop_id: item?.usual_shop_id ?? group?.usual_shop_id ?? '',
+    one_time: Boolean(item?.one_time),
   }
 }
 
@@ -153,6 +155,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     setForm((f) => ({ ...f, group_id: id }))
   }
 
+  const oneTime = !isGroup && form.one_time
   const perPack = parseDecimal(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
@@ -204,7 +207,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
       // Only sent when it changes: until supabase/018 has been run the
       // column doesn't exist.
       ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
-      min_stock: roundQuantity(form.min_stock, form.unit),
+      // A one-time item has no minimum: a new one gets 0, an edited one
+      // keeps what it had (the field is only hidden).
+      min_stock: oneTime && !item ? 0 : roundQuantity(form.min_stock, form.unit),
+      // A group can never be one-time (the database refuses it too).
+      ...(!isGroup ? { one_time: form.one_time } : {}),
       notes: form.notes.trim() || null,
       ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
       ...(parseDecimal(form.price) > 0
@@ -347,9 +354,21 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           )}
         </div>
 
+        {!isGroup && (
+          <OneTimeToggle
+            checked={form.one_time}
+            onChange={(checked) => setForm((f) => ({ ...f, one_time: checked }))}
+            hint={
+              item?.one_time && !form.one_time
+                ? 'Turning it off makes it a normal item: at 0 it is Out and goes on the SHOP list like any other.'
+                : undefined
+            }
+          />
+        )}
+
         <div className="grid grid-cols-2 gap-2">
           {!isGroup && (
-          <div>
+          <div className={oneTime ? 'col-span-2' : undefined}>
             <div className="flex justify-between items-center">
               <Label>Current stock</Label>
               {form.multipack && (
@@ -366,11 +385,13 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             <DecimalHint value={form.current_stock} />
           </div>
           )}
+          {!oneTime && (
           <div className={isGroup ? 'col-span-2' : undefined}>
             <Label>Minimum stock ({form.unit})</Label>
             <DecimalInput value={form.min_stock} onChange={set('min_stock')} onBlur={snap('min_stock')} />
             <DecimalHint value={form.min_stock} />
           </div>
+          )}
         </div>
         {form.multipack && form.stockInPacks && (
           <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
@@ -379,8 +400,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         )}
         <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
           {isGroup
-            ? "The group goes on the grocery list as one line when the total of its variants falls to the minimum or below."
-            : form.group_id
+            ? 'The group goes on the grocery list as one line when the total of its variants falls to the minimum or below, or when one of its variants is at 0.'
+            : oneTime
+              ? 'One-time: no minimum, and it never goes on the grocery list by itself.'
+              : form.group_id
               ? "While it's in a group, the group's minimum decides when to buy — this one isn't used."
               : 'It goes on the grocery list automatically when stock falls to the minimum or below.'}
         </p>

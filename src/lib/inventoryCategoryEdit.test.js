@@ -85,8 +85,10 @@ describe('HOME names are unique across every level', () => {
     expect(nameProblem(categories, 'Cheese')).toBeNull()
   })
 
-  it('lets Home & Appliances be renamed', () => {
-    expect(renameProblem(categories, 'appliances', 'House & Appliances')).toBeNull()
+  it('never renames Home & Appliances (locked like in MONEY)', () => {
+    expect(renameProblem(categories, 'appliances', 'House & Appliances')).toBe('"Home & Appliances" is locked: it can\'t be renamed, moved or deleted.')
+    // Its sub-categories can still be renamed.
+    expect(renameProblem(categories, 'appliances:air', 'Heating & Cooling')).toBeNull()
   })
 })
 
@@ -111,8 +113,8 @@ describe('moving a category', () => {
   })
 
   it('never moves Home & Appliances, or anything into or out of it', () => {
-    expect(moveProblem(categories, 'appliances', 'misc')).toMatch(/can't be moved \(it can be renamed\)/)
-    expect(moveProblem(categories, 'appliances', null)).toMatch(/can't be moved/)
+    expect(moveProblem(categories, 'appliances', 'misc')).toMatch(/is locked: it can't be renamed, moved or deleted/)
+    expect(moveProblem(categories, 'appliances', null)).toMatch(/is locked: it can't be renamed, moved or deleted/)
     expect(moveProblem(categories, 'laundry:parfume', 'appliances')).toMatch(/nothing moves into or out of it/)
     expect(moveProblem(categories, 'appliances:air', 'misc')).toMatch(/nothing moves into or out of it/)
     expect(moveProblem(categories, 'appliances:air', null)).toMatch(/nothing moves into or out of it/)
@@ -126,8 +128,8 @@ describe('moving a category', () => {
 })
 
 describe('deleting a category', () => {
-  it('never deletes Home & Appliances (it can be renamed)', () => {
-    expect(deleteProblem(categories, 'appliances')).toMatch(/can't be deleted \(it can be renamed\)/)
+  it('never deletes Home & Appliances', () => {
+    expect(deleteProblem(categories, 'appliances')).toMatch(/is locked: it can't be renamed, moved or deleted/)
     expect(deleteProblem(categories, 'appliances:air')).toBeNull()
     expect(deleteProblem(categories, 'snacks')).toBeNull()
   })
@@ -179,7 +181,7 @@ describe('moving the items of a deleted category (merge)', () => {
   })
 
   it('never deletes Home & Appliances itself', () => {
-    expect(mergeProblem(categories, 'appliances', 'snacks')).toMatch(/can't be deleted/)
+    expect(mergeProblem(categories, 'appliances', 'snacks')).toMatch(/is locked: it can't be renamed, moved or deleted/)
   })
 
   it('merges the hand-made Frozen Vegetables into the seeded one', () => {

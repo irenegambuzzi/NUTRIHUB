@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Check, Globe, Minus, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Fragment, useState } from 'react'
+import { Check, Globe, Minus, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker } from './shared'
 import { payerLabel } from '../../lib/grocery'
@@ -15,8 +16,10 @@ import { formatStockUnitPrice, formatUnitPrice, lineTotal, money, priceUnitOptio
 
 // `onOrderOnline` (supabase/021) adds "Order online"; it is the main
 // action when the item's usual store is online (`orderFirst`,
-// `usualShop`).
-export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onOrderOnline = null, orderFirst = false, usualShop = null }) {
+// `usualShop`). `oneTime`: a one-time purchase (grey "1×"). For a group's
+// row, `outVariants` are the variants at 0 it lists ("— out: …"), each
+// with × (`onDismissVariant`) to take just that one off the list.
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false, outVariants = [], onDismissVariant = null }) {
   const c = inventoryCategoryColor(item.category_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
@@ -61,8 +64,8 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
   }
 
   // Background follows why the item is here: red Out, yellow Low,
-  // purple Expired, blue New; items already in stock keep their
-  // category colour.
+  // purple Expired, blue New, light sky Not urgent (a group with a variant
+  // at 0); items already in stock keep their category colour.
   const tone = STATUS_STYLES[reason]?.tile ?? cn(c.bg, c.border)
 
   return (
@@ -97,7 +100,33 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
           {item.in_cart && 'In the cart · '}
           {categoryName(item.category_id)}
         </p>
+        {oneTime && <OneTimeBadge className="inline-block mt-1" />}
       </button>
+
+      {outVariants.length > 0 && (
+        <p className="text-[11px] text-[var(--color-text-soft)] mt-1 leading-relaxed">
+          — out:{' '}
+          {outVariants.map((v, i) => (
+            <Fragment key={v.id}>
+            {i > 0 && ', '}
+            <span className="inline-flex items-center">
+              {v.name}
+              {onDismissVariant && !item.in_cart && (
+                <button
+                  type="button"
+                  onClick={() => onDismissVariant(v)}
+                  aria-label={`Take ${v.name} off the SHOP list`}
+                  title="Take this one off the list (until it is restocked and runs out again)"
+                  className="w-9 h-9 -my-3 -mr-2 flex items-center justify-center text-[var(--color-icon-muted)] hover:text-rose-400"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </span>
+            </Fragment>
+          ))}
+        </p>
+      )}
 
       <div className="flex items-center gap-1 mt-1.5">
         <button

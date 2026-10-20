@@ -4,6 +4,7 @@ import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
 import { ShopPicker } from '../expenses/ShopPicker'
@@ -13,6 +14,8 @@ import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
 import { editPatch, editedItem, purchaseLine } from '../../lib/purchase'
+import { variantOrder } from '../../lib/groups'
+import { entryIsOneTime } from '../../lib/oneTime'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { usePurchase } from '../../hooks/usePurchase'
@@ -362,7 +365,10 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
       <div className="flex items-start gap-2">
         <CategoryIcon category={item.category_id} size={16} className="mt-0.5 text-[var(--color-text-muted)]" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-[var(--color-text)] truncate">{item.name}</p>
+          <p className="text-sm font-bold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
+            <span className="truncate">{item.name}</span>
+            {entryIsOneTime(item, pantry) && <OneTimeBadge className="shrink-0" />}
+          </p>
           <p className="text-[10px] text-[var(--color-text-muted)]">
             {[item.category_id && categoryName(item.category_id), unitPrice, pantry ? `restocks "${pantry.name}"` : line.durable ? 'expense only' : 'new in the pantry'].filter(Boolean).join(' · ')}
           </p>
@@ -421,13 +427,13 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
         <div className={cn('rounded-xl border p-2 space-y-1.5', needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>
           <p className="text-[11px] text-[var(--color-text-soft)]">Which variant of "{group.name}" gets this stock?</p>
           <Select
-            value={answer.newVariantName !== undefined && !answer.variantId ? 'new' : answer.variantId ?? ''}
+            value={answer.newVariantName !== undefined && !answer.variantId ? 'new' : line.target?.id ?? ''}
             onChange={(e) => (e.target.value === 'new' ? onAnswer({ variantId: null, newVariantName: answer.newVariantName ?? '' }) : onAnswer({ variantId: e.target.value || null, newVariantName: undefined }))}
             aria-label={`Variant for ${item.name}`}
             className="text-xs p-2"
           >
             <option value="">Choose a variant…</option>
-            {(group.variants ?? []).map((v) => (
+            {variantOrder(group.variants).map((v) => (
               <option key={v.id} value={v.id}>
                 {v.name} ({v.current_stock} {v.unit})
               </option>

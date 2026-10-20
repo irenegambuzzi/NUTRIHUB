@@ -5,12 +5,16 @@ import { CategoryIcon } from '../ui/CategoryIcon'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
+import { isOneTime } from '../../lib/oneTime'
+import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, RESTOCK_LABELS, STATUS_STYLES } from '../../lib/inventoryStyles'
 
 export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
+  // A one-time purchase (1×) has no minimum and is never Low or Out.
+  const oneTime = isOneTime(item)
   // Tile colour: red Out, purple Expired, yellow Low, green OK.
   const tone = displayReason(item) || 'ok'
   const [restocking, setRestocking] = useState(false)
@@ -48,7 +52,11 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
       )}
 
       <div className="flex flex-wrap gap-1 mt-1.5">
-        <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', STATUS_STYLES[status].badge)}>{STOCK_STATUS_LABELS[status]}</span>
+        {oneTime ? (
+          <OneTimeBadge className="self-center" />
+        ) : (
+          <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', STATUS_STYLES[status].badge)}>{STOCK_STATUS_LABELS[status]}</span>
+        )}
         {isNew && (
           <span className={cn('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full self-center', RESTOCK_LABELS.new.className)}>{RESTOCK_LABELS.new.label}</span>
         )}
@@ -65,7 +73,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
         <div className={cn('h-full rounded-full transition-all', STATUS_STYLES[tone].bar)} style={{ width: `${stockFill(item) * 100}%` }} />
       </div>
       <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-        min {Number(item.min_stock) || 0} {item.unit}
+        {oneTime ? 'one-time' : `min ${Number(item.min_stock) || 0} ${item.unit}`}
         {unitPrice && <span className="font-mono text-[var(--color-accent)]"> · {unitPrice}</span>}
       </p>
 

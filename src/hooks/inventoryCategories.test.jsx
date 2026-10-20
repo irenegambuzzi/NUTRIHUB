@@ -130,9 +130,10 @@ describe('renaming', () => {
     expect(supabase.from).not.toHaveBeenCalled()
   })
 
-  it('allows renaming Home & Appliances', async () => {
+  it('never renames Home & Appliances, and never calls the database for it', async () => {
     const result = await hook().current.renameCategory('appliances', 'House & Appliances')
-    expect(result.error).toBeNull()
+    expect(result.error.message).toMatch(/is locked: it can't be renamed, moved or deleted/)
+    expect(supabase.from).not.toHaveBeenCalled()
   })
 
   it('shows the built-in "Beauty Care" only while the stored name is the original, then the renamed one', () => {
@@ -152,7 +153,7 @@ describe('moving', () => {
 
   it('never moves Home & Appliances, and never calls the database for it', async () => {
     const result = await hook().current.moveSubcategory('appliances', 'snacks')
-    expect(result.error.message).toMatch(/can't be moved/)
+    expect(result.error.message).toMatch(/is locked: it can't be renamed, moved or deleted/)
     expect(calls.rpc).toEqual([])
   })
 
@@ -206,7 +207,7 @@ describe('deleting', () => {
 
   it('never deletes Home & Appliances', async () => {
     const result = await hook().current.deleteCategory('appliances', 'snacks')
-    expect(result.error.message).toMatch(/can't be deleted/)
+    expect(result.error.message).toMatch(/is locked: it can't be renamed, moved or deleted/)
     expect(calls.rpc).toEqual([])
   })
 

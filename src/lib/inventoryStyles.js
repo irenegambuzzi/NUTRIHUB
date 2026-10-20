@@ -6,6 +6,8 @@
 //   out     → red    rgba(239,68,68)
 //   expired → purple rgba(168,85,247)
 //   new     → blue   rgba(59,130,246)  (grocery items not in the pantry)
+//   not-urgent → sky rgba(56,189,248)  (a group with a variant at 0 but
+//                enough in total; lighter than the blue of "New Item")
 export const STATUS_STYLES = {
   ok: {
     tile: 'bg-[rgba(34,197,94,0.15)] border-[rgba(34,197,94,0.35)]',
@@ -37,7 +39,17 @@ export const STATUS_STYLES = {
     bar: 'bg-blue-500',
     text: 'text-blue-300',
   },
+  'not-urgent': {
+    tile: 'bg-[rgba(56,189,248,0.08)] border-[rgba(56,189,248,0.3)]',
+    badge: 'bg-sky-400/15 text-sky-200',
+    bar: 'bg-sky-400',
+    text: 'text-sky-200',
+  },
 }
+
+// The neutral grey "1×" label of a one-time purchase (grey is only used
+// for this).
+export const ONE_TIME_BADGE = 'bg-zinc-500/25 text-zinc-300'
 
 export const EXPIRY_STYLES = {
   expired: STATUS_STYLES.expired.badge,
@@ -52,4 +64,5 @@ export const RESTOCK_LABELS = {
   low: { label: 'Low Stock', className: STATUS_STYLES.low.badge },
   expired: { label: 'Expired', className: STATUS_STYLES.expired.badge },
   new: { label: 'New Item', className: STATUS_STYLES.new.badge },
+  'not-urgent': { label: 'Not urgent', className: STATUS_STYLES['not-urgent'].badge },
 }

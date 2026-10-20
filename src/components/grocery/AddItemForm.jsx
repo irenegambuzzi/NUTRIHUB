@@ -14,6 +14,8 @@ import { cn } from '../../lib/cn'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
+import { isOneTime } from '../../lib/oneTime'
+import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { priceUnitOptions } from '../../lib/pricing'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
@@ -52,6 +54,9 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const [quantity, setQuantity] = useState('1')
   const [unit, setUnit] = useState(initial.unit ?? DEFAULT_UNIT)
   const [payer, setPayer] = useState('shared')
+  // One-time purchase (1×), for something not in HOME yet: Confirm
+  // purchase makes its new HOME item one-time too.
+  const [oneTime, setOneTime] = useState(false)
 
   // Suggest category/subcategory from the name until the user picks one.
   const handleNameChange = (value) => {
@@ -89,6 +94,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
       unit,
       payer,
       pantryItemId: known?.id ?? null,
+      oneTime: !known && oneTime,
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
@@ -100,6 +106,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     setQuantity('1')
     setCategoryTouched(false)
     setSuggested(false)
+    setOneTime(false)
     onAdded?.()
   }
 
@@ -149,6 +156,11 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
           <p className={cn('text-[11px] flex items-center gap-1.5 -mt-1', STATUS_STYLES.low.text)}>
             <AlertTriangle size={12} /> "{unit}" is unusual for {categoryName(categoryId)} (usually {suggestedUnits.join(', ')}).
           </p>
+        )}
+        {formPack ? (
+          isOneTime(formPack) && <p className="text-[11px] text-[var(--color-text-muted)]">"{formPack.name}" is a one-time purchase (1×) in HOME — change it there.</p>
+        ) : (
+          <OneTimeToggle checked={oneTime} onChange={setOneTime} />
         )}
         <div className="flex items-center gap-2">
           <span className="text-xs text-[var(--color-text-muted)]">Paid by</span>

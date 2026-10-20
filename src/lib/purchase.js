@@ -1,5 +1,6 @@
 import { expiryState, isDurable, toBaseQuantity } from './inventory'
 import { normName } from './grocery'
+import { firstOutVariant } from './groups'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -37,7 +38,8 @@ export function packSizePatch(pantry, unit, packSize) {
 // expiryDate, variantId / newVariantName } from the user.
 //   needsPackSize   – the list unit can't be converted to the pantry's
 //   needsVariant    – the entry is a group: which of its variants gets the
-//                     stock (or the name of a new one)
+//                     stock (or the name of a new one); the first out
+//                     variant is taken until the user chooses
 //   expired         – the pantry item has expired (with stock: must choose
 //                     to throw it away or keep it; the new date is optional)
 //   ready           – every question that must be answered is
@@ -47,7 +49,11 @@ export function purchaseLine(item, pantryItems, answer = {}) {
   const durable = isDurable(item)
   const entry = durable ? null : pantryItemFor(item, pantryItems)
   const group = entry?.is_group ? entry : null
-  const chosen = group ? pantryItems.find((p) => p.id === answer.variantId && p.group_id === group.id) ?? null : entry
+  // Until the user picks one, a group line takes the first variant its
+  // SHOP row lists as out (they can change it, or pick none).
+  const untouched = answer.variantId === undefined && answer.newVariantName === undefined
+  const variantId = group && untouched ? firstOutVariant(group.variants)?.id : answer.variantId
+  const chosen = group ? pantryItems.find((p) => p.id === variantId && p.group_id === group.id) ?? null : entry
   const newVariant = group && !chosen ? answer.newVariantName?.trim() || null : null
   const add = entry ? purchasedQuantity(entry, item, answer.packSize) : durable ? 0 : Number(item.quantity) || 1
   const needsPackSize = Boolean(entry) && add === null

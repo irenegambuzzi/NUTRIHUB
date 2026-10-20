@@ -25,10 +25,11 @@ function showStock(pantry, delta) {
 }
 
 // In or out of the cart; the last tap wins, so sending it late or twice
-// changes nothing else.
-export function queueCart(item, inCart) {
-  enqueue('cart', { id: item.id, inCart }, { key: item.id, label: `${inCart ? 'putting' : 'taking'} "${item.name}" ${inCart ? 'in' : 'out of'} the cart` })
-  groceryStore.patchLocal([item.id], { in_cart: inCart })
+// changes nothing else. `at` is the tap time: sent later, it is still the
+// entry's cart time (the database keeps a time the app sends).
+export function queueCart(item, inCart, at = new Date().toISOString()) {
+  enqueue('cart', { id: item.id, inCart, at }, { key: item.id, label: `${inCart ? 'putting' : 'taking'} "${item.name}" ${inCart ? 'in' : 'out of'} the cart` })
+  groceryStore.patchLocal([item.id], { in_cart: inCart, cart_added_at: inCart ? item.cart_added_at || at : null })
   return { error: null }
 }
 
@@ -44,9 +45,25 @@ export function queueStock(item, delta, reason) {
   return { error: null }
 }
 
-const setInCart = async ({ id, inCart }) => {
+// Puts an open entry in the cart (with the tap time, when known) or takes
+// it out; returns the query, which gives the changed rows. Going into the
+// cart only changes an entry that isn't in it yet, so an entry already in
+// the cart (the other phone was first) keeps its time; leaving it, the
+// database clears the time (trigger grocery_items_cart_time).
+export function setCart(id, inCart, at = null) {
+  const query = supabase.from('grocery_items')
+  if (!inCart) return query.update({ in_cart: false }).eq('id', id).eq('completed', false).select()
+  return query
+    .update({ in_cart: true, ...(at ? { cart_added_at: at } : {}) })
+    .eq('id', id)
+    .eq('completed', false)
+    .not('in_cart', 'is', true)
+    .select()
+}
+
+const setInCart = async ({ id, inCart, at = null }) => {
   // Only while not bought yet.
-  must(await supabase.from('grocery_items').update({ in_cart: inCart }).eq('id', id).eq('completed', false))
+  must(await setCart(id, inCart, at))
 }
 
 registerHandler('cart', setInCart)

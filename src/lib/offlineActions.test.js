@@ -46,7 +46,16 @@ describe('offline changes', () => {
     expect(stock()).toBe(before)
     const ops = getQueue().filter((op) => op.type === 'cart' && op.key === 'g1')
     expect(ops).toHaveLength(1)
-    expect(ops[0].payload).toEqual({ id: 'g1', inCart: true })
+    expect(ops[0].payload).toEqual({ id: 'g1', inCart: true, at: expect.any(String) })
+  })
+
+  it('keeps the tap time as the cart time, shown at once and sent later (tapped at 10:00, sent at 10:30 → 10:00)', () => {
+    offline.queueCart({ ...entry, in_cart: false }, true, '2026-10-20T10:00:00.000Z')
+    expect(listed().cart_added_at).toBe('2026-10-20T10:00:00.000Z')
+    const op = getQueue().find((o) => o.type === 'cart' && o.key === 'g1')
+    expect(op.payload.at).toBe('2026-10-20T10:00:00.000Z')
+    offline.queueCart(listed(), false, '2026-10-20T10:05:00.000Z')
+    expect(listed().cart_added_at).toBeNull()
   })
 
   it('putting it in and taking it out again offline leaves one "out of the cart" change', () => {
@@ -77,20 +86,26 @@ describe('offline changes', () => {
   it('sends a cart change as just in_cart, and an old queued check-off as a cart change', async () => {
     resetQueueForTest({ keepHandlers: true })
     const updates = []
+    const filters = []
     const query = () => {
-      const q = { eq: () => q, then: (r) => Promise.resolve({ data: null, error: null }).then(r) }
+      const q = { eq: () => q, not: (...args) => (filters.push(args), q), select: () => q, then: (r) => Promise.resolve({ data: [], error: null }).then(r) }
       return q
     }
     client.supabase = { from: (table) => ({ update: (patch) => (updates.push({ table, patch }), query()) }) }
     setOnlineForTest(false)
-    offline.queueCart(entry, true)
+    offline.queueCart(entry, true, '2026-10-20T10:00:00.000Z')
     const { enqueue } = await import('./offlineQueue')
     enqueue('toggle', { id: 'g2', completed: true, options: {} })
     setOnlineForTest(true)
     await vi.waitFor(() => expect(getQueue()).toHaveLength(0))
     expect(updates).toEqual([
+      { table: 'grocery_items', patch: { in_cart: true, cart_added_at: '2026-10-20T10:00:00.000Z' } },
       { table: 'grocery_items', patch: { in_cart: true } },
-      { table: 'grocery_items', patch: { in_cart: true } },
+    ])
+    // Only an entry not in the cart yet changes, so a time is never overwritten.
+    expect(filters).toEqual([
+      ['in_cart', 'is', true],
+      ['in_cart', 'is', true],
     ])
   })
 })
