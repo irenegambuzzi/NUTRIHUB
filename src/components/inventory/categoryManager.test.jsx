@@ -62,6 +62,23 @@ describe('HOME Manage categories', () => {
     expect(screen.getByText(/Used for home and appliance purchases\. Locked: it can't be renamed, moved or deleted\./)).toBeTruthy()
   })
 
+  it('warns about a similar name or a typo while typing, and Add stays possible', async () => {
+    open()
+    fireEvent.change(screen.getByPlaceholderText(/Name \(e\.g\./), { target: { value: 'Snaks' } })
+    expect(screen.getByText(/Similar category exists: Snacks/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Add$/ }))
+    await waitFor(() => expect(api.addCategory).toHaveBeenCalledWith('Snaks'))
+  })
+
+  it('warns while renaming too, without comparing with the category itself', () => {
+    open()
+    fireEvent.click(screen.getByLabelText('Rename Snacks'))
+    fireEvent.change(screen.getByLabelText('New name for Snacks'), { target: { value: 'Snacs' } })
+    expect(screen.queryByText(/Similar category exists/)).toBeNull()
+    fireEvent.change(screen.getByLabelText('New name for Snacks'), { target: { value: 'Frozen Fsh' } })
+    expect(screen.getByText(/Similar category exists: Frozen Food › Frozen Fish/)).toBeTruthy()
+  })
+
   it('refuses to add a name that exists, with the place, without calling the database', () => {
     open()
     fireEvent.change(screen.getByPlaceholderText(/Name \(e\.g\./), { target: { value: 'frozen fish' } })

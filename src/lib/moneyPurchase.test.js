@@ -12,6 +12,7 @@ const {
   listEntryFor,
   listEntryNote,
   moneyPurchasePayload,
+  pricedLines,
   purchaseTotal,
   rowLine,
   rowProblem,
@@ -196,5 +197,104 @@ describe('one row = one normal expense', () => {
     expect(rowProblem(rowLine(row({ name: 'Bread', priceText: '2', quantityText: '0' }), pantry))).toBe('Enter a quantity above 0.')
     // Free, but into HOME: stock only.
     expect(rowProblem(rowLine(row({ name: 'Milk', priceText: '0', unit: 'btl', categoryId: 'dairy' }), pantry))).toBe('')
+  })
+})
+
+describe('discounts in the purchase form', () => {
+  const discounted = (patch, coupon = null, more = []) => pricedLines([rowLine(row(patch), pantry), ...more.map((p) => rowLine(row(p), pantry))], coupon)
+
+  it('Sneakers €80 −30% → the expense is €56; the normal price €80 is what the item keeps', () => {
+    const { lines, priced } = discounted({ name: 'Test sneakers', priceText: '80', discountKind: 'percent', discountText: '30', addToHome: false })
+    expect(lines[0].paid).toBe(56)
+    expect(purchaseTotal(lines)).toBe(56)
+    const [item] = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines, budgetFor: () => 'g', priced }).items
+    expect(item).toMatchObject({ price: 80, price_qty: 1, line_total: 56, list_total: 80, item_discount_kind: 'percent', item_discount_value: 30 })
+    expect(item.coupon_share).toBeUndefined()
+  })
+
+  it('Jacket €120 −€25 → €95', () => {
+    const { lines } = discounted({ name: 'Jacket', priceText: '120', discountKind: 'amount', discountText: '25', addToHome: false })
+    expect(lines[0].paid).toBe(95)
+  })
+
+  it('a discount larger than the price (or above 100%) is refused with the reason, and nothing can be saved', () => {
+    const big = discounted({ name: 'Jacket', priceText: '20', discountKind: 'amount', discountText: '25', addToHome: false }).lines[0]
+    expect(rowProblem(big)).toBe('The discount (€25) is bigger than the price (€20).')
+    const over = discounted({ name: 'Jacket', priceText: '20', discountKind: 'percent', discountText: '120', addToHome: false }).lines[0]
+    expect(rowProblem(over)).toBe("A discount can't be more than 100%.")
+  })
+
+  it('100% off with Add to HOME off pays nothing, so it is refused; with Add to HOME on it is stock only', () => {
+    const off = discounted({ name: 'Gift', priceText: '10', discountKind: 'percent', discountText: '100', addToHome: false }).lines[0]
+    expect(rowProblem(off)).toMatch(/Nothing is paid/)
+    const on = discounted({ name: 'Milk', priceText: '10', unit: 'btl', categoryId: 'dairy', discountKind: 'percent', discountText: '100' }).lines[0]
+    expect(rowProblem(on)).toBe('')
+    expect(on.paid).toBe(0)
+  })
+
+  it('€200 = Groceries €120 + Groceries €60 + Pets €20, coupon −€50 → €90 + €45 + €15 = €150, sent as shares', () => {
+    const { lines, priced } = discounted(
+      { name: 'Pasta set', priceText: '120', categoryId: 'dairy' },
+      { kind: 'amount', text: '50' },
+      [
+        { name: 'Cheese', priceText: '60', categoryId: 'dairy' },
+        { name: 'Cat food', priceText: '20', categoryId: 'pet', addToHome: false },
+      ]
+    )
+    expect(lines.map((l) => l.paid)).toEqual([90, 45, 15])
+    expect(purchaseTotal(lines)).toBe(150)
+    const payload = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines, budgetFor: (l) => budgetOf(l.row, ctx), priced })
+    expect(payload).toMatchObject({ coupon_kind: 'amount', coupon_value: 50, coupon_total: 50 })
+    expect(payload.items.map((i) => [i.price, i.list_total, i.line_total, i.coupon_share])).toEqual([
+      [120, 120, 90, 30],
+      [60, 60, 45, 15],
+      [20, 20, 15, 5],
+    ])
+  })
+
+  it('item discounts first, then the coupon over what is left', () => {
+    const { lines } = discounted(
+      { name: 'Pasta set', priceText: '10', addToHome: false },
+      { kind: 'amount', text: '5' },
+      [{ name: 'Sun lotion', priceText: '12', discountKind: 'percent', discountText: '30', addToHome: false }, { name: 'Dinner', priceText: '20', addToHome: false }]
+    )
+    expect(lines.map((l) => l.paid)).toEqual([8.7, 7.31, 17.39])
+    expect(purchaseTotal(lines)).toBe(33.4)
+  })
+
+  it('a coupon needs two items or more: with one row it is ignored (the row has its own discount)', () => {
+    const { lines, priced } = discounted({ name: 'Jacket', priceText: '100', addToHome: false }, { kind: 'amount', text: '10' })
+    expect(lines[0].paid).toBe(100)
+    expect(priced.couponTotal).toBe(0)
+  })
+
+  it('a single expense with a discount is saved as a one-line purchase, so its history has a line; without one it stays plain', () => {
+    const withDiscount = discounted({ name: 'Sneakers', priceText: '80', discountKind: 'percent', discountText: '30', addToHome: false }).lines
+    expect(savesAsPlainExpense(withDiscount)).toBe(false)
+    const plain = discounted({ name: 'Sneakers', priceText: '80', addToHome: false }).lines
+    expect(savesAsPlainExpense(plain)).toBe(true)
+  })
+
+  it('the HOME item keeps the NORMAL price: Nutella €6.00 −50% records €3.00 but sends price 6', () => {
+    const { lines, priced } = discounted({ name: 'Nutella', priceText: '6', categoryId: 'dairy', discountKind: 'percent', discountText: '50' })
+    const [item] = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines, budgetFor: () => 'g', priced }).items
+    expect(item).toMatchObject({ price: 6, price_qty: 1, line_total: 3, list_total: 6 })
+  })
+
+  it('with a coupon too: Nutella recorded €4.50, price still 6', () => {
+    const { lines, priced } = discounted(
+      { name: 'Nutella', priceText: '6', categoryId: 'dairy', discountKind: 'percent', discountText: '50' },
+      { kind: 'amount', text: '1,5' },
+      [{ name: 'Bread', priceText: '3', categoryId: 'dairy' }]
+    )
+    // after the item discount: 3 + 3 = 6; coupon 1.50 → 0.75 each; Nutella pays 2.25
+    expect(lines[0].paid).toBe(2.25)
+    expect(moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines, budgetFor: () => 'g', priced }).items[0]).toMatchObject({ price: 6, line_total: 2.25, list_total: 6, coupon_share: 0.75 })
+  })
+
+  it('a purchase without any discount sends the same as before, plus its normal price', () => {
+    const { lines, priced } = discounted({ name: 'Cat food', priceText: '20', categoryId: 'pet', addToHome: false })
+    const [item] = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines, budgetFor: () => 'pets', priced }).items
+    expect(item).toEqual({ name: 'Cat food', category_id: 'pet', subcategory_id: null, quantity: 1, unit: 'pcs', price: 20, price_qty: 1, price_unit: 'pcs', line_total: 20, list_total: 20, payer: 'irene', expense_category_id: 'pets', durable: true })
   })
 })

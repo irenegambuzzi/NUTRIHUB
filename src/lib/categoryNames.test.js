@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findExisting, freeNameSuggestions, nameKey, sameName, similarName, synonymsOf, takenMessage } from './categoryNames'
+import { editDistance, findExisting, freeNameSuggestions, nameDistance, nameKey, sameName, similarCategories, similarName, synonymsOf, takenMessage } from './categoryNames'
 
 const categories = [
   { id: 'shopping', name: 'Shopping', parent_id: null },
@@ -46,6 +46,53 @@ describe('findExisting (the cross-check before "+ New category")', () => {
   it('returns null when nothing is similar or the name is empty', () => {
     expect(findExisting('Kefir', categories)).toBeNull()
     expect(findExisting('  ', categories)).toBeNull()
+  })
+})
+
+describe('typo distance (Damerau-Levenshtein)', () => {
+  it.each([
+    ['gift', 'gift', 0],
+    ['gfit', 'gift', 1], // two neighbouring letters swapped
+    ['git', 'gift', 1], // a letter missing
+    ['gifft', 'gift', 1], // a letter extra
+    ['gafts', 'gifts', 1], // a letter wrong
+    ['', 'abc', 3],
+    ['kitten', 'sitting', 3],
+  ])('%s → %s is %i', (a, b, distance) => {
+    expect(editDistance(a, b)).toBe(distance)
+  })
+
+  it('allows 1 typo for names of 4 letters or fewer, 2 for longer ones', () => {
+    expect(nameDistance('Car', 'Cart')).toBe(1)
+    expect(nameDistance('Cat', 'Cart')).toBe(1)
+    expect(nameDistance('Cabs', 'Cart')).toBeNull() // 2 apart, short names
+    expect(nameDistance('Resturant', 'Restaurant')).toBe(1)
+    expect(nameDistance('Restarant', 'Restaurant')).toBe(1)
+    expect(nameDistance('Resturnat', 'Restaurant')).toBe(2)
+    expect(nameDistance('Garden', 'Gardening')).toBeNull() // 3 apart
+    expect(nameDistance('', 'Gifts')).toBeNull()
+  })
+
+  it('"Gfits", "Gits" and "Giffts" are all similar to "Gifts"', () => {
+    for (const typo of ['Gfits', 'Gits', 'Giffts']) expect(similarCategories(typo, categories).map((c) => c.id)).toEqual(['gifts'])
+  })
+
+  it('shows at most 3, closest first, and never the category being renamed', () => {
+    const list = [
+      { id: 'a', name: 'Gifte', parent_id: null }, // 1 away
+      { id: 'b', name: 'Gift', parent_id: null }, // same name once singular
+      { id: 'c', name: 'Gifta', parent_id: null },
+      { id: 'd', name: 'Giftz', parent_id: null },
+      { id: 'e', name: 'Hats', parent_id: null },
+    ]
+    expect(similarCategories('Gifts', list).map((c) => c.id)).toEqual(['b', 'a', 'c'])
+    expect(similarCategories('Gifts', list, { exceptId: 'b' }).map((c) => c.id)).toEqual(['a', 'c', 'd'])
+    expect(similarCategories('Gifts', list, { limit: 1 }).map((c) => c.id)).toEqual(['b'])
+  })
+
+  it('a different word is not similar', () => {
+    expect(similarCategories('Kefir', categories)).toEqual([])
+    expect(similarCategories('  ', categories)).toEqual([])
   })
 })
 

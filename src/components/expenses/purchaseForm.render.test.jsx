@@ -127,6 +127,59 @@ describe('MONEY Add expense: the purchase form', () => {
     ])
   })
 
+  it('Sneakers €80 with −30% shows "€80 → €56 (−30%)" and is saved as a one-line purchase of €56 (nothing goes to HOME)', async () => {
+    recordMoneyPurchase.mockResolvedValue({ error: null })
+    form()
+    type('Name', 'Test sneakers')
+    type('Price', '80')
+    type('Discount', '30')
+    expect(screen.getByText('€80 → €56 (−30%)')).toBeTruthy()
+    expect(screen.queryByLabelText('Purchase discount')).toBeNull() // one item: no coupon
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €56.00' }))
+    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    const [item] = recordMoneyPurchase.mock.calls[0][0].payload.items
+    expect(item).toMatchObject({ name: 'Test sneakers', price: 80, line_total: 56, list_total: 80, item_discount_kind: 'percent', item_discount_value: 30, durable: true })
+  })
+
+  it('a discount bigger than the price is refused with a message, nothing is sent', async () => {
+    form()
+    type('Name', 'Test jacket')
+    type('Price', '20')
+    fireEvent.click(screen.getByRole('button', { name: 'Discount in euros' }))
+    type('Discount', '25')
+    expect(screen.getByText('The discount (€25) is bigger than the price (€20).')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Add expense|Save purchase/ }))
+    expect(recordMoneyPurchase).not.toHaveBeenCalled()
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+  })
+
+  it('three rows €120 + €60 + €20 with a Purchase discount of −€50: €90 + €45 + €15 = €150, sent with the coupon', async () => {
+    recordMoneyPurchase.mockResolvedValue({ error: null })
+    form()
+    for (const [n, name, price] of [[null, 'Test one', '120'], [2, 'Test two', '60'], [3, 'Test three', '20']]) {
+      if (n) fireEvent.click(screen.getByRole('button', { name: 'Add item' }))
+      type(n ? `Name of item ${n}` : 'Name', name)
+      type(n ? `Price of item ${n}` : 'Price', price)
+    }
+    expect(screen.getByLabelText('Purchase discount')).toBeTruthy()
+    type('Purchase discount', '50')
+    expect(screen.getByText('Purchase discount share −€30.00 → you pay €90.00')).toBeTruthy()
+    expect(screen.getByText('Purchase discount share −€5.00 → you pay €15.00')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €150.00' }))
+    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
+    const { payload } = recordMoneyPurchase.mock.calls[0][0]
+    expect(payload).toMatchObject({ coupon_kind: 'amount', coupon_value: 50, coupon_total: 50 })
+    expect(payload.items.map((i) => [i.list_total, i.line_total, i.coupon_share])).toEqual([[120, 90, 30], [60, 45, 15], [20, 15, 5]])
+  })
+
+  it('typing a name again fills the NORMAL price, never the discounted one', () => {
+    data.last = { price: 6, quantity: 1, unit: 'pcs' }
+    form()
+    type('Name', 'Nutella')
+    expect(screen.getByLabelText('Price').value).toBe('6.00')
+  })
+
   it('an existing HOME item says where the stock goes and that its SHOP entry leaves the list', () => {
     form()
     type('Name', 'Milk')

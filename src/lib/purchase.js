@@ -1,6 +1,7 @@
 import { expiryState, isDurable, toBaseQuantity } from './inventory'
 import { normName } from './grocery'
 import { firstOutVariant } from './groups'
+import { couponFields, lineDiscountFields, priceLines } from './discounts'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -78,14 +79,33 @@ export function purchaseLine(item, pantryItems, answer = {}) {
   }
 }
 
+// The discounts of the confirm screen worked out: each item's own discount
+// (`discounts`: item id → { kind, text }) first, then the coupon (`coupon`:
+// { kind, text }, for two items or more) spread over what is left.
+// `items` are the edited items of the trip; totalOf(item) is the NORMAL
+// price of the line. → { priced, byItem } as confirmationPayload wants it.
+export function purchasePricing(items, totalOf, discounts = {}, coupon = null) {
+  const priced = priceLines(
+    items.map((item) => ({ list: totalOf(item) ?? NaN, discount: discounts[item.id] })),
+    items.length > 1 ? coupon : null
+  )
+  return { priced, byItem: new Map(items.map((item, i) => [item.id, priced.lines[i]])) }
+}
+
 // The payload for confirm_shopping_trip. totalOf(item) is the line total
 // (null when it can't be worked out: no expense then); expenseCategoryFor
 // (item) the expense category id.
 // `variantIds`: the ids of the new variants made for group lines (item id → id).
 // `shopId` / `paidBy`: the trip's store and payer (supabase/021; an older
 // database ignores them).
-export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null }) {
+// `pricing`: the discounts typed on the confirm screen (priceLines() of
+// lib/discounts.js, plus `byItem`: item id → its priced line). `totalOf`
+// stays the NORMAL price of the line (it is also what the grocery entry
+// and the HOME item keep as the last price); what is paid, the expense,
+// is the priced line's `paid`. Without it nothing changes.
+export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null }) {
   return {
+    ...(pricing ? couponFields(pricing.priced) : {}),
     id,
     trip_date: date,
     at,
@@ -94,9 +114,11 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
     paid_by: paidBy || null,
     items: lines.map(({ item, target, durable, add, expired }) => {
       const answer = answers[item.id] ?? {}
+      const priced = pricing?.byItem.get(item.id) ?? null
       const row = {
         grocery_item_id: item.id,
-        line_total: totalOf(item) ?? 0,
+        line_total: priced && Number.isFinite(priced.paid) ? priced.paid : (totalOf(item) ?? 0),
+        ...(priced ? lineDiscountFields(priced) : {}),
         payer: item.payer || 'shared',
         expense_category_id: expenseCategoryFor(item),
         durable,

@@ -11,6 +11,7 @@
 
 import { parseLocalDate } from './week'
 import { newestFirst } from './recency'
+import { discountLabel } from './discounts'
 
 export const ORDER_STATUS = { on_the_way: 'On the way', arrived: 'Arrived', cancelled: 'Cancelled', returned: 'Returned' }
 
@@ -196,4 +197,15 @@ export function linkedOrderUnits(order, pantry) {
 export function orderAmountLabel(order) {
   const quantity = Number(order.quantity) > 0 ? Number(order.quantity) : 1
   return `${quantity}${order.unit ? ` ${order.unit}` : ''} · €${Number(order.price).toFixed(2)}`
+}
+
+// An order bought at a discount: its normal price and what it says, e.g.
+// "€80 → €56 (−30%)". `price` is always what was paid (the expense);
+// `list_price` the normal price before the discount. null without one.
+export function orderDiscount(order) {
+  const value = Number(order?.discount_value)
+  const list = Number(order?.list_price)
+  if (!order?.discount_kind || !(value > 0) || !(list > 0)) return null
+  const discount = { kind: order.discount_kind, value }
+  return { list, paid: Number(order.price), discount, label: discountLabel(list, Number(order.price), discount) }
 }

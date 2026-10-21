@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agoLabel, dayDiff, expectedLabel, expenseOutcomeLabel, expensePatchForOrder, expenseRowForOrder, normalizeUrl, orderState, outcomeSupported, reminders, sortOnTheWay, splitOrders } from './orders'
+import { agoLabel, dayDiff, expectedLabel, expenseOutcomeLabel, expensePatchForOrder, expenseRowForOrder, normalizeUrl, orderDiscount, orderState, outcomeSupported, reminders, sortOnTheWay, splitOrders } from './orders'
 
 const TODAY = '2026-10-12'
 const day = (offset) => {
@@ -172,5 +172,22 @@ describe('cancelled and returned orders', () => {
     expect(outcomeSupported([order(), order({ expense_outcome: null })])).toBe(true)
     expect(outcomeSupported([order()])).toBe(false)
     expect(outcomeSupported([])).toBe(false)
+  })
+})
+
+describe('an order bought at a discount', () => {
+  it('shows the normal price, the paid price and the discount: Sneakers €80 −30% → €56', () => {
+    expect(orderDiscount({ price: 56, list_price: 80, discount_kind: 'percent', discount_value: 30 })).toMatchObject({ list: 80, paid: 56, label: '€80 → €56 (−30%)' })
+    expect(orderDiscount({ price: 95, list_price: 120, discount_kind: 'amount', discount_value: 25 }).label).toBe('€120 → €95 (−€25)')
+  })
+
+  it('is nothing for an order without a discount', () => {
+    expect(orderDiscount({ price: 56, list_price: null, discount_kind: null, discount_value: null })).toBeNull()
+    expect(orderDiscount({ price: 56 })).toBeNull()
+  })
+
+  it('the expense follows the paid price, never the normal one', () => {
+    const order = { item_name: 'Sneakers', price: 56, list_price: 80, order_date: '2026-10-20', paid_by: 'irene' }
+    expect(expenseRowForOrder(order).amount).toBe(56)
   })
 })

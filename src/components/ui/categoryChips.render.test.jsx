@@ -113,6 +113,39 @@ describe('a name already used (a budget category, Add to HOME off)', () => {
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ expenseCategoryId: 'm-gifts' }))
   })
 
+  it('a typo ("Gfits") shows "Similar category exists: Use Shopping › Gifts" and Create stays enabled', () => {
+    const c = setup()
+    render(<CategoryChips mode="budget" name="gfits" chips={[]} onPick={vi.fn()} />)
+    open()
+    typeName('Gfits')
+    expect(screen.getByText('Similar category exists:')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use Shopping › Gifts' })).toBeTruthy()
+    const create = screen.getByRole('button', { name: 'Create' })
+    expect(create.disabled).toBe(false)
+    fireEvent.click(create)
+    expect(c.createMoney).toHaveBeenCalledWith(expect.objectContaining({ name: 'Gfits' }))
+  })
+
+  it('"Car" next to an existing "Cart" warns but can still be created', () => {
+    const c = setup()
+    c.expenseCategories.push({ id: 'cart', name: 'Cart', parent_id: null })
+    c.moneyMains.push({ id: 'cart', name: 'Cart', parent_id: null })
+    render(<CategoryChips mode="budget" name="car" chips={[]} onPick={vi.fn()} />)
+    open()
+    typeName('Car')
+    expect(screen.getByRole('button', { name: 'Use Cart' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create' }).disabled).toBe(false)
+  })
+
+  it('the exact name still blocks Create', () => {
+    setup()
+    render(<CategoryChips mode="budget" name="gifts" chips={[]} onPick={vi.fn()} />)
+    open()
+    typeName('gifts')
+    expect(screen.getByText('gifts already exists in Shopping')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create' }).disabled).toBe(true)
+  })
+
   it('cancel adds nothing', () => {
     const c = setup()
     render(<CategoryChips mode="budget" name="gifts" chips={[]} onPick={vi.fn()} />)

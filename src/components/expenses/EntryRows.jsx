@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ShopTag } from '../ui/ShopIcon'
 import { parseLocalDate } from '../../lib/week'
+import { purchaseCouponNote } from '../../lib/discounts'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 const dateLabel = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
@@ -98,6 +99,7 @@ export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore, full
           </span>
           <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
             {dateLabel(date)} · {payers.join(', ')}
+            {purchaseCouponNote(trip) && ` · ${purchaseCouponNote(trip)}`}
           </span>
         </span>
         <span className="flex items-center gap-1.5 shrink-0">

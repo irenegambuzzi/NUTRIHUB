@@ -164,12 +164,14 @@ function ChipsAndNewRow({ mode = 'home', name, chips = [], selected = null, onPi
               )}
             </div>
           )}
-          {check.similar && (
+          {check.similar.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] text-[var(--color-text-muted)]">Similar category exists:</span>
-              <button type="button" onClick={() => pickExisting(check.similar)} className={chipClass(false)}>
-                Use {categoryPath(categories, check.similar)}
-              </button>
+              {check.similar.map((category) => (
+                <button key={category.id} type="button" onClick={() => pickExisting(category)} className={chipClass(false)}>
+                  Use {categoryPath(categories, category)}
+                </button>
+              ))}
             </div>
           )}
 

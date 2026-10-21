@@ -35,9 +35,42 @@ describe('naming a new MONEY category', () => {
   })
 
   it('a free name has no problem; a similar one is offered as the existing category instead', () => {
-    expect(checkNewName({ kind: 'money', name: 'Kefir', categories: money })).toEqual({ problem: '', suggestions: [], similar: null })
-    expect(checkNewName({ kind: 'money', name: 'Gift', categories: money }).similar?.id).toBe('m-gifts')
+    expect(checkNewName({ kind: 'money', name: 'Kefir', categories: money })).toEqual({ problem: '', suggestions: [], similar: [] })
+    expect(checkNewName({ kind: 'money', name: 'Gift', categories: money }).similar.map((c) => c.id)).toEqual(['m-gifts'])
     expect(checkNewName({ kind: 'money', name: '', categories: money }).problem).toBe('Type a name.')
+  })
+})
+
+describe('a typo in a new category name is a warning, never a block', () => {
+  it.each(['Gfits', 'Gits', 'Giffts'])('"%s" shows the existing "Gifts" and Create stays possible', (typo) => {
+    const check = checkNewName({ kind: 'money', name: typo, categories: money })
+    expect(check.problem).toBe('')
+    expect(check.similar.map((c) => c.id)).toEqual(['m-gifts'])
+  })
+
+  it('works for HOME names too', () => {
+    const check = checkNewName({ kind: 'home', name: 'Petz', categories: home })
+    expect(check.problem).toBe('')
+    expect(check.similar.map((c) => c.id)).toEqual(['pets'])
+  })
+
+  it('"Car" next to "Cart" is only a warning: the name has no problem', () => {
+    const list = [{ id: 'cart', name: 'Cart', parent_id: null }]
+    const check = checkNewName({ kind: 'money', name: 'Car', categories: list })
+    expect(check.problem).toBe('')
+    expect(check.similar.map((c) => c.id)).toEqual(['cart'])
+  })
+
+  it('the exact name keeps the old behaviour: "already exists", free names, no similar list', () => {
+    const check = checkNewName({ kind: 'money', name: 'gifts', categories: money, mainName: 'Trips' })
+    expect(check.problem).toBe('gifts already exists in Shopping')
+    expect(check.suggestions.length).toBeGreaterThan(0)
+    expect(check.similar).toEqual([])
+  })
+
+  it('HOME and MONEY lists are never mixed', () => {
+    expect(checkNewName({ kind: 'money', name: 'Holidey', categories: money }).similar).toEqual([])
+    expect(checkNewName({ kind: 'home', name: 'Holidey', categories: home }).similar.map((c) => c.id)).toEqual(['holiday'])
   })
 })
 

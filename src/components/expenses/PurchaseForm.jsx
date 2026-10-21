@@ -6,6 +6,7 @@ import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { CategoryChips } from '../ui/CategoryChips'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { UnitOptions } from '../grocery/shared'
@@ -29,6 +30,7 @@ import {
   listEntryFor,
   listEntryNote,
   moneyPurchasePayload,
+  pricedLines,
   purchaseTotal,
   rowLine,
   rowProblem,
@@ -50,8 +52,10 @@ import { useShops } from '../../hooks/useShops'
 // One row that is only an expense is saved as one plain expense, like the
 // old form; anything else is one purchase (lib/moneyPurchase.js), saved
 // with one press and undone with the toast's Undo.
-// (Room is kept for later rounds: discounts per row and for the whole
-// purchase, the trip marker and category chips go into these rows.)
+// Discounts (lib/discounts.js): each row may have its own "−% / −€"
+// (typed next to the price as on the receipt); with two items or more a
+// "Purchase discount" is spread over them by price. The expense is always
+// what was really paid; the normal price stays the item's last price.
 export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose }) {
   // One id per form: pressing Save again after a dropped connection can't
   // save the purchase (or the expense) twice.
@@ -62,6 +66,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const [paidBy, setPaidBy] = useState('shared')
   const [rows, setRows] = useState(() => [emptyRow(1)])
   const [nextKey, setNextKey] = useState(2)
+  const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
   const [tried, setTried] = useState(false)
   const [busy, setBusy] = useState(false)
   const [managing, setManaging] = useState(null) // the row key whose budget category opened Manage
@@ -80,12 +85,12 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const budgetFor = useCallback((pick) => defaultBudget(pick, budgetCtx) || null, [budgetCtx])
   const { suggest, suggestions, budgetSuggestions, remember, rememberBudget } = useCategorySuggestions({ parents, subsByParent, expenseCategories, budgetFor })
 
-  const lines = rows.map((row) => rowLine(row, pantryItems))
+  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems)), coupon), [rows, pantryItems, coupon])
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
   const problems = lines.map((line) => rowProblem(line, { plain }))
   const total = purchaseTotal(lines)
-  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) ?? ''
+  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem
 
   const change = (key, patch) => setRows((all) => all.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
@@ -136,7 +141,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     addExpenseOnce({
       id,
       categoryId: budgetOf(line.row, budgetCtx) || null,
-      amount: line.total,
+      amount: line.paid,
       description: line.row.name.trim(),
       paidBy,
       expenseDate: date,
@@ -153,6 +158,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
       lines,
       budgetFor: (line) => budgetOf(line.row, budgetCtx),
       entryOf,
+      priced,
     })
     return recordMoneyPurchase({ payload, restocked: lines.map((l) => l.target?.id).filter(Boolean) })
   }
@@ -233,9 +239,12 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
           <Plus size={14} /> Add item
         </button>
 
+        {rows.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={priced} />}
+
         <div className="flex items-baseline justify-between border-t border-[var(--color-border)] pt-2">
           <span className="text-xs text-[var(--color-text-muted)]">
             {plain ? '1 expense' : `${rows.length} item${rows.length === 1 ? '' : 's'} · one purchase`}
+            {priced.listTotal > total && ` · ${money(priced.listTotal)} before discounts`}
           </span>
           <span className="text-lg font-mono font-extrabold text-[var(--color-accent)]">{money(total)}</span>
         </div>
@@ -333,6 +342,15 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCatego
       </div>
       <DecimalHint value={badNumber} />
 
+      <DiscountField
+        kind={row.discountKind}
+        text={row.discountText}
+        onChange={({ kind, text }) => onChange({ discountKind: kind, discountText: text })}
+        label={label('Discount')}
+        problem={line.priced.problem}
+      />
+      <LineDiscountNotes priced={line.priced} />
+
       <div>
         <p className="text-[10px] font-bold uppercase text-[var(--color-text-muted)] mb-1">HOME item category</p>
         <CategoryFields
@@ -427,7 +445,7 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCatego
       )}
 
       {entryNote && <p className="text-[11px] text-[var(--color-text-muted)]">{entryNote}</p>}
-      {home && line.total === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">Free: stock only, no expense.</p>}
+      {home && line.paid === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">Free: stock only, no expense.</p>}
       {problem && (
         <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
           <AlertTriangle size={12} /> {problem}

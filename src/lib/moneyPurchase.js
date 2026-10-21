@@ -6,6 +6,7 @@ import { expiryState, isDurable } from './inventory'
 import { isFinished } from './oneTime'
 import { budgetCategoryFor } from './budgetMap'
 import { packSizePatch, purchasedQuantity } from './purchase'
+import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -42,6 +43,8 @@ export function emptyRow(key) {
     minText: '0',
     variantId: undefined,
     packSizeText: '',
+    discountKind: 'percent',
+    discountText: '',
   }
 }
 
@@ -79,7 +82,9 @@ export function defaultBudget(row, ctx) {
 export const budgetOf = (row, ctx) => (row.budgetTouched ? row.budgetId : defaultBudget(row, ctx))
 
 // What a row does, worked out from what was typed:
-//   total       the price as on the receipt (the expense)
+//   total       the price as on the receipt, BEFORE any discount (the normal
+//               price: it becomes the HOME item's last price); what is paid
+//               comes from pricedLines()
 //   home        it goes into HOME ("Add to HOME" on)
 //   known       the HOME item with that name (also with Add to HOME off,
 //               to say what happens to its SHOP entry)
@@ -107,6 +112,7 @@ export function rowLine(row, pantryItems) {
     row,
     quantity: quantity > 0 ? round2(quantity) : 1,
     total: Number.isFinite(total) ? round2(total) : NaN,
+    discount: { kind: row.discountKind, text: row.discountText },
     home,
     known,
     group,
@@ -123,6 +129,21 @@ export function rowLine(row, pantryItems) {
     needsVariant: Boolean(group) && !target,
     needsPackSize: Boolean(target) && add === null,
   }
+}
+
+// The lines with what is really paid. Each line's own discount comes
+// first; the purchase discount (`coupon`, { kind, text } or null) is then
+// spread over the lines by what they cost after those (lib/discounts.js).
+// → { lines, priced }: every line gets `priced` (its list price, discount,
+// coupon share and paid amount) and `paid`; `priced` as a whole has the
+// totals and the first problem. The coupon only exists for two lines or
+// more — for one line it would be the same as the line's own discount.
+export function pricedLines(lines, coupon = null) {
+  const priced = priceLines(
+    lines.map((l) => ({ list: l.total, discount: l.discount })),
+    lines.length > 1 ? coupon : null
+  )
+  return { lines: lines.map((line, i) => ({ ...line, priced: priced.lines[i], paid: priced.lines[i].paid })), priced }
 }
 
 // The SHOP list entry for what a row buys, and where it is:
@@ -167,6 +188,9 @@ export function rowProblem(line, { plain = false } = {}) {
   if (decimalProblem(row.priceText) || decimalProblem(row.quantityText) || decimalProblem(row.minText) || decimalProblem(row.packSizeText)) return 'Fix the numbers in red.'
   if (!row.priceText.trim()) return line.home ? 'Enter the price (0 if it was free).' : 'Enter the price.'
   if (!(line.total > 0) && !(line.home && line.total === 0)) return 'Enter a price above 0.'
+  if (line.priced?.problem) return line.priced.problem
+  const paid = line.paid ?? line.total
+  if (!(paid > 0) && !(line.home && paid === 0)) return 'Nothing is paid after the discounts — lower the discount, or turn Add to HOME on.'
   if (!(parseDecimal(row.quantityText) > 0)) return 'Enter a quantity above 0.'
   if (line.needsVariant) return `Choose which variant of "${line.group.name}" gets the stock.`
   if (line.needsPackSize) return `Say how many ${line.target.unit} are in 1 ${row.unit}.`
@@ -176,20 +200,32 @@ export function rowProblem(line, { plain = false } = {}) {
 
 // A form with one row that is only an expense is saved as one plain
 // expense, exactly like the old "Add expense" (it can be edited with the
-// old form and merged later). Everything else is a purchase.
-export const savesAsPlainExpense = (lines) => lines.length === 1 && !lines[0].home
+// old form and merged later). Everything else is a purchase. The exception
+// is a single expense WITH a discount: a plain expense has nowhere to keep
+// "€80 → €56 (−30%)", so it is saved as a one-line purchase (expense only,
+// nothing goes to HOME) whose line keeps the history.
+export const savesAsPlainExpense = (lines) => lines.length === 1 && !lines[0].home && !lines[0].priced?.discount
 
-export const purchaseTotal = (lines) => round2(lines.reduce((sum, l) => sum + (Number.isFinite(l.total) ? l.total : 0), 0))
+// What the whole receipt came to: what was really paid.
+export const purchaseTotal = (lines) => roundCents(lines.reduce((sum, l) => sum + paidOf(l), 0))
+
+const paidOf = (line) => {
+  const paid = line.paid ?? line.total
+  return Number.isFinite(paid) ? paid : 0
+}
 
 // The payload for confirm_shopping_trip (source 'money'). `budgetFor(line)`
 // → the expense category id; `entryOf(line)` → its listEntryFor result.
 // Add to HOME off → `durable: true` (an expense only, like an appliance in
 // SHOP). On → the HOME item (or chosen variant) and the stock in its own
 // unit; a new item gets its category, 1× and minimum. The typed price is
-// the normal price for the quantity bought (the HOME item's last price);
-// `line_total` is what was paid (the expense).
-export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, lines, budgetFor, entryOf = () => null }) {
+// the normal price for the quantity bought (the HOME item's last price,
+// `list_total` of the line); `line_total` is what was paid (the expense):
+// the price less the line's own discount and its part of the coupon.
+// `priced`: the result of pricedLines() — the purchase's coupon.
+export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, lines, budgetFor, entryOf = () => null, priced = null }) {
   return {
+    ...(priced ? couponFields(priced) : {}),
     id,
     trip_date: date,
     at,
@@ -201,6 +237,7 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
       const { row } = line
       const total = Number.isFinite(line.total) ? line.total : 0
       const item = {
+        ...(line.priced ? lineDiscountFields(line.priced) : {}),
         name: row.name.trim(),
         category_id: row.categoryId || null,
         subcategory_id: row.subcategoryId || null,
@@ -209,7 +246,7 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
         price: total,
         price_qty: line.quantity,
         price_unit: row.unit,
-        line_total: total,
+        line_total: paidOf(line),
         payer: paidBy,
         expense_category_id: budgetFor(line) || null,
         durable: !line.home,

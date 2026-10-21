@@ -1074,6 +1074,22 @@ See the list in the round's final message: (a) "pizza" chip, (b) an item
 bought before fills price and unit, (c) a different pick is learned, (d) a
 new sub from SHOP, (e) "Gifts already exists in Shopping".
 
+**Added after the round-5 test (21/10/2026): typos in new category names.**
+The similar-name check (`lib/categoryNames.js`) now also catches small typos:
+`nameDistance` is a Damerau-Levenshtein distance (letter missing, extra,
+wrong, or two neighbours swapped) between the normalized names (`nameKey`:
+capitals, accents, "&"/"and", plural gone), at most 1 when the shorter name
+has 4 letters or fewer, at most 2 for longer ones. `similarCategories` gives
+up to 3, closest first. "Gfits", "Gits" and "Giffts" all show "Similar
+category exists: Use Shopping › Gifts". It is a warning only: Create stays on
+("Car" and "Cart" are different things); only the exact same name (capitals
+and spaces ignored) still says "X already exists in Y" and disables Create.
+`checkNewName().similar` is now a list. Used in the "+ New category" rows
+(SHOP and MONEY) and, as a plain note (`components/ui/SimilarNote.jsx`: "Similar
+category exists: …. You can still use your name."), in HOME Manage and MONEY
+Manage (Add and Rename; the category being renamed is never compared with
+itself). HOME and MONEY lists are never mixed.
+
 ---
 
 ## 7. Round 6 — Discounts (NOTE 6)
@@ -1151,6 +1167,54 @@ new sub from SHOP, (e) "Gifts already exists in Shopping".
    price in SHOP is €6.
 4. Order online with −€25 → the order and its expense are the paid amount;
    the order shows the normal price crossed out.
+
+### As built in round 6 (21/10/2026)
+
+Built as above, with these details (none needs SQL — no `supabase/024`):
+
+- **Files**: `lib/discounts.js` (+ test): `applyDiscount`, `discountOff`,
+  `discountProblem`, `discountLabel`, `spreadCoupon`, `priceLines` (item
+  discounts first, then the coupon; the whole purchase in one call),
+  `lineDiscountFields` / `couponFields` (what the payload sends),
+  `lineHistory` / `purchaseCouponNote` (what the purchase row shows);
+  `components/ui/DiscountField.jsx` (the "−%" / "−€" buttons + number,
+  `LineDiscountNotes`, `PurchaseDiscountBox`); `moneyPurchase.pricedLines`;
+  `purchase.purchasePricing`; `orders.orderDiscount`.
+- **Typed price = normal price.** In the MONEY form and in Confirm purchase
+  the price/total typed is the receipt price before any discount; it is what
+  the HOME item and the SHOP entry keep (so the next autofill is €6.00). The
+  expense (`line_total`) is the price less the line's discount and its coupon
+  share. Every line also sends `list_total` (normal price), and
+  `item_discount_kind/value` and `coupon_share` when there are any; the
+  purchase sends `coupon_kind/value/total`.
+- **Refusals**: a percent above 100 and an amount above the line's price are
+  refused where they are typed ("The discount (€25) is bigger than the price
+  (€20)." / "A discount can't be more than 100%."), the form can't be saved.
+  A coupon in € bigger than the purchase is capped at the total (plan);
+  a coupon above 100 % is refused. A line that would pay €0 is refused unless
+  it goes into HOME (stock only, no expense — as a free item).
+- **Coupon**: shown from two items on ("Purchase discount", coupon in € by
+  default). The remainder cents go to the last line; if that line cannot take
+  them (it would go below 0) the line before takes them. A line without a
+  price yet takes no part.
+- **A single expense with a discount** (one row, Add to HOME off) has no line
+  to keep the history on, so it is saved as a **one-line MONEY purchase**
+  (expense only, `durable`), not as a plain expense; without a discount it is
+  still the plain expense of round 4. (It can't be merged later, like any
+  purchase line.)
+- **Order online**: per-item discount only. The order form's price fields are
+  the normal price; the paid price becomes `orders.price` and the expense;
+  `list_price`, `discount_kind`, `discount_value` are saved when there is a
+  discount (null otherwise, also when it is removed in an edit). The order
+  card shows the paid price with the normal price crossed out, and
+  "€80 → €56 (−30%)" when opened. Editing an order shows the normal price and
+  discount again.
+- **History**: the opened purchase row shows under an item "€6.00 → €3.00
+  (−50%)" (with " · coupon −€1.50" when it had a share); the collapsed row
+  shows "(coupon −€50)" under the total. Editing an expense amount by hand
+  leaves this text as it was.
+- Tested also against the real `confirm_shopping_trip` (migrations test,
+  "round 6") with the payload the form builds.
 
 ---
 

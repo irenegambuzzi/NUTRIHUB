@@ -193,3 +193,49 @@ describe('Arrived proposes the ordered quantity', () => {
     expect(quantity().value).toBe('1')
   })
 })
+
+describe('the order form: a discount of its own', () => {
+  it('Sneakers €80 −30%: the order price is €56 (the expense), the normal price €80 and the discount are kept', () => {
+    const onSubmit = setup()
+    type('Total price', '80')
+    type('Discount', '30')
+    expect(screen.getByText('€80 → €56 (−30%)')).toBeTruthy()
+    submit()
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ price: 56, listPrice: 80, discountKind: 'percent', discountValue: 30 })
+    expect(orderRowFrom(onSubmit.mock.calls[0][0])).toMatchObject({ price: 56, list_price: 80, discount_kind: 'percent', discount_value: 30 })
+  })
+
+  it('Jacket €120 −€25 → €95', () => {
+    const onSubmit = setup()
+    type('Total price', '120')
+    fireEvent.click(screen.getByRole('button', { name: 'Discount in euros' }))
+    type('Discount', '25')
+    expect(screen.getByText('€120 → €95 (−€25)')).toBeTruthy()
+    submit()
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ price: 95, listPrice: 120, discountKind: 'amount', discountValue: 25 })
+  })
+
+  it('a discount bigger than the price is refused with a message and nothing is saved', () => {
+    const onSubmit = setup()
+    type('Total price', '20')
+    fireEvent.click(screen.getByRole('button', { name: 'Discount in euros' }))
+    type('Discount', '25')
+    submit()
+    expect(screen.getAllByText('The discount (€25) is bigger than the price (€20).').length).toBeGreaterThan(0)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('without a discount the order is saved as before, with no list price', () => {
+    const onSubmit = setup()
+    type('Total price', '13,30')
+    submit()
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ price: 13.3, listPrice: null, discountKind: null, discountValue: null })
+  })
+
+  it('editing an order with a discount shows the normal price and the discount again', () => {
+    setup({ initial: { id: 'o', item_name: 'Sneakers', order_date: '2026-10-20', price: 56, list_price: 80, discount_kind: 'percent', discount_value: 30, paid_by: 'irene', quantity: 1, unit: 'pcs' } })
+    expect(field('Total price').value).toBe('80.00')
+    expect(field('Discount').value).toBe('30')
+    expect(screen.getByText('€80 → €56 (−30%)')).toBeTruthy()
+  })
+})

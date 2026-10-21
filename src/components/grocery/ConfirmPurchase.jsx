@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { FixCategory } from './FixCategory'
@@ -15,7 +16,7 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { editPatch, editedItem, pantryItemFor, purchaseLine } from '../../lib/purchase'
+import { editPatch, editedItem, pantryItemFor, purchaseLine, purchasePricing } from '../../lib/purchase'
 import { variantOrder } from '../../lib/groups'
 import { shopUnits } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
@@ -38,6 +39,10 @@ import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 // second store). An entry ordered online and on the way (`openOrderOf`)
 // is never bought here: it says so, with "Cancel the order…"
 // (`onCancelOrder`) or "Take out of the cart".
+// Discounts (lib/discounts.js): the total typed on a line is its normal
+// price (the grocery entry and HOME keep it as the last price); each line
+// may have its own discount in % or €, and with two items or more the
+// "Purchase discount" is spread over them. The expense is what was paid.
 export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false }) {
   const { confirmPurchase } = usePurchase()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
@@ -85,6 +90,10 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       return next
     })
   const [answers, setAnswers] = useState({})
+  // Discounts typed on the screen: by item id { kind, text }, and the
+  // coupon of the whole purchase.
+  const [discounts, setDiscounts] = useState({})
+  const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
   // Ids of the new variants made for group lines, fixed for this screen.
   const variantIds = useRef(new Map())
   const [photoIds, setPhotoIds] = useState([])
@@ -116,7 +125,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   )
   const lines = allLines.filter((l) => inTrip(l.item))
   const items = lines.map((l) => l.item)
-  const total = items.reduce((sum, i) => sum + (totalOf(i) ?? 0), 0)
+  const pricing = purchasePricing(items, totalOf, discounts, coupon)
+  const total = pricing.priced.paidTotal
   const open = lines.filter((l) => !l.ready).length
   const unknown = items.filter((i) => totalOf(i) === null).length
   const leftInCart = allLines.length - lines.length
@@ -142,6 +152,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const confirmed = itemsFor(latest).filter(inTrip)
     const confirmedLines = confirmed.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
+    const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
+    if (confirmedPricing.priced.problem) return
     const ids = new Set(confirmed.map((i) => i.id))
     const patches = cartItems.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     const confirmedPayers = new Set(confirmed.map((i) => i.payer || 'shared'))
@@ -157,6 +169,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       variantIds: variantIds.current,
       shopId: shopId || null,
       paidBy: confirmedPayers.size === 1 ? [...confirmedPayers][0] : null,
+      pricing: confirmedPricing,
     })
     setBusy(false)
     if (error) return
@@ -174,6 +187,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       onToggleTrip={splitTrips ? () => toggleLater(line.item.id) : null}
       answer={answers[line.item.id] ?? {}}
       total={totalOf(line.item)}
+      discount={discounts[line.item.id] ?? { kind: 'percent', text: '' }}
+      priced={pricing.byItem.get(line.item.id) ?? null}
+      onDiscount={(next) => setDiscounts((all) => ({ ...all, [line.item.id]: next }))}
       categoryName={categoryName}
       onAnswer={(patch) => answer(line.item.id, patch)}
       onDateValidity={(ok) => reportDate(line.item.id, ok)}
@@ -251,6 +267,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
+        {lines.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={pricing.priced} />}
+
         <section className="space-y-2">
           <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Receipt (optional)</p>
           <div className="flex items-center gap-2 flex-wrap">
@@ -296,6 +314,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> Fix the numbers in red above to confirm.
             </p>
           )}
+          {pricing.priced.problem && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> {pricing.priced.problem}
+            </p>
+          )}
           {open > 0 && (
             <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
@@ -304,7 +327,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || lines.length === 0}
+            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
@@ -321,7 +344,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 // is left, so the other phone sees it.
 // `ordered`: the order on the way for this entry (it can't be bought
 // here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
-function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
+function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
@@ -457,6 +480,8 @@ function PurchaseLine({ line, answer, total, categoryName, onAnswer, onDateValid
         </div>
       </div>
       <DecimalHint value={[quantityText, totalText].find((t) => decimalProblem(t)) ?? ''} />
+      <DiscountField kind={discount.kind} text={discount.text} onChange={onDiscount} label={`Discount for ${item.name}`} problem={priced?.problem ?? ''} />
+      <LineDiscountNotes priced={priced} />
       {pantry && add > 0 && item.unit !== pantry.unit && (
         <p className="text-[10px] text-[var(--color-text-muted)]">
           = {add} {pantry.unit} added to the stock

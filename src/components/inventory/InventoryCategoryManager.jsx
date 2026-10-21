@@ -4,6 +4,7 @@ import { X, Trash2, Plus, CornerDownRight, Pencil, FolderInput, Check, Lock } fr
 import { Button } from '../ui/Button'
 import { Input, Label, Select } from '../ui/Field'
 import { CategoryIcon } from '../ui/CategoryIcon'
+import { SimilarNote } from '../ui/SimilarNote'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { categoryMemoryStore, groceryStore, pantryStore } from '../../lib/stores'
 import {
@@ -155,7 +156,8 @@ export function InventoryCategoryManager({ onClose }) {
   const editRow = (c, isSub) => {
     const targets = editing.mode === 'move' ? moveTargets(categories, c.id) : []
     return (
-      <form key={c.id} onSubmit={saveEdit} className="flex items-center gap-2 py-1.5 text-xs">
+      <div key={c.id}>
+      <form onSubmit={saveEdit} className="flex items-center gap-2 py-1.5 text-xs">
         {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
         {editing.mode === 'rename' ? (
           <Input autoFocus value={editing.value} onChange={(e) => setEditing({ ...editing, value: e.target.value })} aria-label={`New name for ${full(c)}`} className="flex-1 min-w-0" />
@@ -179,6 +181,8 @@ export function InventoryCategoryManager({ onClose }) {
           <X size={15} />
         </button>
       </form>
+      {editing.mode === 'rename' && <SimilarNote name={editing.value} categories={categories} exceptId={c.id} className="ml-2 pb-1" />}
+      </div>
     )
   }
 
@@ -298,6 +302,7 @@ export function InventoryCategoryManager({ onClose }) {
         <form onSubmit={handleAdd} className="space-y-2">
           <Label>Add a category</Label>
           <Input placeholder="Name (e.g. Gluten free)" value={name} onChange={(e) => setName(e.target.value)} />
+          <SimilarNote name={name} categories={categories} />
           <div className="flex gap-2">
             <Select value={parentId} onChange={(e) => setParentId(e.target.value)} className="flex-1" aria-label="Parent category">
               <option value="">Main category</option>

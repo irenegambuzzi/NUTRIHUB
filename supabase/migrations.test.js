@@ -9,7 +9,7 @@ import path from 'node:path'
 // The app's own payload for a purchase typed in MONEY (round 4), sent to
 // the real function below.
 vi.mock('../src/lib/supabaseClient', () => ({ supabase: {} }))
-const { emptyRow, listEntryFor, moneyPurchasePayload, rowLine } = await import('../src/lib/moneyPurchase.js')
+const { emptyRow, listEntryFor, moneyPurchasePayload, pricedLines, rowLine } = await import('../src/lib/moneyPurchase.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -1778,6 +1778,31 @@ describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, c
       expect(await stockOf(milk)).toBe(3)
       expect((await row(`select count(*)::int as n from stock_logs where item_id = $1`, [milk])).n).toBe(0)
       expect(await row(`select completed, in_cart from grocery_items where id = $1`, [entry])).toEqual({ completed: false, in_cart: false })
+      expect(await snapshot()).toEqual(start)
+    })
+
+    it('round 6: item discounts and a purchase discount, as the form builds them — the expense is what was paid, the HOME price stays the normal one, Undo leaves nothing', async () => {
+      const id = '24000000-0000-0000-0000-000000000006'
+      const start = await snapshot()
+      const built = await linesFor([
+        { name: 'Test sneakers R6', priceText: '80', discountKind: 'percent', discountText: '30', categoryId: 'toiletries', addToHome: false },
+        { name: 'milk r4', priceText: '6', unit: 'btl', categoryId: 'dairy', discountKind: 'percent', discountText: '50' },
+        { name: 'Test cat food R6', priceText: '20', categoryId: 'toiletries', addToHome: false },
+      ])
+      // 80 −30% = 56, 6 −50% = 3, 20 → 79 after item discounts; coupon −€7.90 over them
+      const { lines, priced } = pricedLines(built, { kind: 'amount', text: '7,90' })
+      expect(lines.map((l) => l.paid)).toEqual([50.4, 2.7, 18.0])
+      const t = await save(id, lines, { priced })
+      expect({ total: Number(t.total), kind: t.coupon_kind, value: Number(t.coupon_value), coupon: Number(t.coupon_total) }).toEqual({ total: 71.1, kind: 'amount', value: 7.9, coupon: 7.9 })
+      expect(await rows(`select amount::float as amount from expenses where trip_id = $1 order by amount`, [id])).toEqual([{ amount: 2.7 }, { amount: 18 }, { amount: 50.4 }])
+      expect(await rows(`select name, line_total::float as paid, list_total::float as list, item_discount_kind as kind, item_discount_value::float as value, coupon_share::float as share from shopping_trip_items where trip_id = $1 order by position`, [id])).toEqual([
+        { name: 'Test sneakers R6', paid: 50.4, list: 80, kind: 'percent', value: 30, share: 5.6 },
+        { name: 'milk r4', paid: 2.7, list: 6, kind: 'percent', value: 50, share: 0.3 },
+        { name: 'Test cat food R6', paid: 18, list: 20, kind: null, value: null, share: 2 },
+      ])
+      // The HOME item keeps the normal price (€6 for 1 btl), not the €2.70 paid.
+      expect(await row(`select price::float as price, price_qty::float as price_qty from pantry_items where id = $1`, [milk])).toEqual({ price: 6, price_qty: 1 })
+      expect(await reopen(id)).toBe(3)
       expect(await snapshot()).toEqual(start)
     })
 

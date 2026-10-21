@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./supabaseClient', () => ({ supabase: {} }))
-const { confirmationPayload, pantryItemFor, purchaseLine } = await import('./purchase')
+const { confirmationPayload, pantryItemFor, purchaseLine, purchasePricing } = await import('./purchase')
 
 const pantry = [
   { id: 'p-rice', name: 'Rice', unit: 'gr', current_stock: 100, min_stock: 0 },
@@ -105,5 +105,56 @@ describe('edits on the confirm screen', async () => {
     // 1 kg of rice counted in gr: 1000 gr added, €2 expense, paid by Akbar.
     expect(payload.items[0]).toMatchObject({ line_total: 2, payer: 'akbar', add: 1000 })
     expect(payload.trip_date).toBe('2026-10-05')
+  })
+})
+
+describe('discounts on the confirm screen', () => {
+  const cart = [item({ name: 'Nutella' }), item({ name: 'Chips' }), item({ name: 'Rice' })]
+  const normal = { Nutella: 6, Chips: 4, Rice: 2 }
+  const totalOf = (i) => normal[i.id]
+  const payloadFor = (pricing) =>
+    confirmationPayload({ id: 't', date: '2026-10-21', lines: cart.map((i) => purchaseLine(i, pantry)), answers: {}, totalOf, expenseCategoryFor: () => 'cat', pricing })
+
+  it('Nutella €6.00 −50%: the expense is €3.00 and the line keeps the normal price €6.00', () => {
+    const pricing = purchasePricing([cart[0]], totalOf, { Nutella: { kind: 'percent', text: '50' } })
+    const payload = confirmationPayload({ id: 't', date: 'd', lines: [purchaseLine(cart[0], pantry)], answers: {}, totalOf, expenseCategoryFor: () => 'cat', pricing })
+    expect(payload.items[0]).toMatchObject({ line_total: 3, list_total: 6, item_discount_kind: 'percent', item_discount_value: 50 })
+    expect(payload.items[0].coupon_share).toBeUndefined()
+    expect(payload.coupon_kind).toBeUndefined()
+  })
+
+  it('a coupon is spread over the lines after their own discounts; the trip carries the coupon', () => {
+    const pricing = purchasePricing(cart, totalOf, { Nutella: { kind: 'percent', text: '50' } }, { kind: 'amount', text: '1' })
+    // after item discounts: 3 + 4 + 2 = 9; coupon €1 → 0.33, 0.44, 0.23
+    const payload = payloadFor(pricing)
+    expect(payload).toMatchObject({ coupon_kind: 'amount', coupon_value: 1, coupon_total: 1 })
+    expect(payload.items.map((i) => [i.list_total, i.line_total, i.coupon_share])).toEqual([
+      [6, 2.67, 0.33],
+      [4, 3.56, 0.44],
+      [2, 1.77, 0.23],
+    ])
+    expect(payload.items.reduce((s, i) => Math.round((s + i.line_total) * 100) / 100, 0)).toBe(8)
+  })
+
+  it('a coupon needs two items or more', () => {
+    const pricing = purchasePricing([cart[0]], totalOf, {}, { kind: 'amount', text: '1' })
+    expect(pricing.priced.couponTotal).toBe(0)
+  })
+
+  it('a line whose total is unknown has no expense amount and takes no part', () => {
+    const unknown = (i) => (i.id === 'Chips' ? null : normal[i.id])
+    const pricing = purchasePricing(cart, unknown, {}, { kind: 'amount', text: '1' })
+    const payload = confirmationPayload({ id: 't', date: 'd', lines: cart.map((i) => purchaseLine(i, pantry)), answers: {}, totalOf: unknown, expenseCategoryFor: () => 'cat', pricing })
+    expect(payload.items[1].line_total).toBe(0)
+    expect(payload.items[1].list_total).toBeUndefined()
+    expect(payload.items[0].coupon_share + payload.items[2].coupon_share).toBe(1)
+  })
+
+  it('a refused discount is reported so Confirm can wait', () => {
+    expect(purchasePricing(cart, totalOf, { Rice: { kind: 'amount', text: '5' } }).priced.problem).toBe('The discount (€5) is bigger than the price (€2).')
+  })
+
+  it('without pricing the payload is exactly as before', () => {
+    expect(payloadFor(null).items[0]).toEqual({ grocery_item_id: 'Nutella', line_total: 6, payer: 'shared', expense_category_id: 'cat', durable: false, pantry_item_id: null, add: 1 })
   })
 })

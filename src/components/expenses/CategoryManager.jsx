@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X, Trash2, Plus, CornerDownRight, Pencil, FolderInput, Check, Lock } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input, Label, Select } from '../ui/Field'
+import { SimilarNote } from '../ui/SimilarNote'
 import { expenseUsageStore } from '../../lib/stores'
 import { moveProblem, renameProblem } from '../../lib/categoryEdit'
 import { DURABLE_EXPENSE_CATEGORY } from '../../data/constants'
@@ -112,7 +113,8 @@ export function CategoryManager({
   const iconButton = 'text-[var(--color-icon-muted)] w-8 h-8 flex items-center justify-center disabled:opacity-30'
 
   const editRow = (c, isSub) => (
-    <form key={c.id} onSubmit={saveEdit} className="flex items-center gap-2 py-1.5 text-xs">
+    <div key={c.id}>
+    <form onSubmit={saveEdit} className="flex items-center gap-2 py-1.5 text-xs">
       {isSub && <CornerDownRight size={12} className="text-[var(--color-icon-muted)] ml-2 shrink-0" />}
       {dot(c, isSub)}
       {editing.mode === 'rename' ? (
@@ -139,6 +141,8 @@ export function CategoryManager({
         <X size={15} />
       </button>
     </form>
+    {editing.mode === 'rename' && <SimilarNote name={editing.value} categories={categories} exceptId={c.id} className="ml-2 pb-1" />}
+    </div>
   )
 
   const row = (c, isSub) => {
@@ -213,6 +217,7 @@ export function CategoryManager({
         <form onSubmit={handleAdd} className="space-y-2">
           <Label>Add a category</Label>
           <Input placeholder="Name (e.g. Restaurants)" value={name} onChange={(e) => setName(e.target.value)} />
+          <SimilarNote name={name} categories={categories} />
           <div className="flex gap-2">
             <Select value={parentId} onChange={(e) => setParentId(e.target.value)} className="flex-1" aria-label="Parent category">
               <option value="">Main category</option>

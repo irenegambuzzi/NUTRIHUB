@@ -36,6 +36,54 @@ export const sameName = (a, b) => {
   return Boolean(clean(a)) && clean(a) === clean(b)
 }
 
+// Damerau-Levenshtein distance (optimal string alignment): how many
+// single-letter steps turn `a` into `b`, where a step is a letter added,
+// removed, changed or two neighbouring letters swapped. "gfit" → "gift" is 1.
+export function editDistance(a, b) {
+  const x = Array.from(String(a ?? ''))
+  const y = Array.from(String(b ?? ''))
+  const rows = Array.from({ length: x.length + 1 }, (_, i) => [i, ...Array(y.length).fill(0)])
+  for (let j = 0; j <= y.length; j++) rows[0][j] = j
+  for (let i = 1; i <= x.length; i++) {
+    for (let j = 1; j <= y.length; j++) {
+      const cost = x[i - 1] === y[j - 1] ? 0 : 1
+      rows[i][j] = Math.min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost)
+      if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) rows[i][j] = Math.min(rows[i][j], rows[i - 2][j - 2] + 1)
+    }
+  }
+  return rows[x.length][y.length]
+}
+
+// How many small typos still count as "similar": 1 for a name of 4 letters
+// or fewer, 2 for a longer one (the shorter of the two names decides).
+export const typoAllowance = (a, b) => (Math.min(a.length, b.length) <= 4 ? 1 : 2)
+
+// The distance between two names after the normal clean-up (capitals,
+// accents, "&"/"and", plural), or null when they are further apart than a
+// typo allows. 0 = the same name apart from those small differences.
+export function nameDistance(a, b) {
+  const keyA = nameKey(a)
+  const keyB = nameKey(b)
+  if (!keyA || !keyB) return null
+  const distance = editDistance(keyA, keyB)
+  return distance <= typoAllowance(keyA, keyB) ? distance : null
+}
+
+// Existing categories whose name is like `name` — the same apart from the
+// small differences above, or off by a typo (letters missing, extra,
+// swapped or wrong) — closest first, at most `limit`. It is only a warning
+// for the person typing: a near name is still allowed ("Car" and "Cart"
+// are different things). `exceptId`: the category being renamed.
+export function similarCategories(name, categories, { limit = 3, exceptId = null } = {}) {
+  return categories
+    .filter((c) => c.id !== exceptId)
+    .map((category) => ({ category, distance: nameDistance(name, category.name) }))
+    .filter((found) => found.distance !== null)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit)
+    .map((found) => found.category)
+}
+
 // "Dairy & Eggs › Yogurt" for a sub, "Dairy & Eggs" for a main.
 export function categoryPath(categories, category) {
   const parent = category?.parent_id ? categories.find((c) => c.id === category.parent_id) : null

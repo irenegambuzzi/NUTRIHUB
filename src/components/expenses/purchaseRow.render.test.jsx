@@ -75,6 +75,24 @@ describe('a purchase in the MONEY list', () => {
     expect(screen.getByText('Undo purchase')).toBeTruthy()
   })
 
+  it('a purchase with a coupon says "(coupon −€50)" next to its total', () => {
+    row({ trip: { ...trip, coupon_kind: 'amount', coupon_value: 50, coupon_total: 50 }, group: { date: '2026-10-14', items: [bread, cat], total: 150 } })
+    const header = screen.getByRole('button', { name: /Conad/ })
+    expect(header.textContent).toContain('€150.00')
+    expect(header.textContent).toContain('(coupon −€50)')
+  })
+
+  it('opened, a discounted item shows its history "€6.00 → €3.00 (−50%)" and the coupon share', () => {
+    const lines = {
+      e1: { quantity: 1, unit: 'pcs', list_total: 6, item_discount_kind: 'percent', item_discount_value: 50, coupon_share: 0 },
+      e2: { quantity: 1, unit: 'pcs', list_total: 20, item_discount_kind: null, item_discount_value: null, coupon_share: 5 },
+    }
+    row({ lineOf: (e) => lines[e.id] })
+    fireEvent.click(screen.getByRole('button', { name: /Conad/ }))
+    expect(screen.getByText('€6.00 → €3.00 (−50%)')).toBeTruthy()
+    expect(screen.getByText('€20.00 → €15.00 (coupon −€5.00)')).toBeTruthy()
+  })
+
   it('with a category filter on, only that part "of total €22.50"', () => {
     row({ group: { date: '2026-10-14', items: [cat], total: 20 }, fullTotal: 22.5 })
     const header = screen.getByRole('button', { name: /Conad/ })

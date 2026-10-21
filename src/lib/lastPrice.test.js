@@ -12,6 +12,16 @@ describe('the last normal price of a name', () => {
     expect(last).toMatchObject({ price: 6, quantity: 750, unit: 'gr' })
   })
 
+  it('with a coupon: recorded €4.50, the next price still fills €6.00; with both a promo and a coupon too', () => {
+    expect(lastPriceFor('Nutella', { tripLines: [line({ line_total: 4.5, list_total: 6, coupon_share: 1.5 })] })).toMatchObject({ price: 6 })
+    expect(lastPriceFor('Nutella', { tripLines: [line({ line_total: 2.25, list_total: 6, item_discount_kind: 'percent', item_discount_value: 50, coupon_share: 0.75 })] })).toMatchObject({ price: 6 })
+  })
+
+  it('an order bought at a discount also fills the normal price', () => {
+    const order = { item_name: 'Sneakers', price: 56, list_price: 80, quantity: 1, unit: 'pcs', status: 'arrived', created_at: '2026-10-12T10:00:00Z' }
+    expect(lastPriceFor('sneakers', { orders: [order] })).toMatchObject({ price: 80, quantity: 1, unit: 'pcs' })
+  })
+
   it('uses line_total while there is no discount info (before round 6)', () => {
     expect(lastPriceFor('Nutella', { tripLines: [line()] })).toMatchObject({ price: 3 })
   })

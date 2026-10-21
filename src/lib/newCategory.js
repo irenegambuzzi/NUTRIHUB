@@ -1,6 +1,6 @@
 import { effectiveBudget, GROCERIES } from './budgetMap'
 import { homeNameTaken } from './inventoryCategoryEdit'
-import { findExisting, freeNameSuggestions, sameName, takenMessage } from './categoryNames'
+import { freeNameSuggestions, sameName, similarCategories, takenMessage } from './categoryNames'
 
 // The small "+ New category" row in the forms (NOTE 5), as pure rules so
 // every one can be tested. It only ever adds: a name that is taken is
@@ -22,17 +22,19 @@ export const titleCase = (name) =>
 // → { problem, suggestions, similar }
 //   problem      why the name can't be used ('' when it can)
 //   suggestions  1–2 names that are free (only when the name is taken)
-//   similar      an existing category with a similar (not the same) name:
-//                the row offers it instead of a near-duplicate
+//   similar      up to 3 existing categories with a similar (not the same)
+//                name — plural, "&", capitals or a small typo ("Gfits") —
+//                closest first: the row offers them instead of a
+//                near-duplicate, but Create stays on (it is a warning)
 export function checkNewName({ kind, name, categories, mainName = null }) {
   const trimmed = String(name ?? '').trim()
-  if (!trimmed) return { problem: 'Type a name.', suggestions: [], similar: null }
+  if (!trimmed) return { problem: 'Type a name.', suggestions: [], similar: [] }
   const clash = (candidate) => (kind === 'home' ? homeNameTaken(categories, candidate) : categories.find((c) => sameName(c.name, candidate))) ?? null
   const other = clash(trimmed)
   if (other) {
-    return { problem: takenMessage(trimmed, other, categories), suggestions: freeNameSuggestions(trimmed, mainName, (c) => Boolean(clash(c))), similar: null }
+    return { problem: takenMessage(trimmed, other, categories), suggestions: freeNameSuggestions(trimmed, mainName, (c) => Boolean(clash(c))), similar: [] }
   }
-  return { problem: '', suggestions: [], similar: findExisting(trimmed, categories) }
+  return { problem: '', suggestions: [], similar: similarCategories(trimmed, categories) }
 }
 
 // The budget category a new HOME category starts with (shown in the row,

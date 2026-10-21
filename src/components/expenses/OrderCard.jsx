@@ -1,7 +1,7 @@
 import { Check, ChevronDown, ExternalLink, Link2, Pencil, Trash2, Undo2, X } from 'lucide-react'
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderState } from '../../lib/orders'
+import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderDiscount, orderState } from '../../lib/orders'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
 
@@ -31,6 +31,7 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
   const overdue = state === 'overdue'
   const { main, sub } = names(order.category_id)
   const link = normalizeUrl(order.order_url)
+  const discount = orderDiscount(order)
 
   return (
     <div
@@ -74,7 +75,10 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-mono font-bold text-[var(--color-accent)]">{orderAmountLabel(order)}</span>
+          <span className="text-right">
+            <span className="font-mono font-bold text-[var(--color-accent)] block">{orderAmountLabel(order)}</span>
+            {discount && <span className="font-mono text-[10px] text-[var(--color-text-muted)] line-through block">€{discount.list.toFixed(2)}</span>}
+          </span>
           <ChevronDown size={14} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
         </div>
       </button>
@@ -86,6 +90,7 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
             Ordered {dateLabel(order.order_date)} · paid by {paidByLabel(order.paid_by)}
             {main ? ` · ${sub ? `${main} › ${sub}` : main}` : ''}
           </p>
+          {discount && <p className="font-bold text-emerald-300">{discount.label}</p>}
           {order.expected_date && (
             <p className="text-[var(--color-text-muted)]">
               Expected {dateLabel(order.expected_date)}

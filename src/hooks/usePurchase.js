@@ -108,7 +108,7 @@ export async function recordMoneyPurchase({ payload, restocked = [] }) {
 // for all of it (null when mixed). With supabase/021 both are saved with
 // the purchase, on the trip and its expenses; before it, the store is put
 // on the expenses once the purchase is saved.
-export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map(), shopId = null, paidBy = null }) {
+export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null }) {
   let flowReady = false
   const result = await attempt(
     async () => {
@@ -119,7 +119,7 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
       const categories = await expenseCategories(lines)
       flowReady = categories.flowReady
       const made = await makeVariants(lines, variantIds)
-      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor: categories.expenseCategoryFor, photoIds, variantIds, shopId, paidBy })
+      const payload = confirmationPayload({ id, date, at: new Date().toISOString(), lines, answers, totalOf, expenseCategoryFor: categories.expenseCategoryFor, photoIds, variantIds, shopId, paidBy, pricing })
       try {
         return must(await supabase.rpc('confirm_shopping_trip', { payload }))
       } catch (error) {

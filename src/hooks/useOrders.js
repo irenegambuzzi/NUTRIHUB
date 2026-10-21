@@ -11,6 +11,9 @@ const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => 
 
 // The order's own columns from the form's values. Dates are YYYY-MM-DD,
 // '' means none; a last expected date only makes sense with a first one.
+// With a discount `price` is the amount paid and `listPrice` the normal
+// price; both come from the form (undefined = the caller doesn't know about
+// discounts: those columns are left alone).
 // The quantity and unit are only there for an order linked to a HOME item
 // (supabase/021), and only sent then.
 export function orderRowFrom(values) {
@@ -25,6 +28,11 @@ export function orderRowFrom(values) {
     expected_date: values.expectedDate || null,
     expected_until: values.expectedDate && values.expectedUntil ? values.expectedUntil : null,
     order_url: normalizeUrl(values.url),
+    // The normal price and the discount (only an order's own discount: a
+    // coupon belongs to purchases). `price` above is what was paid.
+    ...(values.listPrice !== undefined
+      ? { list_price: values.listPrice ?? null, discount_kind: values.discountKind ?? null, discount_value: values.discountValue ?? null }
+      : {}),
     ...(values.quantity !== undefined ? { quantity: Number(values.quantity) > 0 ? Number(values.quantity) : null, unit: values.unit || null } : {}),
   }
 }

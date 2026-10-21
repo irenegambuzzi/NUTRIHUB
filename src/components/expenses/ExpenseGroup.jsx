@@ -7,6 +7,7 @@ import { ShopTag } from '../ui/ShopIcon'
 import { cn } from '../../lib/cn'
 import { purchaseSections } from '../../lib/moneyList'
 import { purchaseUndo } from '../../lib/trips'
+import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 
@@ -143,6 +144,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
   const undo = purchaseUndo(trip?.source)
   const hasMerged = items.some((e) => e.merged_at)
   const partial = fullTotal != null && Math.abs(fullTotal - total) > 0.004
+  const couponNote = purchaseCouponNote(trip)
 
   return (
     <div data-purchase className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
@@ -166,6 +168,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-right">
             <span className="font-mono font-bold text-[var(--color-accent)] block">€{total.toFixed(2)}</span>
+            {couponNote && <span className="text-[10px] text-emerald-300 block">{couponNote}</span>}
             {partial && <span className="text-[10px] text-[var(--color-text-muted)] block">of total €{fullTotal.toFixed(2)}</span>}
           </span>
           <ChevronDown size={14} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
@@ -185,7 +188,9 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
               </p>
               {section.items.map((e) => {
                 const sub = subName(e.category_id)
-                const quantity = quantityLabel(lineOf(e))
+                const line = lineOf(e)
+                const quantity = quantityLabel(line)
+                const history = lineHistory(line)
                 return (
                   <div key={e.id} className="flex justify-between items-center gap-2 py-1 pl-2 border-l-2 border-[var(--color-border)]">
                     <div className="min-w-0">
@@ -210,6 +215,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
                         <span className="shrink-0">{paidByLabel(e.paid_by)}</span>
                         {e.merged_at && <span className="shrink-0">· merged</span>}
                       </span>
+                      {history && <span className="text-[10px] font-bold text-emerald-300 block">{history}</span>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button

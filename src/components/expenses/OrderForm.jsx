@@ -4,6 +4,7 @@ import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { DiscountField, LineDiscountNotes } from '../ui/DiscountField'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
@@ -12,7 +13,8 @@ import { categoryTree } from '../../lib/moneyList'
 import { ORDER_UNITS, normalizeUrl } from '../../lib/orders'
 import { chooseTotalPrice, chooseUnitPrice, changeQuantity, emptyPrice, orderTotal, prefilledPrice, priceMismatch, savedPrice, typeTotalPrice, typeUnitPrice } from '../../lib/orderPricing'
 import { useFlow } from '../../hooks/useFlow'
-import { decimalProblem, parseDecimal } from '../../lib/decimal'
+import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
+import { priceLines } from '../../lib/discounts'
 
 // The order fields, for a new order or an existing one (`initial`).
 // onSubmit(values, ids) resolves to { error }; on failure the form keeps
@@ -26,8 +28,11 @@ import { decimalProblem, parseDecimal } from '../../lib/decimal'
 // comes first); `linkNote` says what it is linked to.
 //
 // The price is a unit price and a total price, like on the SHOP list (see
-// orderPricing.js). The total is the amount of the order's expense. The
-// quantity is only asked once the database has it (supabase/021).
+// orderPricing.js): the NORMAL price. An order may have a discount of its
+// own, in % or € (never a purchase coupon): what is paid after it is the
+// order's price and the amount of its expense; the normal price is kept as
+// `list_price` and is what the next order starts from. The quantity is only
+// asked once the database has it (supabase/021).
 export function OrderForm({
   initial,
   prefill = null,
@@ -64,8 +69,10 @@ export function OrderForm({
   const unitList = useMemo(() => [...new Set([...(unitOptions ?? ORDER_UNITS), initial?.unit].filter(Boolean))], [unitOptions, initial])
   const [unit, setUnit] = useState(initial?.unit ?? start?.unit ?? unitList[0])
   const [price, setPrice] = useState(() =>
-    initial ? savedPrice(initial.price, quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
+    initial ? savedPrice(initial.list_price ?? initial.price, quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
   )
+  const [discountKind, setDiscountKind] = useState(initial?.discount_kind ?? 'percent')
+  const [discountText, setDiscountText] = useState(initial?.discount_kind && Number(initial.discount_value) > 0 ? moneyText(initial.discount_value).replace(/\.00$/, '') : '')
   const [expectedDate, setExpectedDate] = useState(initial?.expected_date ?? '')
   const [expectedUntil, setExpectedUntil] = useState(initial?.expected_until ?? '')
   const [url, setUrl] = useState(initial?.order_url ?? '')
@@ -80,6 +87,8 @@ export function OrderForm({
   }
 
   const mismatch = withQuantity ? priceMismatch(price, quantity, unit) : null
+  const normalTotal = orderTotal(price)
+  const priced = priceLines([{ list: normalTotal > 0 ? normalTotal : NaN, discount: { kind: discountKind, text: discountText } }]).lines[0]
 
   const problem = () => {
     if (!itemName.trim()) return 'Give the order a name.'
@@ -88,7 +97,9 @@ export function OrderForm({
     if (withQuantity && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
     if (withQuantity && !(parseDecimal(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
     if (mismatch) return "The unit price and the total price don't match: choose which one is right."
+    if (priced.problem) return priced.problem
     if (!(orderTotal(price) > 0)) return withQuantity ? 'Enter the total price or the unit price (more than 0).' : 'Enter the total price (more than 0).'
+    if (!(priced.paid > 0)) return 'Nothing is paid after the discount — lower it.'
     if (!orderDate || !datesValid.order) return 'Fix the order date first (DD/MM/YYYY).'
     if (!datesValid.expected || !datesValid.until) return 'Fix the expected date first (DD/MM/YYYY), or remove it.'
     if (expectedUntil && !expectedDate) return 'Add the expected arrival date too, or remove the latest date.'
@@ -110,7 +121,10 @@ export function OrderForm({
         details,
         shopId,
         orderDate,
-        price: orderTotal(price),
+        price: priced.paid,
+        listPrice: priced.discount ? priced.list : null,
+        discountKind: priced.discount?.kind ?? null,
+        discountValue: priced.discount?.value ?? null,
         paidBy,
         categoryId: subId || mainId || null,
         expectedDate,
@@ -128,6 +142,7 @@ export function OrderForm({
       setDetails('')
       setShopId('')
       setPrice(emptyPrice)
+      setDiscountText('')
       setQuantity('1')
       setExpectedDate('')
       setExpectedUntil('')
@@ -223,7 +238,7 @@ export function OrderForm({
             </div>
           </div>
           <p className="text-[11px] text-[var(--color-text-muted)]">
-            {withQuantity ? 'The total price is what you paid: it becomes the expense. Fill in either price and the other is worked out from the quantity.' : 'The total price is what you paid: it becomes the expense.'}
+            {withQuantity ? 'The total price is the normal price. Fill in either price and the other is worked out from the quantity. With no discount it is what you paid: it becomes the expense.' : 'The total price is the normal price. With no discount it is what you paid: it becomes the expense.'}
           </p>
           {mismatch && (
             <div role="alert" className="rounded-2xl border border-amber-400/60 bg-amber-500/10 p-2.5 space-y-2">
@@ -248,6 +263,21 @@ export function OrderForm({
               </div>
             </div>
           )}
+        </div>
+
+        <div>
+          <DiscountField
+            kind={discountKind}
+            text={discountText}
+            onChange={({ kind, text }) => {
+              setDiscountKind(kind)
+              setDiscountText(text)
+            }}
+            label="Discount"
+            problem={priced.problem}
+          />
+          <LineDiscountNotes priced={priced} />
+          {priced.discount && !priced.problem && <p className="text-[11px] text-[var(--color-text-muted)]">You pay €{priced.paid.toFixed(2)}: that is the order's price and its expense.</p>}
         </div>
 
         <ExpenseCategoryPicker value={{ mainId, subId }} onChange={pickCategory} mainCategories={mainCategories} subsOf={subsOf} onManage={() => setManagingCategories(true)} />
