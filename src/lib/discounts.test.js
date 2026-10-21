@@ -8,6 +8,7 @@ import {
   discountProblem,
   lineDiscountFields,
   lineHistory,
+  linePreview,
   parseDiscount,
   priceLines,
   purchaseCouponNote,
@@ -215,7 +216,7 @@ describe('the history shown on a saved purchase', () => {
   })
 
   it('with a coupon share as well', () => {
-    expect(lineHistory({ list_total: 6, item_discount_kind: 'percent', item_discount_value: 50, coupon_share: 1.5 })).toBe('€6.00 → €3.00 (−50%) · coupon −€1.50')
+    expect(lineHistory({ list_total: 6, item_discount_kind: 'percent', item_discount_value: 50, coupon_share: 1.5 })).toBe('€6.00 → €3.00 (−50%) · coupon −€1.50 → €1.50')
   })
 
   it('a coupon share only: "€6.00 → €4.50 (coupon −€1.50)"', () => {
@@ -233,5 +234,33 @@ describe('the history shown on a saved purchase', () => {
     expect(purchaseCouponNote({ coupon_kind: 'percent', coupon_value: 10, coupon_total: 20 })).toBe('(coupon −10%)')
     expect(purchaseCouponNote({ coupon_kind: null, coupon_total: 0 })).toBe('')
     expect(purchaseCouponNote(null)).toBe('')
+  })
+})
+
+describe('the live preview of a line being typed (same words as the saved purchase)', () => {
+  const coupon = (kind, text) => ({ kind, text })
+  const item = (list, kind, text) => ({ list, discount: { kind, text } })
+
+  it('a coupon share only: "€120.00 → €90.00 (coupon −€30.00)"', () => {
+    const priced = priceLines([item(120), item(60), item(20)], coupon('amount', '50'))
+    expect(priced.lines.map(linePreview)).toEqual(['€120.00 → €90.00 (coupon −€30.00)', '€60.00 → €45.00 (coupon −€15.00)', '€20.00 → €15.00 (coupon −€5.00)'])
+  })
+
+  it('an item discount and a share: "€80.00 → €56.00 (−30%) · coupon −€x → €y"', () => {
+    const priced = priceLines([item(80, 'percent', '30'), item(44)], coupon('amount', '10'))
+    // after its own discount the first costs 56, the second 44: shares 5.60 and 4.40
+    expect(linePreview(priced.lines[0])).toBe('€80.00 → €56.00 (−30%) · coupon −€5.60 → €50.40')
+    expect(linePreview(priced.lines[1])).toBe('€44.00 → €39.60 (coupon −€4.40)')
+  })
+
+  it('an item discount without a coupon keeps the short form', () => {
+    expect(linePreview(priceLines([item(80, 'percent', '30')]).lines[0])).toBe('€80 → €56 (−30%)')
+  })
+
+  it('nothing without a discount, with a problem, or without a price', () => {
+    expect(linePreview(priceLines([item(10)]).lines[0])).toBe('')
+    expect(linePreview(priceLines([item(10, 'amount', '25')]).lines[0])).toBe('')
+    expect(linePreview(priceLines([item(NaN, 'percent', '10')]).lines[0])).toBe('')
+    expect(linePreview(null)).toBe('')
   })
 })

@@ -1207,8 +1207,8 @@ Built as above, with these details (none needs SQL — no `supabase/024`):
   `list_price`, `discount_kind`, `discount_value` are saved when there is a
   discount (null otherwise, also when it is removed in an edit). The order
   card shows the paid price with the normal price crossed out, and
-  "€80 → €56 (−30%)" when opened. Editing an order shows the normal price and
-  discount again.
+  "€80.00 → €56.00 (−30%)" on the card itself (round 6B). Editing an order
+  shows the normal price and discount again.
 - **History**: the opened purchase row shows under an item "€6.00 → €3.00
   (−50%)" (with " · coupon −€1.50" when it had a share); the collapsed row
   shows "(coupon −€50)" under the total. Editing an expense amount by hand
@@ -1427,6 +1427,41 @@ subs), `confirm_shopping_trip` line `travel_id`.
    → the same chip comes from memory (no second AI call).
 4. HOME → Review all categories with AI → proposals listed; Reject one,
    Approve one → only that item changed; MONEY unchanged.
+
+#### Round 6B (21/10/2026) — fixes after testing round 6 on the iPhone
+
+No SQL (no `supabase/024`). What changed:
+
+- **Live coupon preview.** As soon as a coupon is typed, every item row (MONEY
+  purchase form and SHOP Confirm purchase, also each variant line of a group)
+  says in green: "€120.00 → €90.00 (coupon −€30.00)", and with an item
+  discount too "€80.00 → €56.00 (−30%) · coupon −€5.60 → €50.40"
+  (`discounts.linePreview`, shown by `LineDiscountNotes`; it wraps, so it is
+  not cut off on a narrow screen). The "Purchase discount" box repeats every
+  item by name under the coupon, so it can be checked where the coupon is
+  typed. The saved purchase row uses the same words (`lineHistory`; with an
+  item discount and a share it now ends "… · coupon −€1.50 → €1.50").
+- **Order card (cause).** The orders were saved correctly on every path
+  (`OrderForm` → `createOrder` / `editOrder` → `orderRowFrom` sends
+  `list_price`, `discount_kind`, `discount_value`; Orders in MONEY and "Order
+  online" use the same two functions; orders have no offline queue). The
+  SHOP "On the way" card (`grocery/OnTheWay.jsx`) is its own component and
+  only printed `order.price`, never reading the discount. It now shows the
+  paid price with the normal price crossed out and the line "€80.00 →
+  €56.00 (−30%)"; the MONEY `OrderCard` shows that line on the closed card
+  too (and not twice when opened). The line always has cents.
+- **MONEY expense of a discounted order** shows "€80.00 → €56.00 (−30%)"
+  (green) under the expense, in the day group (also in its collapsed header
+  when it is the only expense), in the single expense rows (category / store
+  views). Read from the order with `orders.expense_id`
+  (`orders.expenseDiscountNote`), so it follows edits of the order, Arrived,
+  and Cancel / Return with the expense kept; it disappears with the expense
+  when "Delete the expense" is chosen. If the expense's amount was edited
+  by hand to something other than the order's price, no line is shown (it
+  would not describe the expense).
+- **Receipts** show "(coupon −€50)" under the purchase total and each line's
+  history ("€120.00 → €90.00 (coupon −€30.00)", "€80.00 → €56.00 (−30%)"),
+  like MONEY. The limitation noted in round 6 is gone.
 
 ---
 

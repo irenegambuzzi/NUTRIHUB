@@ -14,12 +14,15 @@ const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.l
 // A main category's expenses for one day. Collapsed: one line with the
 // total. Opened: the expenses grouped by sub-category. `shopOf(shopId)` →
 // the store of an expense (shown in the header when they all share one).
+// `noteOf(expense)` → the discount history of an order's expense (green,
+// under it; also in the header when the group is that one expense).
 // A purchase has its own row (PurchaseGroup, below).
-export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, onDelete }) {
+export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf = () => '', onEdit, onDelete }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
   const single = items.length === 1 ? items[0] : null
+  const singleNote = single ? noteOf(single) : ''
   const subtitle = single?.description || `${items.length} expense${items.length === 1 ? '' : 's'}`
   const stores = new Set(items.map((e) => e.shop_id ?? null))
   const sharedShop = stores.size === 1 ? shopOf?.([...stores][0]) : null
@@ -53,6 +56,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
               )}{' '}
               · {payers.join(', ')}
             </span>
+            {singleNote && <span className="text-[10px] font-bold text-emerald-300 block break-words">{singleNote}</span>}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -90,6 +94,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, onEdit, 
                         </>
                       )}
                     </span>
+                    {noteOf(e) && <span className="text-[10px] font-bold text-emerald-300 block break-words">{noteOf(e)}</span>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button

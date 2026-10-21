@@ -9,6 +9,7 @@ import { askUndoPurchase, deleteTripRecord } from '../../hooks/usePurchase'
 import { goneSummary, purchaseUndo, tripState } from '../../lib/trips'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
+import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { groceryStore, pantryStore, tripExpenseStore, tripItemStore, tripStore } from '../../lib/stores'
 
@@ -123,7 +124,10 @@ export function ReceiptsView() {
                   {longDate(date)}
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+                  <span className="text-right">
+                    <span className="text-xs font-mono font-bold text-[var(--color-accent)] block">€{total.toFixed(2)}</span>
+                    {trip && purchaseCouponNote(trip) && <span className="text-[10px] text-emerald-300 block">{purchaseCouponNote(trip)}</span>}
+                  </span>
                   {!trip && list.length > 0 && (
                     <button
                       onClick={() => deleteExpenses(list.map((e) => e.id), `Receipt from ${parseLocalDate(date).toLocaleDateString('en-GB')} deleted`)}
@@ -157,6 +161,7 @@ export function ReceiptsView() {
                       <div key={i.id} className="flex justify-between gap-2 text-xs text-[var(--color-text-soft)]">
                         <span className="min-w-0">
                           {i.name}
+                          {lineHistory(i) && <span className="block text-[10px] font-bold text-emerald-300 break-words">{lineHistory(i)}</span>}
                           {(expenseGone || pantryGone) && (
                             <span className="block text-[10px] text-amber-300">
                               {[expenseGone && 'expense deleted', pantryGone && 'pantry item deleted'].filter(Boolean).join(' · ')}

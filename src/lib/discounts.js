@@ -169,22 +169,41 @@ export function couponFields(priced) {
 export const lineDiscount = (line) =>
   line?.item_discount_kind && Number(line.item_discount_value) > 0 ? { kind: line.item_discount_kind, value: Number(line.item_discount_value) } : null
 
+// What a line says about its price once it has a discount and/or a part of
+// the coupon — the same words while typing and in the saved purchase:
+//   coupon only      "€120.00 → €90.00 (coupon −€30.00)"
+//   item + coupon    "€80.00 → €56.00 (−30%) · coupon −€5.00 → €51.00"
+//   item only        "€80 → €56 (−30%)"  (with cents when `exact`)
+// `list` is the normal price, `discount` the line's own ({ kind, value } or
+// null), `share` its part of the coupon in €. '' when there is neither.
+function historyText(list, discount, share, exact) {
+  if (!Number.isFinite(list) || (!discount && !(share > 0))) return ''
+  const afterItem = applyDiscount(list, discount)
+  if (!(share > 0)) return discountLabel(list, afterItem, discount, { exact })
+  const paid = round2(afterItem - share)
+  const coupon = `coupon −${euro(share, true)}`
+  if (!discount) return `${euro(list, true)} → ${euro(paid, true)} (${coupon})`
+  return `${discountLabel(list, afterItem, discount, { exact: true })} · ${coupon} → ${euro(paid, true)}`
+}
+
+// A line being typed (the line from priceLines()): what it says, live,
+// before anything is saved. '' while it has no discount or the discount
+// can't be used.
+export function linePreview(priced) {
+  if (!priced || priced.problem) return ''
+  return historyText(priced.list, priced.discount, priced.share, false)
+}
+
 // What a saved purchase line says about its price, for the opened purchase
-// row: "€6.00 → €3.00 (−50%)", with the coupon share when there was one
-// ("€6.00 → €3.00 (−50%) · coupon −€1.50" — then the amount paid is the
-// expense). '' when the line had no discount at all (or no normal price
-// was kept). The expense amount itself is shown separately and may have
-// been edited by hand since: this text describes the receipt, not the edit.
+// row and Receipts. '' when the line had no discount at all (or no normal
+// price was kept). The expense amount itself is shown separately and may
+// have been edited by hand since: this text describes the receipt, not the
+// edit.
 export function lineHistory(line) {
   const list = Number(line?.list_total)
   if (!line || line.list_total == null || !Number.isFinite(list)) return ''
-  const discount = lineDiscount(line)
   const share = Number(line.coupon_share) > 0 ? round2(Number(line.coupon_share)) : 0
-  if (!discount && !share) return ''
-  const afterItem = applyDiscount(list, discount)
-  const coupon = share ? `coupon −${euro(share, true)}` : ''
-  if (!discount) return `${euro(list, true)} → ${euro(round2(afterItem - share), true)} (${coupon})`
-  return `${discountLabel(list, afterItem, discount, { exact: true })}${coupon ? ` · ${coupon}` : ''}`
+  return historyText(list, lineDiscount(line), share, true)
 }
 
 // "(coupon −€50)" / "(coupon −10%)" for a purchase row, '' without a coupon.

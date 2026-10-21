@@ -200,12 +200,29 @@ export function orderAmountLabel(order) {
 }
 
 // An order bought at a discount: its normal price and what it says, e.g.
-// "€80 → €56 (−30%)". `price` is always what was paid (the expense);
+// "€80.00 → €56.00 (−30%)" (always with cents, as on the card and on the
+// order's expense in MONEY). `price` is always what was paid (the expense);
 // `list_price` the normal price before the discount. null without one.
 export function orderDiscount(order) {
   const value = Number(order?.discount_value)
   const list = Number(order?.list_price)
   if (!order?.discount_kind || !(value > 0) || !(list > 0)) return null
   const discount = { kind: order.discount_kind, value }
-  return { list, paid: Number(order.price), discount, label: discountLabel(list, Number(order.price), discount) }
+  return { list, paid: Number(order.price), discount, label: discountLabel(list, Number(order.price), discount, { exact: true }) }
 }
+
+// What the MONEY row of an order's expense says about the discount:
+// "€80.00 → €56.00 (−30%)", read from the order linked to it
+// (orders.expense_id). '' without a discount — and also when the expense
+// was edited by hand to another amount than the order's price, as the text
+// would then not describe it. `orderOf(expenseId)` gives the order, if any.
+export function expenseDiscountNote(expense, orderOf) {
+  const order = expense?.id ? orderOf(expense.id) : null
+  const discount = order && orderDiscount(order)
+  if (!discount || Math.abs(Number(expense.amount) - discount.paid) > 0.004) return ''
+  return discount.label
+}
+
+// The order that made each expense: expense id → order (orders whose
+// expense was deleted have no link and are left out).
+export const ordersByExpense = (orders) => new Map(orders.filter((o) => o.expense_id).map((o) => [o.expense_id, o]))

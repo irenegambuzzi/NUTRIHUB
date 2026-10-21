@@ -267,7 +267,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
-        {lines.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={pricing.priced} />}
+        {lines.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={pricing.priced} names={items.map((i) => i.name)} />}
 
         <section className="space-y-2">
           <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Receipt (optional)</p>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
@@ -164,13 +164,45 @@ describe('MONEY Add expense: the purchase form', () => {
     }
     expect(screen.getByLabelText('Purchase discount')).toBeTruthy()
     type('Purchase discount', '50')
-    expect(screen.getByText('Purchase discount share −€30.00 → you pay €90.00')).toBeTruthy()
-    expect(screen.getByText('Purchase discount share −€5.00 → you pay €15.00')).toBeTruthy()
+    // under each item row, live, in green…
+    const preview = (text) => screen.getAllByText(text).find((el) => el.tagName === 'P')
+    expect(preview('€120.00 → €90.00 (coupon −€30.00)').className).toContain('text-emerald-300')
+    expect(preview('€60.00 → €45.00 (coupon −€15.00)')).toBeTruthy()
+    expect(preview('€20.00 → €15.00 (coupon −€5.00)')).toBeTruthy()
+    // …wrapping instead of being cut off on a narrow screen…
+    expect(preview('€120.00 → €90.00 (coupon −€30.00)').className).toContain('break-words')
+    // …and repeated by item name in the Purchase discount box
+    const box = within(screen.getByRole('list', { name: 'Each item after the purchase discount' }))
+    expect(box.getByText('Test one:')).toBeTruthy()
+    expect(box.getByText('€120.00 → €90.00 (coupon −€30.00)')).toBeTruthy()
+    expect(box.getAllByRole('listitem')).toHaveLength(3)
     fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €150.00' }))
     await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
     const { payload } = recordMoneyPurchase.mock.calls[0][0]
     expect(payload).toMatchObject({ coupon_kind: 'amount', coupon_value: 50, coupon_total: 50 })
     expect(payload.items.map((i) => [i.list_total, i.line_total, i.coupon_share])).toEqual([[120, 90, 30], [60, 45, 15], [20, 15, 5]])
+  })
+
+  it('an item discount and a coupon together: "€80.00 → €56.00 (−30%) · coupon −€x → €y" under that row', () => {
+    form()
+    type('Name', 'Test sneakers')
+    type('Price', '80')
+    type('Discount', '30')
+    expect(screen.getByText('€80 → €56 (−30%)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add item' }))
+    type('Name of item 2', 'Test socks')
+    type('Price of item 2', '44')
+    type('Purchase discount', '10')
+    expect(screen.getByText('€80.00 → €56.00 (−30%) · coupon −€5.60 → €50.40', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText('€44.00 → €39.60 (coupon −€4.40)', { selector: 'p' })).toBeTruthy()
+  })
+
+  it('a coupon with only one item row shows no coupon preview (the box only exists from two items)', () => {
+    form()
+    type('Name', 'Test one')
+    type('Price', '20')
+    expect(screen.queryByLabelText('Purchase discount')).toBeNull()
+    expect(screen.queryByText(/coupon/)).toBeNull()
   })
 
   it('typing a name again fills the NORMAL price, never the discounted one', () => {

@@ -1,6 +1,6 @@
 import { DecimalInput } from './DecimalInput'
 import { cn } from '../../lib/cn'
-import { couponText, discountLabel } from '../../lib/discounts'
+import { couponText, linePreview } from '../../lib/discounts'
 import { money } from '../../lib/pricing'
 
 // A discount being typed, in % or in €: two small buttons choose which
@@ -50,27 +50,24 @@ export function DiscountField({ kind, text, onChange, label, placeholder = 'Disc
   )
 }
 
-// What a line says about its price once a discount is typed: "€80 → €56
-// (−30%)" and, when the purchase has a coupon, the line's share of it.
-// `priced`: the line from priceLines() (lib/discounts.js).
+// What a line says about its price as soon as it has a discount or a part
+// of the coupon, live and in the words of the saved purchase: "€80 → €56
+// (−30%)", "€120.00 → €90.00 (coupon −€30.00)", "€80.00 → €56.00 (−30%) ·
+// coupon −€5.60 → €50.40". Green, and it wraps instead of being cut off on
+// a narrow screen. `priced`: the line from priceLines() (lib/discounts.js).
 export function LineDiscountNotes({ priced }) {
-  if (!priced) return null
-  return (
-    <>
-      {priced.discount && !priced.problem && <p className="text-[11px] font-bold text-emerald-300">{discountLabel(priced.list, priced.itemPaid, priced.discount)}</p>}
-      {priced.share > 0 && (
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          Purchase discount share −{money(priced.share)} → you pay {money(priced.paid)}
-        </p>
-      )}
-    </>
-  )
+  const text = linePreview(priced)
+  if (!text) return null
+  return <p className="text-[11px] font-bold text-emerald-300 break-words">{text}</p>
 }
 
 // "Purchase discount": one coupon for the whole receipt (two items or
 // more), spread over the items by price. `priced`: priceLines() of the
-// whole purchase.
-export function PurchaseDiscountBox({ coupon, onChange, priced }) {
+// whole purchase. `names`: the item names in the same order — with a
+// coupon typed, each item's result is repeated here, so it can be checked
+// right where the coupon is typed (it is also under each item).
+export function PurchaseDiscountBox({ coupon, onChange, priced, names = [] }) {
+  const results = priced.couponTotal > 0 ? priced.lines.map((line, i) => ({ name: names[i] || `Item ${i + 1}`, text: linePreview(line) })).filter((r) => r.text) : []
   return (
     <div className="rounded-2xl border border-[var(--color-border)] p-3 space-y-1.5">
       <p className="text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Purchase discount</p>
@@ -79,6 +76,16 @@ export function PurchaseDiscountBox({ coupon, onChange, priced }) {
         <p className="text-[11px] text-[var(--color-text-muted)]">
           {couponText(priced.coupon)} = {money(priced.couponTotal)} off, spread over the items by what each costs after its own discount.
         </p>
+      )}
+      {results.length > 0 && (
+        <ul aria-label="Each item after the purchase discount" className="space-y-1">
+          {results.map((r, i) => (
+            <li key={i} className="text-[11px] break-words">
+              <span className="text-[var(--color-text-muted)]">{r.name}: </span>
+              <span className="font-bold text-emerald-300">{r.text}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )

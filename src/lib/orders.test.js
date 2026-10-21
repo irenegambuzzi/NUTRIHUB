@@ -177,8 +177,8 @@ describe('cancelled and returned orders', () => {
 
 describe('an order bought at a discount', () => {
   it('shows the normal price, the paid price and the discount: Sneakers €80 −30% → €56', () => {
-    expect(orderDiscount({ price: 56, list_price: 80, discount_kind: 'percent', discount_value: 30 })).toMatchObject({ list: 80, paid: 56, label: '€80 → €56 (−30%)' })
-    expect(orderDiscount({ price: 95, list_price: 120, discount_kind: 'amount', discount_value: 25 }).label).toBe('€120 → €95 (−€25)')
+    expect(orderDiscount({ price: 56, list_price: 80, discount_kind: 'percent', discount_value: 30 })).toMatchObject({ list: 80, paid: 56, label: '€80.00 → €56.00 (−30%)' })
+    expect(orderDiscount({ price: 95, list_price: 120, discount_kind: 'amount', discount_value: 25 }).label).toBe('€120.00 → €95.00 (−€25.00)')
   })
 
   it('is nothing for an order without a discount', () => {

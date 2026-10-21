@@ -239,7 +239,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
           <Plus size={14} /> Add item
         </button>
 
-        {rows.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={priced} />}
+        {rows.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={priced} names={lines.map((l) => l.row.name.trim())} />}
 
         <div className="flex items-baseline justify-between border-t border-[var(--color-border)] pt-2">
           <span className="text-xs text-[var(--color-text-muted)]">

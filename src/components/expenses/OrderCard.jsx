@@ -73,6 +73,7 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
               {expenseOutcomeLabel(order) && <span className="font-normal text-[var(--color-text-muted)]"> · {expenseOutcomeLabel(order)}</span>}
             </span>
           )}
+          {discount && <span className="text-[11px] font-bold block mt-0.5 text-emerald-300 break-words">{discount.label}</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-right">
@@ -90,7 +91,6 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
             Ordered {dateLabel(order.order_date)} · paid by {paidByLabel(order.paid_by)}
             {main ? ` · ${sub ? `${main} › ${sub}` : main}` : ''}
           </p>
-          {discount && <p className="font-bold text-emerald-300">{discount.label}</p>}
           {order.expected_date && (
             <p className="text-[var(--color-text-muted)]">
               Expected {dateLabel(order.expected_date)}

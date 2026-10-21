@@ -21,6 +21,7 @@ import { bundleTrips, categoryTree, groupPurchases, purchasePart, tripShopId } f
 import { askUndoPurchase, reopenTrip } from '../hooks/usePurchase'
 import { splitPurchase } from '../hooks/useMerge'
 import { askDialog } from '../lib/feedback'
+import { expenseDiscountNote, ordersByExpense } from '../lib/orders'
 import { PersonSelector } from '../components/expenses/PersonSelector'
 import { Button } from '../components/ui/Button'
 import { usePersonFilter } from '../lib/personFilter'
@@ -61,6 +62,8 @@ export function ExpensesPage() {
   const { rows: orders } = orderStore.useRows()
   const tripById = useMemo(() => new Map(trips.map((t) => [t.id, t])), [trips])
   const lineByExpense = useMemo(() => new Map(tripLines.filter((l) => l.expense_id).map((l) => [l.expense_id, l])), [tripLines])
+  const orderByExpense = useMemo(() => ordersByExpense(orders), [orders])
+  const discountNote = (expense) => expenseDiscountNote(expense, (id) => orderByExpense.get(id))
   const orderExpenseIds = useMemo(() => new Set(orders.map((o) => o.expense_id).filter(Boolean)), [orders])
   const [tripStoreFor, setTripStoreFor] = useState(null) // a trip
   const [bulkStore, setBulkStore] = useState(false)
@@ -118,7 +121,7 @@ export function ExpensesPage() {
     return askUndoPurchase(trip, { count: all.length, total: purchasePart(all, all).fullTotal })
   }
 
-  const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} onEdit={setEditingExpense} onDelete={removeExpense} />
+  const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} noteOf={discountNote} onEdit={setEditingExpense} onDelete={removeExpense} />
 
   const [period, setPeriod] = useState('month')
   const [offset, setOffset] = useState(0)
@@ -179,6 +182,7 @@ export function ExpensesPage() {
             styleFor={styleFor}
             shopOf={shopOf}
             subName={subNameOf(g.main)}
+            noteOf={discountNote}
             onEdit={setEditingExpense}
             onDelete={removeExpense}
           />
