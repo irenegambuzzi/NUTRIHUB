@@ -29,3 +29,6 @@ dist-ssr
 
 # One-off SQL with personal data, run by hand in Supabase
 supabase/oneoff/
+
+# Live data exported from Supabase for a review round (personal data)
+tmp-export/
