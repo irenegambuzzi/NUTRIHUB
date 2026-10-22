@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChartFilters, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections } from './moneyList'
+import { applyChartFilters, categoryTree, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections } from './moneyList'
 
 const food = { id: 'food', name: 'Groceries' }
 const fun = { id: 'fun', name: 'Going out' }
@@ -158,8 +158,33 @@ describe('one row per purchase', () => {
     ])
   })
 
+  it('opened: "Other" comes after the other categories, before Uncategorized', () => {
+    const other = { id: 'o', name: 'Other' }
+    const bank = { id: 'b', name: 'Bank & Fee' }
+    const mainOf = (id) => ({ g: groceries, o: other, b: bank })[id] ?? null
+    const sections = purchaseSections([x('1', { category_id: 'o' }), x('2', { category_id: null }), x('3', { category_id: 'g' }), x('4', { category_id: 'b' })], mainOf)
+    expect(sections.map((s) => s.name)).toEqual(['Bank & Fee', 'Groceries', 'Other', 'Uncategorized'])
+  })
+
   it('with a category filter on, only that part, "of total" the whole purchase', () => {
     expect(purchasePart([list[1]], list.slice(0, 2))).toEqual({ total: 20, fullTotal: 22.5, partial: true })
     expect(purchasePart(list.slice(0, 2), list.slice(0, 2))).toEqual({ total: 22.5, fullTotal: 22.5, partial: false })
+  })
+})
+
+describe('categoryTree (every MONEY and Income picker)', () => {
+  it('gives mains A–Z with "Other" last, and subs A–Z with "Others" last', () => {
+    const tree = categoryTree([
+      { id: 'o', name: 'Other', parent_id: null },
+      { id: 't', name: 'Trips & Holidays', parent_id: null },
+      { id: 'g', name: 'Groceries', parent_id: null },
+      { id: 's', name: 'Shopping', parent_id: null },
+      { id: 's3', name: 'Others', parent_id: 's' },
+      { id: 's1', name: 'Gifts', parent_id: 's' },
+      { id: 's2', name: 'Clothing', parent_id: 's' },
+    ])
+    expect(tree.mainCategories.map((c) => c.name)).toEqual(['Groceries', 'Shopping', 'Trips & Holidays', 'Other'])
+    expect(tree.subsOf('s').map((c) => c.name)).toEqual(['Clothing', 'Gifts', 'Others'])
+    expect(tree.namesOf('s1')).toEqual({ main: 'Shopping', sub: 'Gifts' })
   })
 })

@@ -87,3 +87,13 @@ describe('categories', () => {
     expect(order).toEqual(['produce', 'meat', 'snacks', 'dairy'])
   })
 })
+
+describe('Shop mode keeps the shop route, not the A–Z of the lists', () => {
+  it('groups by category in shopOrder (sort_order), whatever the letters', () => {
+    // shopOrder from useInventoryCategories: Fruit & Vegetables first, Baby
+    // after Toiletries, although the lists show them A–Z.
+    const shopOrder = ['produce', 'toiletries', 'baby', 'personal-care']
+    const list = [{ name: 'Lipstick', category_id: 'personal-care' }, { name: 'Diapers', category_id: 'baby' }, { name: 'Apples', category_id: 'produce' }, { name: 'Soap', category_id: 'toiletries' }]
+    expect(groupByCategory(list, new Map(), shopOrder).map((g) => g.categoryId)).toEqual(['produce', 'toiletries', 'baby', 'personal-care'])
+  })
+})

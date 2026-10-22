@@ -23,7 +23,7 @@ const totalOf = (i) => (i.price ? i.price * i.quantity : 0)
 describe('grocery components render', () => {
   it('shopping mode: open items by category, the cart, and the running total', () => {
     const html = renderToStaticMarkup(
-      <ShoppingMode items={items} parents={parents} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} onCheck={() => {}} />
+      <ShoppingMode items={items} shopOrder={parents.map((p) => p.id)} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} onCheck={() => {}} />
     )
     expect(html).toContain('1 to get')
     expect(html).toContain('Beverages')
@@ -38,7 +38,7 @@ describe('grocery components render', () => {
   it('shopping mode search: both lists at once, each result says where it is, partial and case-insensitive', () => {
     const show = (search) =>
       renderToStaticMarkup(
-        <ShoppingMode items={items} parents={parents} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} search={search} onCheck={() => {}} />
+        <ShoppingMode items={items} shopOrder={parents.map((p) => p.id)} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} search={search} onCheck={() => {}} />
       )
     const both = show('  I')
     expect(both).toContain('To buy (1)')
@@ -53,7 +53,7 @@ describe('grocery components render', () => {
     // The running total is for the whole list, not just the results.
     expect(show('zzz')).toContain('€2.40')
     // Cleared: the lists are as before.
-    expect(show('')).toBe(renderToStaticMarkup(<ShoppingMode items={items} parents={parents} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} onCheck={() => {}} />))
+    expect(show('')).toBe(renderToStaticMarkup(<ShoppingMode items={items} shopOrder={parents.map((p) => p.id)} categoryName={categoryName} totalOf={totalOf} costOf={totalOf} budget={10} onCheck={() => {}} />))
   })
 
   it('confirm screen: every cart item, its questions, and Confirm locked until they are answered', () => {

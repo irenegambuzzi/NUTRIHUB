@@ -1,4 +1,5 @@
-import { guessCategories, guessCategory, normalizeName } from './categoryGuess'
+import { createGuesser, guessCategories, guessCategory, normalizeName } from './categoryGuess'
+import { BUDGET_RULES } from '../data/budgetKeywords'
 import { findExisting } from './categoryNames'
 import { normName } from './grocery'
 
@@ -134,11 +135,25 @@ export function suggestCategories(name, context, { limit = DEFAULT_LIMIT } = {})
   return chips
 }
 
+// The MONEY keyword list (data/budgetKeywords.js), by id. Only MONEY
+// categories that exist now count: a rule for a missing main is ignored,
+// a missing sub falls back to its main.
+const budgetGuesser = createGuesser(BUDGET_RULES)
+
+// The budget categories the MONEY keywords suggest for a name, best first:
+// [budget category id] (the sub when it exists, else the main).
+export function budgetKeywordPicks(name, expenseCategories = [], limit = DEFAULT_LIMIT) {
+  const parents = expenseCategories.filter((c) => !c.parent_id)
+  const subsByParent = new Map(parents.map((p) => [p.id, expenseCategories.filter((c) => c.parent_id === p.id)]))
+  return budgetGuesser.guessCategories(name, { parents, subsByParent }, limit).map((pick) => pick.subcategoryId ?? pick.categoryId)
+}
+
 // The budget-category chips for a name, for a MONEY row that isn't added
 // to HOME. `context` is the same plus { expenseCategories [{ id, name,
 // parent_id }], budgetFor({ categoryId, subcategoryId }) → budget category
 // id (the mapping) }. What was remembered for the name as a budget
-// category comes first; the HOME suggestions follow through the mapping.
+// category comes first, then the MONEY keywords; the HOME suggestions
+// follow through the mapping, then a MONEY category with a similar name.
 export function suggestBudgetCategories(name, context, { limit = DEFAULT_LIMIT } = {}) {
   if (!normalizeName(name)) return []
   const { expenseCategories = [], budgetFor = () => null } = context
@@ -149,6 +164,7 @@ export function suggestBudgetCategories(name, context, { limit = DEFAULT_LIMIT }
     if (category) chips.push({ categoryId: null, subcategoryId: null, expenseCategoryId: id, source, label: pathName(expenseCategories, category) })
   }
   add(context.memory?.get(normalizeName(name))?.expense_category_id, 'memory')
+  for (const id of budgetKeywordPicks(name, expenseCategories, limit)) add(id, 'keywords')
   for (const chip of suggestCategories(name, context, { limit })) add(budgetFor(chip), chip.source)
   const similar = findExisting(name, expenseCategories)
   if (similar) add(similar.id, 'name')

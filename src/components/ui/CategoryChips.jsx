@@ -3,6 +3,7 @@ import { Plus, X } from 'lucide-react'
 import { Input, Select } from './Field'
 import { cn } from '../../lib/cn'
 import { categoryPath } from '../../lib/categoryNames'
+import { sortCategories } from '../../lib/categoryOrder'
 import { checkNewName, defaultNewBudget, titleCase } from '../../lib/newCategory'
 import { useCategoryCreation } from '../../hooks/useCategoryCreation'
 
@@ -137,13 +138,11 @@ function ChipsAndNewRow({ mode = 'home', name, chips = [], selected = null, onPi
                   <option key={main.id} value={main.id}>
                     {main.name}
                   </option>,
-                  ...creation.expenseCategories
-                    .filter((c) => c.parent_id === main.id)
-                    .map((sub) => (
-                      <option key={sub.id} value={sub.id}>
-                        {main.name} › {sub.name}
-                      </option>
-                    )),
+                  ...sortCategories(creation.expenseCategories.filter((c) => c.parent_id === main.id)).map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {main.name} › {sub.name}
+                    </option>
+                  )),
                 ])}
               </Select>
             </div>
