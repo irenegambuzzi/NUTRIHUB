@@ -44,3 +44,26 @@ describe('MONEY Manage: similar names', () => {
     expect(screen.getByText(/Similar category exists: Shopping/)).toBeTruthy()
   })
 })
+
+describe('MONEY Manage (and Income Manage): A–Z, "Other" last', () => {
+  const list = [
+    { id: 'trips', name: 'Trips & Holidays', parent_id: null },
+    { id: 'other', name: 'Other', parent_id: null },
+    { id: 'shop', name: 'Shopping', parent_id: null },
+    { id: 'shop:others', name: 'Others', parent_id: 'shop' },
+    { id: 'shop:gifts', name: 'Gifts', parent_id: 'shop' },
+    { id: 'shop:clothing', name: 'Clothing', parent_id: 'shop' },
+    { id: 'bank', name: 'Bank & Fee', parent_id: null },
+  ]
+
+  it('lists mains A–Z with Other last, and subs A–Z with Others last', () => {
+    const { container } = render(<CategoryManager categories={list} styleFor={() => ({ hex: '#fff' })} onAdd={vi.fn()} onDelete={vi.fn()} onRename={vi.fn()} onClose={() => {}} />)
+    const text = container.querySelector('.divide-y').textContent
+    const at = (name) => text.indexOf(name)
+    const order = ['Bank & Fee', 'Shopping', 'Clothing', 'Gifts', 'Others', 'Trips & Holidays']
+    for (let i = 1; i < order.length; i++) expect(at(order[i - 1]), order[i]).toBeLessThan(at(order[i]))
+    expect(text.lastIndexOf('Other')).toBeGreaterThan(at('Trips & Holidays'))
+    const options = [...screen.getByLabelText('Parent category').querySelectorAll('option')].map((o) => o.textContent)
+    expect(options).toEqual(['Main category', 'Sub-category of Bank & Fee', 'Sub-category of Shopping', 'Sub-category of Trips & Holidays', 'Sub-category of Other'])
+  })
+})

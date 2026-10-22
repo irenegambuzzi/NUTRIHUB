@@ -33,8 +33,8 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 023 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022') && !f.startsWith('023')).sort()
+  // 015 (the login lock) and 016 to 024 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022') && !f.startsWith('023') && !f.startsWith('024')).sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
 }, 60000)
@@ -1842,5 +1842,175 @@ describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, c
       await db.query(`delete from grocery_items where id = $1`, [entry])
       await db.query(`delete from pantry_items where id = any($1)`, [[milk, lays, tuc, chips]])
     })
+  })
+})
+
+describe('024: new HOME and MONEY categories, found by id so renames never break it', () => {
+  const file = '024_categories.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const rows = async (text, params) => (await db.query(text, params)).rows
+  const row = async (text, params) => (await rows(text, params))[0]
+  // Runs the whole file; the result of its last SELECT (the check).
+  const run = async () => (await db.exec(sql)).at(-1).rows
+  // A scenario that is undone afterwards, so each one starts from the
+  // same live-like data.
+  async function undone(fn) {
+    await db.exec('begin')
+    try {
+      return await fn()
+    } finally {
+      await db.exec('rollback')
+    }
+  }
+  const TRIPS = 'dc79f604-19fd-4bdd-817e-335816c4afe7'
+  const HEALTH = '06729df9-06b2-4465-955b-17d03f3fe125'
+  const PETS = 'ecd9a924-7f46-4991-83ce-02825c73ce42'
+  const PHARMACY = '8fbe343f-6fd9-4c58-874b-d9bd809be461'
+  const PERSONAL_CARE = 'f194dd95-a6c4-4399-a2ed-2114d6b8a1eb'
+  const FLIGHTS = '38455d3e-ab33-4eae-8088-e6c9e4e55b3e'
+  const snapshot = async () => ({
+    home: await rows(`select id, name, parent_id, type, sort_order from inventory_categories order by id`),
+    money: await rows(`select id::text, name, parent_id::text, type from expense_categories order by id`),
+    map: await rows(`select id, expense_category_id::text from category_budget_map order by id`),
+    incomeCategories: await rows(`select id::text, name, parent_id::text, type from income_categories order by id`),
+    income: await rows(`select id::text, amount::float, category_id::text from income order by id`),
+  })
+  const statuses = (check) => Object.fromEntries(check.map((r) => [`${r.section} · ${r.planned}`, r.status]))
+  let live
+
+  beforeAll(async () => {
+    // The live data of 21/10/2026, as far as 024 needs it: the MONEY mains
+    // it adds subs to (by their live ids), the Trips subs that exist, HOME
+    // Laundry Fragrance (renamed by hand from "Perfume") and the two
+    // mapping rows.
+    await db.exec(`
+      insert into expense_categories (id, name, type, parent_id) values
+        ('${TRIPS}', 'Trips & Holidays', 'parent', null),
+        ('688bfedf-8e4c-4b59-860f-3a55c33f50d1', 'Subscription', 'parent', null),
+        ('744f7d8e-c90d-49d3-ad03-72c6e81aad9d', 'Entertainment', 'parent', null),
+        ('8b2d4f49-af1d-41af-bd19-9050a7689164', 'Car / Vehicle', 'parent', null),
+        ('${HEALTH}', 'Health', 'parent', null),
+        ('${PETS}', 'Pets', 'parent', null),
+        ('b498cc5d-95ea-4666-89f2-11973222ec2c', 'Bank & Fee', 'parent', null);
+      insert into expense_categories (id, name, type, parent_id) values
+        ('5d4cc03f-a148-43b1-b2eb-2186012a20c9', 'Transport', 'sub', '${TRIPS}'),
+        ('72cb10f3-3fbd-4bb1-b0f8-81c5cc357077', 'Accommodation', 'sub', '${TRIPS}'),
+        ('2b571b2a-1676-4c23-ae1c-46ec11613359', 'Food & Drinks', 'sub', '${TRIPS}'),
+        ('df3c1786-b4e8-40b8-b55a-b74f8816e7c2', 'Activities', 'sub', '${TRIPS}');
+      insert into inventory_categories (id, name, parent_id, type, sort_order) values
+        ('e8e447c7-3b68-4eee-81e8-86915839565f', 'Laundry Fragrance', 'laundry', 'sub', 4);
+      insert into category_budget_map (id, expense_category_id) values ('pet', '${PETS}'), ('health', '${HEALTH}');
+    `)
+    live = await snapshot()
+  })
+
+  it('only adds rows: no delete, no rename, no table, policy or grant; the one UPDATE is the guarded health mapping', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    expect(code).not.toMatch(/\b(delete|drop|truncate|alter|create|grant|revoke|policy)\b/i)
+    expect(code.match(/\bupdate\s+\w+/gi)).toEqual(['update category_budget_map'])
+    expect(code).toMatch(/where id = 'health'\s+and expense_category_id = '06729df9-06b2-4465-955b-17d03f3fe125'/)
+    expect(code).not.toMatch(/income/i)
+  })
+
+  it('with the Trips main renamed "Travel" before 024, Flights, Souvenirs and Insurance & Visas still go under it', async () => {
+    await undone(async () => {
+      await db.query(`update expense_categories set name = 'Travel' where id = $1`, [TRIPS])
+      const check = await run()
+      expect(await rows(`select name from expense_categories where parent_id = $1 order by name`, [TRIPS])).toEqual(
+        ['Accommodation', 'Activities', 'Flights', 'Food & Drinks', 'Insurance & Visas', 'Souvenirs', 'Transport'].map((name) => ({ name }))
+      )
+      expect(check.find((r) => r.planned === 'Flights')).toMatchObject({ current_name: 'Flights', current_main: 'Travel', status: 'ok' })
+    })
+  })
+
+  it('run, rename "Personal Care" and "Flights", run again: nothing is duplicated and the new names stay', async () => {
+    await undone(async () => {
+      await run()
+      const counts = await row(`select (select count(*)::int from expense_categories) as money, (select count(*)::int from inventory_categories) as home, (select count(*)::int from category_budget_map) as map`)
+      await db.query(`update expense_categories set name = 'Cura personale' where id = $1`, [PERSONAL_CARE])
+      await db.query(`update expense_categories set name = 'Voli' where id = $1`, [FLIGHTS])
+      const check = await run()
+      expect(await row(`select (select count(*)::int from expense_categories) as money, (select count(*)::int from inventory_categories) as home, (select count(*)::int from category_budget_map) as map`)).toEqual(counts)
+      expect((await row(`select count(*)::int as n from expense_categories where name in ('Personal Care', 'Flights')`)).n).toBe(0)
+      expect(check.find((r) => r.planned === 'Personal Care')).toMatchObject({ current_name: 'Cura personale', status: 'ok' })
+      expect(check.find((r) => r.planned === 'Hairdresser')).toMatchObject({ current_main: 'Cura personale', status: 'ok' })
+      expect(check.find((r) => r.planned === 'Flights')).toMatchObject({ current_name: 'Voli', status: 'ok' })
+      expect(check.find((r) => r.planned.startsWith('Beauty Care →'))).toMatchObject({ current_main: 'Cura personale › Beauty & Perfume', status: 'ok' })
+    })
+  })
+
+  it('leaves a health mapping changed by hand alone, and says so', async () => {
+    await undone(async () => {
+      await db.query(`update category_budget_map set expense_category_id = $1 where id = 'health'`, [PETS])
+      const check = await run()
+      expect((await row(`select expense_category_id::text as id from category_budget_map where id = 'health'`)).id).toBe(PETS)
+      expect(statuses(check)['3 mapping · Health & Medicine → Health › Pharmacy']).toBe('left: changed by hand')
+    })
+  })
+
+  it('skips a name that already exists in other capitals (HOME and MONEY), and the subs of a skipped main', async () => {
+    await undone(async () => {
+      await db.exec(`
+        insert into inventory_categories (id, name, parent_id, type, sort_order) values ('hand-perfume', ' perfume ', 'personal-care', 'sub', 9), ('baby-care', 'BABY', null, 'parent', 20);
+        insert into expense_categories (name, type, parent_id) values ('flights', 'sub', '${TRIPS}'), ('family support', 'parent', null);
+      `)
+      const check = statuses(await run())
+      expect((await row(`select count(*)::int as n from inventory_categories where id in ('personal-care:perfume', 'baby', 'baby:diapers')`)).n).toBe(0)
+      expect((await row(`select count(*)::int as n from expense_categories where id in ($1, '54c1355d-5ebb-4237-ae67-1be0ca593443')`, [FLIGHTS])).n).toBe(0)
+      expect((await row(`select count(*)::int as n from expense_categories where lower(name) = 'flights'`)).n).toBe(1)
+      expect(check['1 HOME · Perfume']).toBe('skipped: name exists')
+      expect(check['1 HOME · Baby']).toBe('skipped: name exists')
+      expect(check['1 HOME · Diapers']).toBe('skipped: parent missing')
+      expect(check['2 MONEY · Flights']).toBe('skipped: name exists')
+      expect(check['2 MONEY · Family Support']).toBe('skipped: name exists')
+      expect(check['2 MONEY · Souvenirs']).toBe('ok')
+      expect(check['5 duplicate names · HOME']).toBe('ok')
+    })
+  })
+
+  it('skips the subs of a MONEY main that was deleted, and the check says so', async () => {
+    await undone(async () => {
+      await db.query(`delete from expense_categories where id = 'b498cc5d-95ea-4666-89f2-11973222ec2c'`)
+      const check = statuses(await run())
+      expect(check['2 MONEY · Taxes & Fines']).toBe('skipped: parent missing')
+      expect(check['2 MONEY · Documents & Permits']).toBe('skipped: parent missing')
+      expect(check['2 MONEY · Fuel']).toBe('ok')
+    })
+  })
+
+  it('the real run: every check is ok, existing rows are untouched except the health mapping, income too; run twice gives the same rows', async () => {
+    const check = await run()
+    expect(check.length).toBeLessThan(100)
+    expect(check.filter((r) => r.section.startsWith('1 '))).toHaveLength(16)
+    expect(check.filter((r) => r.section.startsWith('2 '))).toHaveLength(23)
+    expect(check.filter((r) => r.section.startsWith('3 '))).toHaveLength(4)
+    for (const r of check.filter((r) => !r.section.startsWith('4 '))) {
+      expect(['ok', 'updated'], `${r.section} · ${r.planned}`).toContain(r.status)
+    }
+    expect(statuses(check)['3 mapping · Health & Medicine → Health › Pharmacy']).toBe('updated')
+    expect(check.find((r) => r.planned === 'Health & Medicine → Health › Pharmacy').current_main).toBe('Health › Pharmacy')
+    expect(check.find((r) => r.planned === 'Car Care → Car / Vehicle').current_main).toBe('Car / Vehicle')
+
+    // Every row that existed before is exactly as it was, except the
+    // health mapping (Health → Health › Pharmacy).
+    const after = await snapshot()
+    const same = (list, now) => list.map((r) => now.find((x) => x.id === r.id))
+    expect(same(live.home, after.home)).toEqual(live.home)
+    expect(same(live.money, after.money)).toEqual(live.money)
+    expect(same(live.map, after.map)).toEqual(live.map.map((r) => (r.id === 'health' ? { ...r, expense_category_id: PHARMACY } : r)))
+    expect(after.incomeCategories).toEqual(live.incomeCategories)
+    expect(after.income).toEqual(live.income)
+    expect(after.home.length - live.home.length).toBe(16)
+    expect(after.money.length - live.money.length).toBe(23)
+    expect(after.map.length - live.map.length).toBe(3)
+    expect(await row(`select name, parent_id, type, sort_order from inventory_categories where id = 'baby'`)).toEqual({ name: 'Baby', parent_id: null, type: 'parent', sort_order: 14 })
+
+    // Again: the same rows; the health row now says "already Pharmacy".
+    const again = await run()
+    expect(await snapshot()).toEqual(after)
+    expect(statuses(again)['3 mapping · Health & Medicine → Health › Pharmacy']).toBe('already Pharmacy')
+    for (const r of again.filter((r) => !r.section.startsWith('4 '))) {
+      expect(['ok', 'already Pharmacy'], `${r.section} · ${r.planned}`).toContain(r.status)
+    }
   })
 })

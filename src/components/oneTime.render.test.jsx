@@ -319,7 +319,7 @@ describe('Shopping mode', () => {
       { ...row, id: 'a', name: 'First', pantry_item_id: null, in_cart: true, cart_added_at: '2026-10-20T10:00:01Z', created_at: '2026-10-09' },
       { ...row, id: 'b', name: 'Second', pantry_item_id: null, in_cart: true, cart_added_at: '2026-10-20T10:00:02Z', created_at: '2026-10-05' },
     ]
-    const { container } = render(<ShoppingMode items={items} parents={parents} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} onCheck={() => {}} onConfirm={() => {}} />)
+    const { container } = render(<ShoppingMode items={items} shopOrder={parents.map((p) => p.id)} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} onCheck={() => {}} onConfirm={() => {}} />)
     const text = container.textContent
     expect(text.indexOf('First')).toBeLessThan(text.indexOf('Second'))
     expect(text.indexOf('Second')).toBeLessThan(text.indexOf('Third'))
@@ -329,7 +329,7 @@ describe('Shopping mode', () => {
     const entries = [variantEntry(variantById.get('pr')), variantEntry(variantById.get('cv'))]
     const onCheck = vi.fn()
     render(
-      <ShoppingMode items={entries} parents={parents} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} pantryFor={pantryOfEntry} groupOf={() => chipsGroup} onCheck={onCheck} onConfirm={() => {}} />
+      <ShoppingMode items={entries} shopOrder={parents.map((p) => p.id)} categoryName={() => 'Misc'} totalOf={() => 0} costOf={() => 0} budget={null} pantryFor={pantryOfEntry} groupOf={() => chipsGroup} onCheck={onCheck} onConfirm={() => {}} />
     )
     const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
     expect(within(card).getByText('Not urgent')).toBeTruthy()

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { guessCategories, guessCategory, normalizeName, singular } from './categoryGuess'
+import { createGuesser, guessCategories, guessCategory, normalizeName, singular } from './categoryGuess'
+import { CATEGORY_RULES } from '../data/categoryKeywords'
 
 const sub = (name) => guessCategory(name)?.subcategoryId
 const parent = (name) => guessCategory(name)?.categoryId
@@ -37,7 +38,7 @@ describe('guessCategory', () => {
     expect(parent('air freshener')).toBe('household')
     expect(sub('tea tree oil')).toBe('personal-care:skin')
     expect(sub('latte detergente')).toBe('personal-care:skin')
-    expect(sub('olio per bambini')).toBe('personal-care:skin')
+    expect(sub('olio per bambini')).toBe('baby:care')
     expect(parent('Deodorante per ambienti')).toBe('household')
     expect(sub('vacuum cleaner')).toBe('appliances:cleaning')
     expect(sub('carta forno')).toBe('household:paper')
@@ -49,7 +50,7 @@ describe('guessCategory', () => {
   })
 
   it("doesn't put car supplies with cooking oils", () => {
-    expect(parent('spray olio motore')).toBe('misc')
+    expect(sub('spray olio motore')).toBe('household:car-care')
   })
 
   it('lets the kind of product beat its flavour or ingredient', () => {
@@ -91,7 +92,7 @@ describe('guessCategory', () => {
     expect(sub('Cavoletti di Bruxelles')).toBe('produce:vegetables')
     expect(sub('Risotto alla milanese')).toBe('pantry-staples:grains')
     expect(parent('Mirtilli surgelati')).toBe('frozen')
-    expect(parent('Polpette di bovino surgelate')).toBe('meat')
+    expect(sub('Polpette di bovino surgelate')).toBe('frozen:meat')
   })
 
   it('accepts ambiguous short words only as the whole name', () => {
@@ -162,12 +163,14 @@ describe('guessCategory', () => {
     'laundry:detergent': ['Detersivo lavatrice', 'Dixan', 'Ariel pods', 'Rinso', 'So Klin', 'Laundry detergent', 'Dash'],
     'laundry:softener': ['Ammorbidente', 'Lenor', 'Molto', 'Downy', 'Fabric softener'],
     'laundry:stain': ['Smacchiatore', 'Vanish'],
-    'toiletries:paper': ['Carta igienica', 'Fazzoletti', 'Tisu', 'Salviette umidificate', 'Wet wipes', 'Toilet paper', 'Dischetti di cotone'],
+    'toiletries:paper': ['Carta igienica', 'Fazzoletti', 'Tisu', 'Salviette umidificate', 'Wet wipes', 'Toilet paper'],
     'toiletries:soap': ['Bagnoschiuma', 'Sapone liquido', 'Sabun mandi', 'Lifebuoy', 'Shower gel', 'Dove'],
     'toiletries:oral': ['Dentifricio', 'Spazzolino', 'Colgate', 'Mentadent', 'Pepsodent', 'Collutorio', 'Filo interdentale'],
     'toiletries:hair': ['Shampoo', 'Balsamo', 'Pantene', 'Head & Shoulders', 'Sunsilk', 'Conditioner'],
     'personal-care:skin': ['Crema viso', 'Crema mani', 'Nivea crema', 'Crema solare', 'Sunscreen', 'Face wash', 'Acqua micellare', 'Lip balm', 'Body lotion'],
-    'personal-care:makeup': ['Mascara', 'Rossetto', 'Smalto', 'Profumo', 'Foundation', 'Bedak'],
+    'personal-care:makeup': ['Mascara', 'Rossetto', 'Smalto', 'Foundation', 'Bedak'],
+    'personal-care:perfume': ['Profumo', 'Eau de toilette', 'Chanel Coco Mademoiselle', 'Acqua di Gio'],
+    'dd8d720d-b911-4f55-af65-661ac7685eeb': ['Dischetti di cotone', 'Cotton fioc', 'Makeup Remover Cotton'],
     'personal-care:deodorant': ['Deodorante', 'Deodorant', 'Rexona', 'Borotalco'],
     'health:medicine': ['Tachipirina', 'Moment', 'Oki', 'Paracetamol', 'Ibuprofene', 'Obat batuk', 'Panadol', 'Vicks', 'Tolak Angin'],
     'health:vitamins': ['Vitamina C', 'Vitamin D', 'Magnesio', 'Integratore', 'Supradyn', 'Omega 3', 'Imboost'],
@@ -181,7 +184,8 @@ describe('guessCategory', () => {
     'appliances:kitchenware': ['Padella', 'Pentola', 'Coltelli', 'Tagliere', 'Tupperware', 'Bicchieri', 'Wajan'],
     'appliances:cleaning': ['Aspirapolvere', 'Robot aspirapolvere', 'Folletto', 'Ferro da stiro', 'Lavatrice'],
     'appliances:air': ['Ventilatore', 'Deumidificatore', 'Kipas angin', 'Stufetta'],
-    'appliances:electronics': ['Caricatore', 'Cuffie', 'Mouse', 'Power bank', 'Cartucce stampante', 'Monitor'],
+    'appliances:electronics': ['Caricatore', 'Cuffie', 'Mouse', 'Power bank', 'Monitor'],
+    'household:stationery': ['Cartucce stampante', 'Carta A4', 'Penne a sfera', 'Nastro adesivo'],
   }
 
   for (const [expected, names] of Object.entries(REAL_ITEMS)) {
@@ -191,9 +195,9 @@ describe('guessCategory', () => {
   }
 
   it('fills in only a main category where there is no sub-category', () => {
-    expect(guessCategory('Pannolini Pampers')).toEqual({ categoryId: 'toiletries', subcategoryId: null })
+    expect(guessCategory('Lamette Gillette')).toEqual({ categoryId: 'toiletries', subcategoryId: null })
     expect(guessCategory('Latte di cocco')).toEqual({ categoryId: 'pantry-staples', subcategoryId: null })
-    expect(guessCategory('Insetticida zanzare')).toEqual({ categoryId: 'household', subcategoryId: null })
+    expect(guessCategory('Lucido scarpe')).toEqual({ categoryId: 'household', subcategoryId: null })
   })
 })
 
@@ -259,5 +263,96 @@ describe('guessCategories (the chips)', () => {
   it('nothing for a name that matches nothing', () => {
     expect(guessCategories('Stuff for Marco', all, 3)).toEqual([])
     expect(guessCategories('', all, 3)).toEqual([])
+  })
+})
+
+describe('round 6C: the new HOME categories and keywords', () => {
+  // Every HOME category id live on 21/10/2026 (tmp-export/1_home.csv),
+  // plus the 16 that supabase/024_categories.sql adds.
+  const LIVE_IDS = '01386438-f2d4-418b-bcd6-082874075213 3d924169-d334-44ee-947a-3e3a498706fc appliances appliances:air appliances:cleaning appliances:electronics appliances:kitchen appliances:kitchenware bakery bakery:bread bakery:crispbread bakery:pastries beverages beverages:alcohol beverages:coffee-tea beverages:juice-soda beverages:milk beverages:water canned canned:fish-meat canned:jams canned:legumes canned:vegetables cleaning cleaning:dish cleaning:surface cleaning:tools dairy dairy:butter dairy:cheese dairy:eggs dairy:milk dairy:yogurt dd8d720d-b911-4f55-af65-661ac7685eeb deli deli:cold-cuts deli:fresh-pasta deli:ready e8e447c7-3b68-4eee-81e8-86915839565f frozen frozen:fish frozen:ice-cream frozen:meals frozen:vegetables health health:first-aid health:medicine health:vitamins household household:bags household:batteries household:paper laundry laundry:detergent laundry:softener laundry:stain meat meat:beef meat:poultry meat:seafood misc misc:gifts misc:seasonal pantry-staples pantry-staples:baking pantry-staples:cereal pantry-staples:grains pantry-staples:oils pantry-staples:pasta pantry-staples:sauces pantry-staples:spices pantry-staples:sweeteners personal-care personal-care:deodorant personal-care:makeup personal-care:skin pet pet:food pet:litter produce produce:fruit produce:herbs produce:potatoes produce:salad produce:vegetables snacks snacks:nuts snacks:savory snacks:sweet toiletries toiletries:hair toiletries:oral toiletries:paper toiletries:soap'.split(' ')
+  const IDS_024 = ['baby', 'baby:diapers', 'baby:wipes', 'baby:food', 'baby:formula', 'baby:care', 'baby:feeding', 'personal-care:perfume', 'frozen:meat', 'toiletries:feminine', 'pantry-staples:world', 'household:stationery', 'household:car-care', 'household:air', 'household:pest', 'household:garden']
+  const LAUNDRY_FRAGRANCE = 'e8e447c7-3b68-4eee-81e8-86915839565f'
+  // The categories as they are after 024: a sub belongs to the main
+  // before its ":" (or, for a uuid, the main its rule names).
+  const ids = [...LIVE_IDS, ...IDS_024]
+  const mainOf = (id) => (id.includes(':') ? id.split(':')[0] : CATEGORY_RULES.find((r) => r[1] === id)?.[0] ?? null)
+  const parents = ids.filter((id) => !id.includes(':') && !/^[0-9a-f]{8}-/.test(id)).map((id) => ({ id }))
+  const available = { parents, subsByParent: new Map(parents.map((p) => [p.id, ids.filter((id) => id !== p.id && mainOf(id) === p.id).map((id) => ({ id }))])) }
+  const guess = (name) => guessCategory(name, available)
+  const sub = (name) => guess(name)?.subcategoryId ?? null
+
+  it.each([
+    ['Pannolini Pampers Baby Dry taglia 4', 'baby:diapers'],
+    ['Huggies salviette', 'baby:wipes'],
+    ['Salviette umidificate', 'toiletries:paper'],
+    ['Plasmon', 'baby:food'],
+    ['Plasmon biscotti', 'snacks:sweet'],
+    ['Latte in polvere Mellin 1', 'baby:formula'],
+    ['Acqua di Gio', 'personal-care:perfume'],
+    ['Acqua naturale', 'beverages:water'],
+    ['Laundry Perfume - Coccolino', LAUNDRY_FRAGRANCE],
+    ['Fragranza Coccolino', LAUNDRY_FRAGRANCE],
+    ['Coccolino', 'laundry:softener'],
+    ['Profumo per ambienti', 'household:air'],
+    ['Hamburger di bovino surgelati', 'frozen:meat'],
+    ['Penne a sfera', 'household:stationery'],
+    ['Penne Barilla', 'pantry-staples:pasta'],
+    ['Washing Machine Cleaner', 'cleaning:surface'],
+    ['Chicken Feet Snack', 'snacks:savory'],
+    ['Basilico in vaso', 'produce:herbs'],
+    ['Alpro plant milk', 'beverages:milk'],
+    ['Assorbenti Lines Seta notte', 'toiletries:feminine'],
+    ['Nori Sushi Seaweed 10 fogli', 'pantry-staples:world'],
+    ['Zampironi antizanzare', 'household:pest'],
+    ['Liquido lavavetri -20°', 'household:car-care'],
+    ['Terriccio universale 20 L', 'household:garden'],
+    ['Biberon Chicco 250 ml', 'baby:feeding'],
+  ])('%s → %s', (name, expected) => {
+    expect(sub(name)).toBe(expected)
+  })
+
+  it('"Frozen Chicken Ravioli" is not Frozen Meat, and "Vape" is not Pest Control', () => {
+    expect(sub('Frozen Chicken Ravioli')).not.toBe('frozen:meat')
+    expect(sub('Vape')).not.toBe('household:pest')
+    expect(guess('Vape')?.categoryId ?? null).not.toBe('household')
+  })
+
+  it('has no Shaving rule: razors stay in Toiletries without a sub, as before', () => {
+    expect(CATEGORY_RULES.some((r) => r[1] === 'toiletries:shaving')).toBe(false)
+    expect(guess('Lamette Gillette')).toEqual({ categoryId: 'toiletries', subcategoryId: null })
+    expect(guess('Schiuma da barba')).toEqual({ categoryId: 'toiletries', subcategoryId: null })
+  })
+
+  it('before 024 is run, the new subs fall back to their main and Baby is simply not offered', () => {
+    const before = { parents: LIVE_IDS.filter((id) => !id.includes(':') && !/^[0-9a-f]{8}-/.test(id)).map((id) => ({ id })), subsByParent: new Map() }
+    expect(guessCategory('Hamburger di bovino surgelati', before)).toEqual({ categoryId: 'frozen', subcategoryId: null })
+    expect(guessCategory('Pannolini Pampers', before)).toBeNull()
+  })
+
+  it('every rule points at a category that exists (live, or added by 024)', () => {
+    for (const [categoryId, subcategoryId] of CATEGORY_RULES) {
+      expect(ids, categoryId).toContain(categoryId)
+      if (subcategoryId) expect(ids, subcategoryId).toContain(subcategoryId)
+    }
+  })
+
+  it('no word is both a keyword and weak in the new rules', () => {
+    const key = (k) => normalizeName(k).split(' ').map(singular).join(' ')
+    const split = (list) => (list ? list.split('|').map(key).filter(Boolean) : [])
+    const first = CATEGORY_RULES.findIndex((r) => r[1] === 'baby:diapers')
+    const last = CATEGORY_RULES.findIndex((r) => r[0] === 'appliances')
+    expect(first).toBeGreaterThan(0)
+    for (const [, subcategoryId, keywords, options = {}] of CATEGORY_RULES.slice(first, last)) {
+      const weak = split(options.weak)
+      expect(split(keywords).filter((k) => weak.includes(k)), subcategoryId).toEqual([])
+    }
+  })
+
+  it('createGuesser gives the same answers as the HOME guesser for the HOME list', () => {
+    const again = createGuesser(CATEGORY_RULES)
+    for (const name of ['Pizza', 'Fragranza Coccolino', 'Tablet', 'Stuff for Marco']) {
+      expect(again.guessCategory(name)).toEqual(guessCategory(name))
+      expect(again.guessCategories(name)).toEqual(guessCategories(name))
+    }
   })
 })

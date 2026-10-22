@@ -6,7 +6,10 @@
 //     "icecream" and "ice-cream"; English plurals match the singular
 //   - a trailing * matches any ending: "pomodor*" = pomodoro, pomodori…
 //   - more words beat fewer ("ice cream" beats "cream")
-//   - weak: short or ambiguous words that only count as the whole name
+//   - weak: short or ambiguous words that only count as the whole name.
+//     List such a word ONLY in `weak`: a word that is both a keyword and
+//     weak counts as a normal keyword (the older rules below still do this
+//     on purpose for brands like "Fairy" and "Dash"; new rules must not)
 //   - kind: words that say what the product is, so they beat the flavour
 //     or ingredient ("strawberry yogurt" is a yogurt, not fruit)
 // Each rule: [categoryId, subcategoryId (or null), keywords, options].
@@ -238,7 +241,7 @@ export const CATEGORY_RULES = [
   [
     'snacks',
     'snacks:sweet',
-    'biscuit|biscotti|biscotto|biskuit|cookie|cookies|chocolate|cioccolato|cioccolata|cioccolatini|cokelat|coklat|milk chocolate|cioccolato al latte|dark chocolate|cioccolato fondente|chocolate bar|tavoletta di cioccolato|candy|caramelle|permen|gummies|gummy bears|orsetti gommosi|marshmallow|lollipop|lecca lecca|chewing gum|gomma da masticare|wafer|wafers|praline|cioccolatini|ovetti|kinder|kinder bueno|kinder cereali|ferrero|ferrero rocher|raffaello|pocket coffee|mon cheri|baci perugina|perugina|lindt|milka|novi|ritter sport|toblerone|twix|mars|snickers|bounty|kitkat|kit kat|m m|smarties|haribo|mentos|tic tac|vigorsol|daygum|happydent|mulino bianco|pan di stelle|gocciole|oro saiwa|saiwa|plasmon|loacker|balocco|galbusera|digestive|oreo|beng beng|silverqueen|chitato coklat|tango|nabati|good time|roma kelapa|khong guan|monde|richeese|regal|marie|astor|chocolatos|delfi|top coklat|ice breakers|snack bar|barretta|barrette|protein bar|cereal bar',
+    'biscuit|biscotti|biscotto|biskuit|cookie|cookies|chocolate|cioccolato|cioccolata|cioccolatini|cokelat|coklat|milk chocolate|cioccolato al latte|dark chocolate|cioccolato fondente|chocolate bar|tavoletta di cioccolato|candy|caramelle|permen|gummies|gummy bears|orsetti gommosi|marshmallow|lollipop|lecca lecca|chewing gum|gomma da masticare|wafer|wafers|praline|cioccolatini|ovetti|kinder|kinder bueno|kinder cereali|ferrero|ferrero rocher|raffaello|pocket coffee|mon cheri|baci perugina|perugina|lindt|milka|novi|ritter sport|toblerone|twix|mars|snickers|bounty|kitkat|kit kat|m m|smarties|haribo|mentos|tic tac|vigorsol|daygum|happydent|mulino bianco|pan di stelle|gocciole|oro saiwa|saiwa|loacker|balocco|galbusera|digestive|oreo|beng beng|silverqueen|chitato coklat|tango|nabati|good time|roma kelapa|khong guan|monde|richeese|regal|marie|astor|chocolatos|delfi|top coklat|ice breakers|snack bar|barretta|barrette|protein bar|cereal bar',
     { kind: 'biscuit|biscotti|biskuit|cookie|candy|caramelle|permen|wafer' },
   ],
   [
@@ -287,13 +290,13 @@ export const CATEGORY_RULES = [
   [
     'toiletries',
     'toiletries:paper',
-    'toilet paper|carta igienica|tissue toilet|tisu toilet|tissues|tissue|fazzoletti|fazzoletti di carta|tisu|tisu wajah|facial tissue|wet wipes|baby wipes|salviette|salviette umidificate|tisu basah|cotton pads|dischetti di cotone|kapas|cotton buds|cotton fioc|bastoncini cotonati|regina carta|foxy|tempo|scottex carta igienica|nice|paseo|tessa|mitu',
+    'toilet paper|carta igienica|tissue toilet|tisu toilet|tissues|tissue|fazzoletti|fazzoletti di carta|tisu|tisu wajah|facial tissue|wet wipes|salviette|salviette umidificate|tisu basah|regina carta|foxy|tempo|scottex carta igienica|nice|paseo|tessa|mitu',
     { weak: 'tempo|nice' },
   ],
   [
     'toiletries',
     'toiletries:soap',
-    'soap|sapone|sapone liquido|hand soap|hand wash|sabun|sabun mandi|sabun cair|shower gel|bagnoschiuma|bagno doccia|docciaschiuma|body wash|sabun badan|intimate wash|detergente intimo|lifebuoy|lux|nuvo|giv|dettol|palmolive|neutro roberts|felce azzurra|vidal|nivea shower|dove soap|dove bagnoschiuma',
+    'soap|sapone|sapone liquido|hand soap|hand wash|sabun|sabun mandi|sabun cair|shower gel|bagnoschiuma|bagno doccia|docciaschiuma|body wash|sabun badan|lifebuoy|lux|nuvo|giv|dettol|palmolive|neutro roberts|felce azzurra|vidal|nivea shower|dove soap|dove bagnoschiuma',
     { weak: 'dove|lux', kind: 'soap|sapone|sabun|shower gel|bagnoschiuma' },
   ],
   [
@@ -311,21 +314,21 @@ export const CATEGORY_RULES = [
   [
     'toiletries',
     null,
-    'razor|rasoio|rasoi|lamette|silet|pisau cukur|shaving foam|schiuma da barba|shaving gel|aftershave|dopobarba|gillette|bic|wilkinson|sanitary pads|assorbenti|pembalut|tampons|assorbenti interni|panty liners|proteggislip|pantyliner|lines|nuvenia|tampax|charm|laurier|softex|diapers|pannolini|popok|pampers|huggies|mamypoko|sweety|merries|cotton|q tips',
-    { weak: 'lines|bic|charm|cotton' },
+    'razor|rasoio|rasoi|lamette|silet|pisau cukur|shaving foam|schiuma da barba|shaving gel|aftershave|dopobarba|gillette|bic|wilkinson',
+    { weak: 'bic' },
   ],
 
   // ── Beauty Care ─────────────────────────────────────────────────
   [
     'personal-care',
     'personal-care:skin',
-    'face cream|hand cream|body cream|crema viso|crema mani|crema corpo|krim wajah|krim tangan|moisturizer|moisturiser|idratante|crema idratante|pelembab|serum|siero|body lotion|lozione|lotion|losion|sunscreen|sun cream|crema solare|protezione solare|tabir surya|sunblock|after sun|doposole|face wash|facial wash|detergente viso|sabun muka|sabun wajah|micellar water|acqua micellare|cleansing milk|latte detergente|latte struccante|make up remover|struccante|toner|tonico|face mask|maschera viso|masker|scrub|esfoliante|lip balm|burro cacao|burro di cacao|cocoa butter|body butter|tea tree|tea tree oil|olio di tea tree|baby oil|olio per bambini|body oil|olio corpo|aloe vera gel|nivea|neutrogena|garnier|l oreal|loreal|olay|vichy|la roche posay|cerave|avene|bioderma|eucerin|wardah|ponds|pond s|emina|scarlett|somethinc|skintific|citra|marina|vaseline|labello|bionike|collistar|diadermine',
+    'face cream|hand cream|body cream|crema viso|crema mani|crema corpo|krim wajah|krim tangan|moisturizer|moisturiser|idratante|crema idratante|pelembab|serum|siero|body lotion|lozione|lotion|losion|sunscreen|sun cream|crema solare|protezione solare|tabir surya|sunblock|after sun|doposole|face wash|facial wash|detergente viso|sabun muka|sabun wajah|micellar water|acqua micellare|cleansing milk|latte detergente|latte struccante|make up remover|struccante|toner|tonico|face mask|maschera viso|masker|scrub|esfoliante|lip balm|burro cacao|burro di cacao|cocoa butter|body butter|tea tree|tea tree oil|olio di tea tree|body oil|olio corpo|aloe vera gel|nivea|neutrogena|garnier|l oreal|loreal|olay|vichy|la roche posay|cerave|avene|bioderma|eucerin|wardah|ponds|pond s|emina|scarlett|somethinc|skintific|citra|marina|vaseline|labello|bionike|collistar|diadermine',
     { kind: 'face cream|hand cream|crema viso|crema mani|moisturizer|serum|lotion|sunscreen|face wash|cleansing milk|latte detergente' },
   ],
   [
     'personal-care',
     'personal-care:makeup',
-    'makeup|make up|trucco|lipstick|rossetto|lipstik|lip gloss|mascara|eyeliner|eyeshadow|ombretto|foundation|fondotinta|concealer|correttore|cipria|powder foundation|bedak|blush|fard|bronzer|nail polish|smalto|kutek|nail polish remover|solvente unghie|aseton|perfume|profumo|parfum|eau de toilette|cologne|colonia|body mist|deodorante profumato|kiko|maybelline|essence makeup|catrice|max factor|rimmel|sephora|pupa|deborah|make up forever|wardah lipstick|make over|implora|pixy|viva',
+    'makeup|make up|trucco|lipstick|rossetto|lipstik|lip gloss|mascara|eyeliner|eyeshadow|ombretto|foundation|fondotinta|concealer|correttore|cipria|powder foundation|bedak|blush|fard|bronzer|nail polish|smalto|kutek|nail polish remover|solvente unghie|aseton|kiko|maybelline|essence makeup|catrice|max factor|rimmel|sephora|pupa|deborah|make up forever|wardah lipstick|make over|implora|pixy|viva',
   ],
   [
     'personal-care',
@@ -357,7 +360,7 @@ export const CATEGORY_RULES = [
   [
     'pet',
     'pet:food',
-    'pet food|cat food|dog food|cibo per gatti|cibo per cani|cibo gatto|cibo cane|makanan kucing|makanan anjing|makanan hewan|crocchette|croquettes|kibble|umido per gatti|umido per cani|cat treats|dog treats|snack per cani|snack per gatti|whiskas|felix|purina|friskies|gourmet gatto|sheba|royal canin|pedigree|almo nature|monge|me o|meo|bolt|cesar|schesir|hill s|hills science',
+    'pet food|cat food|dog food|cibo per gatti|cibo per cani|cibo gatto|cibo cane|makanan kucing|makanan anjing|makanan hewan|crocchette|croquettes|kibble|umido per gatti|umido per cani|whiskas|felix|purina|friskies|gourmet gatto|sheba|royal canin|pedigree|almo nature|monge|me o|meo|bolt|cesar|schesir|hill s|hills science',
     { weak: 'bolt|cesar' },
   ],
   ['pet', 'pet:litter', 'cat litter|lettiera|sabbia per gatti|sabbia gatto|pasir kucing|litter|tappetini assorbenti cane|puppy pads|poop bags|sacchetti igienici cane|pet shampoo|shampoo per cani|flea|antipulci|frontline|advantix'],
@@ -382,18 +385,54 @@ export const CATEGORY_RULES = [
   [
     'household',
     null,
-    'air freshener|room spray|deodorante per ambienti|deodorante ambienti|profumatore per ambienti|profumo per ambienti|diffusore|diffusore per ambienti|pengharum ruangan|pewangi ruangan|deodoran ruangan|glade|air wick|ambi pur|stella pengharum|bayfresh|insect spray|insetticida|zanzare|mosquito|baygon|hit spray|vape|autan|raid|obat nyamuk|anti zanzara|zampirone|shoe polish|lucido scarpe|semir sepatu|kiwi shoe|glue|colla|lem|tape|nastro adesivo|selotip|scotch tape|lakban|light bulbs',
-    { weak: 'vape|hit|raid|glue|tape|lem|kiwi shoe' },
+    'shoe polish|lucido scarpe|semir sepatu|kiwi shoe|light bulbs',
+    { weak: 'hit|kiwi shoe' },
   ],
 
   // ── Miscellaneous / Seasonal ────────────────────────────────────
   ['misc', 'misc:gifts', 'gift|regalo|regali|kado|hadiah|gift wrap|carta regalo|kertas kado|birthday card|biglietto di auguri|kartu ucapan|party|festa|balloons|palloncini|balon|party supplies|candeline|lilin ulang tahun|flowers|fiori|bunga|bouquet|mazzo di fiori'],
   ['misc', 'misc:seasonal', 'christmas|natale|natal|easter|pasqua|paskah|halloween|lebaran|idul fitri|ketupat|parcel lebaran|uova di pasqua|easter egg|christmas tree|albero di natale|presepe|addobbi|decorations|decorazioni'],
-  [
-    'misc',
-    null,
-    'engine oil|motor oil|olio motore|olio per motore|oli mesin|oli motor|antifreeze|antigelo|liquido tergicristalli|wiper fluid|car shampoo|shampoo auto|car wax|cera auto|air radiator|air aki|deodorante auto|car air freshener|pengharum mobil|lavavetri',
-  ],
+
+  // ── Round 6C: new categories (supabase/024_categories.sql) and gaps ─
+  // Before the durable block, so consumables still win ties. A rule for a
+  // category that doesn't exist (024 not run yet, or deleted) is ignored;
+  // a missing sub falls back to its main. Four rules point at subs made
+  // in the app, by their live ids: Cotton Pads & Buds, Laundry Fragrance,
+  // Color Care, Pet Treats & Care.
+  ['baby', 'baby:diapers', 'diaper|nappy|nappies|pannolino|pannolini|pannolini mutandina|mutandine assorbenti bambini|swim diaper|pannolini costumino|popok|popok bayi|pampers|huggies|mamypoko|merries|chicco pannolini|fater|baby dry', { weak: 'sweety|progressi', kind: 'diaper|nappy|pannolino|pannolini|popok' }],
+  ['baby', 'baby:wipes', 'baby wipes|salviette bambini|salviette neonato|salviettine bambini|salviettine neonato|salviettine umidificate bambini|tisu basah bayi|pampers wipes|pampers salviette|huggies wipes|huggies salviette|chicco salviette|waterwipes|water wipes', { weak: 'salviettine', kind: 'baby wipes' }],
+  ['baby', 'baby:food', 'baby food|omogeneizzato|omogeneizzati|pappe|pappa pronta|liofilizzato|liofilizzati|crema di riso bambini|crema di cereali bambini|biscotti per bambini|pastina per bambini|merenda bambini|svezzamento|makanan bayi|mpasi|bubur bayi|plasmon|hipp|nipiol|nestum|puffs bambini', { weak: 'pappa|biscottini|gerber', kind: 'baby food|omogeneizzato|omogeneizzati' }],
+  ['baby', 'baby:formula', 'infant formula|baby formula|baby milk|latte in polvere|latte di crescita|latte di proseguimento|latte per neonati|latte artificiale|susu formula|susu bayi|aptamil|mellin|humana|nidina|blemil|neolatte|nan optipro', { kind: 'infant formula|baby formula|latte in polvere|latte di crescita|susu formula' }],
+  ['baby', 'baby:care', 'baby shampoo|shampoo bambini|bagnetto|bagnoschiuma bambini|baby bath|baby lotion|baby cream|crema cambio|pasta cambio|nappy cream|diaper cream|fissan|pasta di fissan|baby oil|olio bambini|olio per bambini|baby powder|borotalco bambini|johnson baby|johnsons baby|mustela|bepanthenol|minyak telon|bedak bayi|sapone bambini|crema bambini', { weak: 'talco|telon', kind: 'baby shampoo|baby lotion|baby cream|crema cambio|pasta cambio' }],
+  ['baby', 'baby:feeding', 'baby bottle|biberon|tettarella|tettarelle|ciuccio|ciucci|succhietto|pacifier|bavaglino|bavaglini|dot bayi|botol susu|empeng|sterilizzatore|philips avent|chicco biberon', { weak: 'bib|nuk|avent' }],
+  // "fragrance" / "fragranza" are weak here, so "Fragranza Coccolino" is
+  // Laundry Fragrance (its own phrase below), not a perfume.
+  ['personal-care', 'personal-care:perfume', 'perfume|profumo|profumi|parfum|eau de parfum|eau de toilette|cologne|colonia|acqua di colonia|body mist|minyak wangi|chanel|dior|armani|acqua di gio|versace|dolce gabbana|gucci|yves saint laurent|ysl|lancome|calvin klein|hugo boss|burberry|carolina herrera|paco rabanne|jo malone|acqua di parma|tom ford|narciso rodriguez|mugler|bvlgari|bulgari|marc jacobs|byredo|le labo', { weak: 'fragrance|fragranza|edp|edt|creed|valentino|kenzo|prada', kind: 'perfume|profumo|parfum|eau de parfum|eau de toilette|cologne' }],
+  ['personal-care', 'dd8d720d-b911-4f55-af65-661ac7685eeb', 'cotton pad|dischetti|dischetti di cotone|dischetti struccanti|cotton bud|cotton fioc|bastoncini cotonati|cotton swab|q tips|batuffoli|kapas wajah|cotton ball|makeup remover cotton|makeup remover pad', { weak: 'cotone|kapas|cotton' }],
+  ['frozen', 'frozen:meat', 'frozen meat|frozen chicken breast|frozen chicken wings|petto di pollo surgelato|frozen beef|frozen burger|frozen sausage|frozen meatballs|carne surgelata|pollo surgelato|hamburger surgelati|hamburger di bovino surgelati|polpette surgelate|polpette di bovino surgelate|cotolette surgelate|daging beku|ayam beku', { kind: 'frozen meat|carne surgelata' }],
+  ['toiletries', 'toiletries:feminine', 'sanitary pads|assorbenti|assorbente|assorbenti notte|assorbenti interni|tampons|panty liners|pantyliner|proteggislip|salvaslip|menstrual cup|coppetta mestruale|period pants|mutande mestruali|intimate wash|detergente intimo|pembalut|nuvenia|tampax|carefree|laurier|softex|saugella|lactacyd', { weak: 'lines|charm|always|chilly', kind: 'assorbenti|sanitary pads|tampons|panty liners|pembalut' }],
+  ['pantry-staples', 'pantry-staples:world', 'nori|alga nori|nori sushi|sushi nori|sushi seaweed|alghe per sushi|seaweed|alghe|rumput laut|rice paper|carta di riso|kimchi|tteokbokki|tteok|tofu|tempeh|seitan|instant miso|miso soup|dashi|katsuobushi|furikake|pickled ginger|zenzero marinato|dried shiitake|shiitake secchi|black fungus|funghi neri|tapioca pearls|perle di tapioca|glutinous rice flour|farina di riso glutinoso|tepung ketan|tofu powder|cibo etnico|asian food|world food', { weak: 'tahu' }],
+  ['household', 'household:stationery', 'stationery|cancelleria|penna|penne a sfera|biro|pencil|matita|matite|evidenziatore|highlighter|quaderno|quaderni|post it|sticky notes|envelope|buste da lettera|printer paper|carta per stampante|carta a4|risma|scissors|forbici|stapler|spillatrice|graffette|paper clips|correction tape|bianchetto|cartellina|raccoglitore|etichette|stabilo|staedtler|pritt|uhu|colla|colla stick|glue stick|nastro adesivo|scotch tape|selotip|lakban|ink cartridge|cartuccia|cartucce|cartucce stampante|cartuccia stampante|cartucce per stampante|inchiostro stampante|printer ink|toner stampante|tinta printer|pulpen|buku tulis', { weak: 'pen|tape|glue|lem' }],
+  ['household', 'household:car-care', 'car care|engine oil|motor oil|olio motore|olio per motore|oli mesin|oli motor|antifreeze|antigelo|liquido tergicristalli|liquido lavavetri|wiper fluid|screen wash|car shampoo|shampoo auto|car wax|cera auto|air radiator|air aki|deodorante auto|car air freshener|profumatore auto|arbre magique|pengharum mobil|spugna auto|wiper blades|spazzole tergicristallo|adblue', { weak: 'lavavetri' }],
+  ['household', 'household:air', 'air freshener|room spray|deodorante per ambienti|deodorante ambienti|profumatore per ambienti|profumo per ambienti|diffusore|diffusore per ambienti|bastoncini profumati|candela profumata|candele profumate|scented candle|incense|incenso|toilet deodorizer|deodorante wc|tavolette wc|pengharum ruangan|pewangi ruangan|deodoran ruangan|glade|air wick|ambi pur|stella pengharum|bayfresh|febreze'],
+  // "vape" alone is the e-cigarette (MONEY Cigarettes & Vape), so only
+  // "vape zanzare" and "vape magic" are here.
+  ['household', 'household:pest', 'insect spray|insetticida|insetticidi|zanzare|anti zanzare|anti zanzara|antizanzare|zampirone|zampironi|mosquito|mosquito repellent|repellente|autan|vape zanzare|vape magic|piastrine antizanzare|baygon|hit spray|obat nyamuk|trappola topi|mouse trap|esca formiche|ant bait|antitarme|naftalina|mothballs', { weak: 'raid' }],
+  // "plant" is weak here, so "Alpro plant milk" stays a plant milk.
+  ['household', 'household:garden', 'pianta|piante|terriccio|potting soil|fertilizer|concime|fertilizzante|flower pot|vaso per piante|semi da piantare|bulbi|giardinaggio|annaffiatoio|watering can|pupuk|pot bunga|cactus|orchidea|substral', { weak: 'cifo|plant' }],
+  // Laundry Fragrance (the old "Perfume" sub of Laundry Supplies). The
+  // Coccolino phrases beat "Coccolino" alone (still Fabric Softener).
+  ['laundry', 'e8e447c7-3b68-4eee-81e8-86915839565f', 'laundry perfume|laundry fragrance|laundry scent|scent booster|profumo bucato|profumo per bucato|profumatore bucato|profuma bucato|perle profumate|perle di profumo|essenza bucato|essenza lavatrice|cristalli profumati|unstoppables|air fresh essence|fragranza coccolino|coccolino fragranza|coccolino profumo|profumo coccolino|coccolino perfume|coccolino fragrance|fragranza bucato|fragranza per bucato|fragranza lavatrice'],
+  ['laundry', '01386438-f2d4-418b-bcd6-082874075213', 'color catcher|colour catcher|acchiappacolore|catturacolore|salvacolore|foglietti salvacolore|ravviva nero|ravviva colori|black reviver|clothing reviver|color fade|dr beckmann'],
+  ['pet', '3d924169-d334-44ee-947a-3e3a498706fc', 'cat treats|dog treats|snack per cani|snack per gatti|catnip|erba gatta|erba per gatti|cat grass|hairball|anti hairball|antibolo|pasta al malto|malto per gatti|dreamies|cat toy|gioco per gatti', { kind: 'catnip|hairball|erba gatta' }],
+  ['cleaning', 'cleaning:surface', 'washing machine cleaner|pulizia lavatrice|anticalcare lavatrice|igienizzante lavatrice|calgon|dishwasher cleaner|pulizia lavastoviglie|curalavastoviglie'],
+  ['snacks', 'snacks:savory', 'chicken feet snack|ceker snack|ceker pedas|beef jerky|jerky|dendeng|seaweed snack|nori snack|rice crackers|senbei'],
+  ['snacks', 'snacks:sweet', 'pocky|mochi|yan yan|hello panda|koala march|choco pie|lotte'],
+  ['pantry-staples', 'pantry-staples:pasta', 'glass noodles|vermicelli di riso|spaghetti di riso|noodles di riso|shirataki|somen|mi goreng|mie goreng|ramyeon|ramyun|samyang|nongshim|shin ramyun|nissin|cup noodles|soun|misoa|yakisoba|buldak'],
+  ['pantry-staples', 'pantry-staples:sauces', 'gochujang|hoisin|char siu|ponzu|doubanjiang|black bean sauce|tom yum paste|curry paste|pasta di curry|wasabi|sweet chili sauce|sambal oelek'],
+  ['personal-care', 'personal-care:deodorant', 'deodorante profumato'],
+  ['frozen', 'frozen:meals', 'frozen onion rings|anelli di cipolla'],
+  ['produce', 'produce:herbs', 'basilico in vaso|basil plant|herb pot'],
 
   // ── Home & Appliances (durable, last so consumables win) ────────
   [
@@ -417,7 +456,7 @@ export const CATEGORY_RULES = [
   [
     'appliances',
     'appliances:electronics',
-    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|ink cartridge|cartuccia|cartucce|toner stampante|tinta printer|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|desk|scrivania|meja kerja|office chair|sedia da ufficio|sedia ufficio|kursi kantor|lamp|lampada da scrivania|desk lamp|lampu meja|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico',
+    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|desk|scrivania|meja kerja|office chair|sedia da ufficio|sedia ufficio|kursi kantor|lamp|lampada da scrivania|desk lamp|lampu meja|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico',
     { weak: 'phone|hp|tv|lamp|cable|tablet|pc' },
   ],
 ]

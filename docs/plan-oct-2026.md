@@ -20,6 +20,8 @@ Contents
 7. Round 6 — Discounts (NOTE 6)
 8. Round 7 — Trips (travel mode)
 9. Round 8 — AI structure (NOTE 7)
+   - 9C. Round 6C — categories, keywords, A–Z order, SQL 024 (as built)
+   - 9D. Decided 21–22/10 for later rounds (Trips, round 7, round 6D)
 10. Risks and decisions
 
 ---
@@ -1220,6 +1222,12 @@ Built as above, with these details (none needs SQL — no `supabase/024`):
 
 ## 8. Round 7 — Trips (travel mode)
 
+> **Changed on 21–22/10 — read section 9D first.** The MONEY main is now
+> "Trips & Holidays" (renamed by hand, same id). Round 7 does **not** rename
+> it and does not find it by name: it stores its id in `household_settings`.
+> Where this section says "rename Holiday to Trips", "Set up Trips" or "lock
+> Trips by name", section 9D wins.
+
 ### Names
 
 UI: "Trips", "Start trip", "🌴 Holiday" / "🚗 Short trip". Code and
@@ -1463,6 +1471,247 @@ No SQL (no `supabase/024`). What changed:
   history ("€120.00 → €90.00 (coupon −€30.00)", "€80.00 → €56.00 (−30%)"),
   like MONEY. The limitation noted in round 6 is gone.
 
+
+## 9C. Round 6C — categories, keywords, A–Z order, SQL 024
+
+Design: `docs/categories-proposal-6c.md` (commit fbf3c0b). Irene's answers
+to its decisions 1–8 (21–22/10) win where they differ from it.
+
+### As built in round 6C (22/10/2026)
+
+**Decisions taken:** 1 B (new MONEY main "Personal Care"; Cleaning, Laundry
+and Household stay in Groceries) plus HOME Health & Medicine → Health ›
+Pharmacy · 2 A (HOME "Baby" now) · 3 A (id `baby` reused) · 4 B (one sub
+"World Foods") · 5: Pest Control, Car Care, Stationery, Air Fresheners,
+Plants & Garden, Baby › Feeding yes; **Shaving no** · 6: Dentist, Taxes &
+Fines, Documents & Permits, Software & Apps, Pet Sitting, Glasses & Lenses,
+Family Support yes; Books & Hobbies, Education, MONEY Baby, Home Supplies
+no · 7: A–Z also for the SHOP chips and Income ("Other" last); MONEY "Sort
+by → Category" stays newest activity first · 8 A (one SQL file). MONEY sub
+"Vet" is "Veterinary".
+
+**Rename-safety rule.** Irene may rename any MONEY category (main or sub,
+old or new) at any time, before or after 024 is run. So:
+
+- 024 and the MONEY keywords (`src/data/budgetKeywords.js`) refer to MONEY
+  categories **by id only** (existing ones by their live id from the
+  21/10 export, new ones by a fixed id written in both places). Chips show
+  the names as they are stored now.
+- 024 inserts with `on conflict (id) do nothing` and skips a name that
+  exists in any capitals on another row, so a second run after renames
+  duplicates nothing and renames nothing back.
+- Exception kept: Groceries / Other / Home & Appliances are still found by
+  name (locked categories, unchanged).
+
+Fixed ids of the new MONEY categories (024 = `NEW_MONEY_CATEGORY_IDS`; a
+test checks they are identical):
+
+| Category | Under | Id |
+|---|---|---|
+| Personal Care | — | `f194dd95-a6c4-4399-a2ed-2114d6b8a1eb` |
+| Family Support | — | `54c1355d-5ebb-4237-ae67-1be0ca593443` |
+| Flights | Trips & Holidays | `38455d3e-ab33-4eae-8088-e6c9e4e55b3e` |
+| Souvenirs | Trips & Holidays | `a972798e-d08c-4b09-b8cf-cfe5c1724128` |
+| Insurance & Visas | Trips & Holidays | `5c21c7eb-281b-46b5-ac2c-d42da39dd548` |
+| Beauty & Perfume | Personal Care | `4eb77042-660a-41e9-a1b6-cd2057605256` |
+| Toiletries | Personal Care | `01a993f2-d9af-4881-bc8e-1df5af027000` |
+| Hairdresser | Personal Care | `d3728a31-bd77-487d-ac80-aaffe90fa5f3` |
+| Streaming | Subscription | `a953640c-9716-4f1f-a989-279c03ddba63` |
+| Software & Apps | Subscription | `d9c27fc6-378b-475b-b4e9-097b6e448a27` |
+| Cinema & Events | Entertainment | `02fd813a-21b8-4d24-91c3-dbb289af07bb` |
+| Fuel | Car / Vehicle | `6aedf34e-9f47-48e9-a5ca-7b8b529fa447` |
+| Maintenance | Car / Vehicle | `1fe3c787-1e67-4e31-86a1-d6114f2ef473` |
+| Insurance & Tax | Car / Vehicle | `90065703-c0e7-436e-9ba3-2992dc819c7c` |
+| Parking & Tolls | Car / Vehicle | `e6ce7094-0f5c-49f7-aff4-78e2b9f2e494` |
+| Pharmacy | Health | `8fbe343f-6fd9-4c58-874b-d9bd809be461` |
+| Doctor & Tests | Health | `cd1ec5e6-4c7e-4f38-a86f-e6d1e42b10f5` |
+| Dentist | Health | `3bbb8479-42e4-4f40-b9fb-bacc5d586128` |
+| Glasses & Lenses | Health | `f81fa3cb-8dfc-45f5-b351-f22d877761cd` |
+| Veterinary | Pets | `b79bd43a-bfa9-4101-93d7-70468af9dcfd` |
+| Pet Sitting | Pets | `9d61caa3-80c5-4104-a734-51deca1f19ed` |
+| Taxes & Fines | Bank & Fee | `e2fe4339-59ac-4f79-af56-8bb5f3aeac9d` |
+| Documents & Permits | Bank & Fee | `f6f56e33-bfc9-426c-9b3d-d1c217620316` |
+
+Existing MONEY parents used by id: Trips & Holidays `dc79f604-…`,
+Subscription `688bfedf-…`, Entertainment `744f7d8e-…`, Car / Vehicle
+`8b2d4f49-…`, Health `06729df9-…`, Pets `ecd9a924-…`, Bank & Fee
+`b498cc5d-…` (full ids in the SQL and in `budgetKeywords.js`).
+
+**What was built**
+
+- `supabase/024_categories.sql` (not run yet; Irene runs it after review):
+  - HOME: Baby (`baby`, sort_order 14) with Diapers, Baby Wipes, Baby Food,
+    Formula, Baby Care, Feeding; Beauty Care › Perfume; Frozen Food ›
+    Frozen Meat; Toiletries › Feminine Care; Pantry Staples › World Foods;
+    Household Supplies › Stationery, Car Care, Air Fresheners, Pest
+    Control, Plants & Garden (16 rows, ids of proposal table A).
+  - MONEY: the 23 rows above.
+  - Mapping: Beauty Care → Personal Care › Beauty & Perfume, Toiletries →
+    Personal Care › Toiletries, Car Care → Car / Vehicle (insert only); one
+    guarded UPDATE: `health` → Health › Pharmacy only while it still points
+    at the Health main. Pet Supplies → Pets unchanged. Baby has no mapping
+    row (books into Groceries until Irene changes it in HOME → Categories).
+  - Ends with one check SELECT (48 rows): every category and mapping with
+    its current name and main, status ok / missing / skipped: name exists
+    / skipped: parent missing (health: updated / already Pharmacy / left:
+    changed by hand), totals and a duplicate-name check.
+- Order A–Z (`src/lib/categoryOrder.js`): `sortCategories`,
+  `sortCategoryTree`, `compareCategories`; catch-alls last ("Other",
+  "Others", "Miscellaneous / Seasonal", and `misc` by id). Used by
+  `useInventoryCategories` (`parents`, `pantryParents`, `subsByParent`
+  A–Z; new `shopOrder` = main ids by `sort_order`), `ShoppingMode`
+  (`defaultOrder = shopOrder`), `moneyList.categoryTree` (every MONEY and
+  Income picker), `purchaseSections` ("Other" before "Uncategorized"),
+  `CategoryManager` (MONEY Manage and Income Manage), `BudgetMappingView`
+  (budget select), `useCategoryCreation` (`moneyMains`) and `CategoryChips`
+  (subs in the "+ New category" budget select). The SHOP chips and the
+  HOME filter take the hook's lists, so they are A–Z too. Unchanged: Shop
+  mode route, MONEY charts, suggestion chips, MONEY "Sort by → Category".
+- `src/data/constants.js`: `HIDDEN_CATEGORY_IDS = ['automotive']`,
+  `SUGGESTED_UNITS.baby`. `addCategory` treats hidden ids as taken
+  ("Automotive" → `automotive-2`, shown).
+- `src/lib/categoryGuess.js`: `createGuesser(rules)`; the HOME
+  `guessCategory` / `guessCategories` are the same engine on the same list.
+- `src/data/categoryKeywords.js`: the proposal C.1 rules (no Shaving rule)
+  before the durable block; the C.3 moves (not the shaving row); header:
+  weak words go only in `weak`. On the 238 live items the guess changes for
+  the same 14 items as the proposal, all improvements; before 024 is run
+  they fall back to the main.
+- `src/data/budgetKeywords.js` (new): MONEY rules `[mainId, subId | null,
+  keywords, options]`, by id, used by `categorySuggest.suggestBudgetCategories`
+  as a layer after the remembered budget and before the HOME chips through
+  the mapping (`budgetKeywordPicks`). A rule whose main is missing is
+  ignored; a missing sub falls back to its main.
+- `src/data/categorySynonyms.js`: perfume, diapers, fuel, vet → Veterinary,
+  pharmacy, hairdresser, streaming, toiletries.
+
+**Keyword decisions (X1, X2, Family Support)**
+
+- Trips subs: Accommodation (hotel, airbnb, booking.com, b&b, bnb,
+  hostel…; "agriturismo" and "booking" weak only), Transport (trenitalia,
+  italo treno, frecciarossa, taxi, uber, noleggio auto, rent a car, car
+  rental, sewa mobil, sewa motor, traghetto, ferry, flixbus…; "italo",
+  "avis", "grab", "gojek" weak), Activities (tour, escursione, guided tour,
+  biglietto ingresso, entrance ticket…). Food & Drinks: no keywords (round
+  7). Keywords are matched on the cleaned name, where punctuation is a
+  space: "booking.com" = "booking com", "B&B" = "b b" (the "&" = "and" rule
+  is only for category names, not for keywords); tests cover both.
+- "museo" stays Cinema & Events. "taxi" / "uber" are keywords of Trips ›
+  Transport because MONEY has no everyday transport category; "Uber Eats"
+  stays Takeaway & Delivery (two words beat one). "rent" and "sewa" are
+  weak only in Rent ("Rent a car", "Sewa mobil" → Transport; "Affitto" →
+  Rent).
+- "luce" weak only in Electricity ("Bolletta luce" yes, "Lampadina luce
+  LED" no). "plant" weak only in Plants & Garden ("Alpro plant milk" stays
+  Milk & Plant Milk). "fragrance" / "fragranza" weak only in Perfume, and
+  Laundry Fragrance has Coccolino and bucato phrases ("Fragranza
+  Coccolino" → Laundry Fragrance; "Coccolino" alone stays Fabric Softener).
+- Family Support: remitly, western union, money transfer, moneygram,
+  kirim uang, transfer keluarga, invio denaro; "wise" weak. Removed from
+  Bank & Fee: remitly, western union, wise. Bank & Fee keeps commissione,
+  bonifico, canone conto, transfer fee… and gets "fee" (weak). Money sent
+  plus its fee is one amount → Family Support.
+
+**Deviations from the proposal, and why**
+
+- MONEY in 024 and in the keywords by id with fixed uuids, not by name
+  (rename-safety rule).
+- One UPDATE in 024 (the guarded health mapping): the row already existed,
+  so an insert could not change it.
+- No Shaving: razor, lamette, gillette, bic, schiuma da barba… stay in
+  Toiletries without a sub, exactly as before.
+- Stationery also takes "colla" (keyword) and "glue" / "lem" (weak) from
+  Household, as table C.3 says, and phrases like "cartucce stampante":
+  without them "Cartucce stampante" tied with Electronics ("stampante") and
+  got no guess. World Foods got "nori sushi" / "sushi seaweed" ("sushi"
+  alone is a ready meal). "cotton" (weak) moved with the cotton pads.
+- MONEY: "x ray" and "office 365" dropped (the app removes "x" and numbers
+  from names, so they became "ray" — matching "Ray-Ban" — and "office");
+  "microsoft office" instead. A few extra delivery and bill words
+  (grabfood, gofood, bolletta elettrica, token listrik, spese bancarie).
+- `shopOrder` is sorted by `sort_order` in the hook itself, not taken from
+  the store's order.
+- Ordering render tests: MONEY Manage has one; the HOME filter, SHOP chips,
+  HOME Manage and CategoryFields render the hook's lists as given (their
+  tests mock the hook), so their order is tested in
+  `inventoryCategories.test.jsx`.
+- Tests use `src/data/moneyCategories.fixture.js`, a copy of the live MONEY
+  ids and names (tmp-export/ is never committed); when the export is on
+  the computer, a test checks the copy against it.
+
+**Tests:** 1089 → 1178 (85 → 87 files). New `categoryOrder.test.js`,
+`budgetKeywords.test.js`; additions in `categoryGuess`, `categorySuggest`,
+`moneyList`, `shopMode`, `inventoryCategories`, MONEY Manage render and
+`supabase/migrations.test.js` ("024": Trips renamed "Travel" before 024,
+rename then run again, hand-changed health mapping, names in other
+capitals, a deleted MONEY main, existing rows and income untouched, run
+twice, all checks ok).
+
+### iPhone checklist for round 6C
+
+Before 024 is run (the app must work as before):
+
+1. HOME → Manage: categories A–Z, "Miscellaneous / Seasonal" last. Shop
+   mode: the aisle order is as before.
+2. MONEY → Add expense, a row with Add to HOME off, type "Benzina": the chip
+   is "Car / Vehicle" (the sub comes with 024). "Remitly": no chip yet.
+
+After 024 (reload both iPhones):
+
+3. HOME → Manage: "Baby" is there with its 6 subs. SHOP → add "Pampers" →
+   chip "Baby › Diapers".
+4. MONEY → Manage: "Personal Care", "Family Support" and the new subs;
+   "Other" is last. MONEY row "Ryanair" → "Trips & Holidays › Flights";
+   "Uber Eats" → "Going out › Takeaway & Delivery"; "Lampadina luce LED" is
+   not Electricity.
+5. HOME → Categories: Beauty Care books to "Personal Care › Beauty &
+   Perfume", Health & Medicine to "Health › Pharmacy".
+6. Rename "Trips & Holidays" to "Travel" in MONEY → Manage: "Ryanair" now
+   shows "Travel › Flights". (Rename it back if wanted.)
+
+## 9D. Decided 21–22/10 for later rounds
+
+**Trips (MONEY main).** The MONEY main is now "Trips & Holidays" (renamed
+by hand, same id `dc79f604-19fd-4bdd-817e-335816c4afe7`). Irene may rename
+it again (for example "Travel"). Round 7 does **not** rename it. It stores
+this id in `household_settings` and finds the category by id, so renaming
+stays free; only deleting it is locked. Its subs are not locked (a missing
+sub → the suggestion falls back to the main). MONEY keywords already use ids
+since 6C. Internal names stay `travels` / `expenses.travel_id`; the button
+stays "Start trip".
+
+**Round 7, starting a trip with existing expenses in its dates:** a tick
+list "Add these N expenses to the trip?". All are ticked except Housing &
+Utilities, Subscription and Savings & Investments. Ticked ones move to a
+Trips sub (visible, changeable per row). A purchase with several items is
+one tick. Making the trip longer asks with the same list; making it shorter
+asks "Remove these N expenses from the trip?". Nothing moves silently;
+unticked ones show "— not in trip" in the summary.
+
+**Round 7, expenses before the trip:** a trip can be created ahead. While
+an upcoming trip exists, expense forms show "For trip: <name> (starts
+dd/mm)" (off by default, one tap turns it on). The trip page has "Add
+earlier expenses"; the summary labels them "booked before the trip".
+
+**Round 7, during an active trip:** daily categories are suggested as Trips
+subs (Restaurant / Bar / Groceries → Food & Drinks, Fuel / Parking →
+Transport, Cinema & Events → Activities…). Details are decided in round 7.
+Still open: trips must not overlap (point 13).
+
+**Round 6D (before round 7) replaces the group feature with "one item,
+many names":**
+
+- HOME: one item (for example "Chips & Snacks", "Pasta") with one stock.
+- SHOP: one row.
+- At purchase: several name / brand / price lines under it.
+- MONEY: separate rows with their real names and prices.
+- Minimum stock: on the total.
+- The old variant mechanics ("+ Add another variant", a row per variant)
+  are removed.
+- Existing chips items are merged into "Chips & Snacks" (stock summed; old
+  names keep being recognised; MONEY history unchanged).
+- Screen details are decided before round 6D.
+
 ---
 
 ## 10. Risks and decisions
@@ -1537,7 +1786,8 @@ No SQL (no `supabase/024`). What changed:
     which to add (none move silently).
 24. The rename Holiday → Trips is done by the app in round 7 (one tap, same
     id). If Irene prefers to rename it by hand in MONEY → Manage, round 7 only
-    checks that "Trips" exists.
+    checks that "Trips" exists. **Superseded (21–22/10, section 9D):** renamed
+    by hand to "Trips & Holidays"; round 7 finds it by id, never by name.
 25. Removing 1× from a finished item makes it Out → it goes on the SHOP list.
     Assumed that's wanted (it's what "normal item" means).
 26. Variants: is the 0-first order also wanted in HOME's group tile? Assumed
