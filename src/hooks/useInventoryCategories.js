@@ -4,7 +4,6 @@ import { attempt, deleteWithUndo, must, OFFLINE_MESSAGE } from '../lib/db'
 import { isOffline } from '../lib/connection'
 import { showToast, toastSaveError } from '../lib/feedback'
 import { budgetMapStore, categoryMemoryStore, groceryStore, inventoryCategoryStore, pantryStore } from '../lib/stores'
-import { sortCategories } from '../lib/categoryOrder'
 import { CATEGORY_NAME_OVERRIDES, CATEGORY_ORIGINAL_NAMES, DURABLE_CATEGORY_IDS, HIDDEN_CATEGORY_IDS } from '../data/constants'
 import {
   isUnused,
@@ -82,22 +81,16 @@ export function useInventoryCategories() {
   const { rows } = inventoryCategoryStore.useRows()
   const categories = useMemo(() => visibleCategories(rows), [rows])
 
-  const { parents, pantryParents, subsByParent, byId, shopOrder } = useMemo(() => {
+  const { parents, pantryParents, subsByParent, byId } = useMemo(() => {
     const byId = new Map(categories.map((c) => [c.id, c]))
-    // sort_order is the shop's default route, used only by Shop mode
-    // (shopOrder). Every list and picker gets the categories A–Z, with the
-    // catch-alls last.
-    const mains = categories.filter((c) => c.type === 'parent')
-    const shopOrder = [...mains].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name)).map((p) => p.id)
-    const parents = sortCategories(mains)
+    const parents = categories.filter((c) => c.type === 'parent')
     const subsByParent = new Map(parents.map((p) => [p.id, []]))
     for (const c of categories) {
       if (c.type === 'sub' && subsByParent.has(c.parent_id)) subsByParent.get(c.parent_id).push(c)
     }
-    for (const [id, subs] of subsByParent) subsByParent.set(id, sortCategories(subs))
     // The pantry only tracks consumables, so durable categories are left out there.
     const pantryParents = parents.filter((p) => !DURABLE_CATEGORY_IDS.includes(p.id))
-    return { parents, pantryParents, subsByParent, byId, shopOrder }
+    return { parents, pantryParents, subsByParent, byId }
   }, [categories])
 
   const addSubcategory = useCallback(
@@ -123,14 +116,12 @@ export function useInventoryCategories() {
   )
 
   // A new main category, at the end of the shop order. Its id is made from
-  // the name ("Gluten free" → "gluten-free"), numbered if taken. A hidden
-  // id counts as taken, so "Automotive" becomes "automotive-2" and is
-  // shown (with the id "automotive" it would be saved but never shown).
+  // the name ("Gluten free" → "gluten-free"), numbered if taken.
   const addCategory = useCallback(
     async (name) => {
       const problem = nameProblem(categories, name)
       if (problem) return refused(problem)
-      const ids = new Set([...rows.map((c) => c.id), ...HIDDEN_CATEGORY_IDS])
+      const ids = new Set(rows.map((c) => c.id))
       const base = categoryIdFor(name)
       let id = base
       for (let n = 2; ids.has(id); n++) id = `${base}-${n}`
@@ -236,5 +227,5 @@ export function useInventoryCategories() {
 
   const categoryName = useCallback((id) => byId.get(id)?.name ?? 'Uncategorized', [byId])
 
-  return { categories, parents, pantryParents, subsByParent, shopOrder, byId, categoryName, addCategory, addSubcategory, renameCategory, moveSubcategory, deleteCategory }
+  return { categories, parents, pantryParents, subsByParent, byId, categoryName, addCategory, addSubcategory, renameCategory, moveSubcategory, deleteCategory }
 }

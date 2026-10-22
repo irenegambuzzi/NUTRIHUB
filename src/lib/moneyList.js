@@ -6,7 +6,6 @@
 import { getWeekStart, parseLocalDate } from './week'
 import { bucketKeyForDate } from './expensePeriods'
 import { newestFirst, newestGroupFirst } from './recency'
-import { compareCategories, sortCategories } from './categoryOrder'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -87,8 +86,7 @@ export function bucketChipLabel(period, key, label) {
 }
 
 // Main categories, sub-categories and lookups for a flat list of
-// categories ({ id, name, parent_id }). Mains and subs come out A–Z with
-// "Other" / "Others" last (lib/categoryOrder.js), for every picker.
+// categories ({ id, name, parent_id }).
 export function categoryTree(categories) {
   const byId = new Map(categories.map((c) => [c.id, c]))
   const mainOf = (categoryId) => {
@@ -96,8 +94,8 @@ export function categoryTree(categories) {
     return c?.parent_id ? byId.get(c.parent_id) || c : c || null
   }
   return {
-    mainCategories: sortCategories(categories.filter((c) => !c.parent_id)),
-    subsOf: (id) => sortCategories(categories.filter((c) => c.parent_id === id)),
+    mainCategories: categories.filter((c) => !c.parent_id),
+    subsOf: (id) => categories.filter((c) => c.parent_id === id),
     mainOf,
     // { main, sub } names for an entry's category.
     namesOf: (categoryId) => {
@@ -163,7 +161,7 @@ export function groupPurchases(entries, { mainOf, tripsOn = true }) {
 }
 
 // An opened purchase: its expenses by main category, each with a subtotal,
-// A–Z with "Other" next to last and "Uncategorized" last. `mainOf(categoryId)` → { id, name } | null.
+// A–Z with "Uncategorized" last. `mainOf(categoryId)` → { id, name } | null.
 export function purchaseSections(items, mainOf) {
   const map = new Map()
   for (const e of items) {
@@ -174,7 +172,7 @@ export function purchaseSections(items, mainOf) {
     s.items.push(e)
     s.total = round2(s.total + amountOf(e))
   }
-  return [...map.values()].sort((a, b) => (a.main ? 0 : 1) - (b.main ? 0 : 1) || (a.main ? compareCategories(a.main, b.main) : 0))
+  return [...map.values()].sort((a, b) => (a.main ? 0 : 1) - (b.main ? 0 : 1) || a.name.localeCompare(b.name))
 }
 
 // With a category filter on, a purchase row shows only that category's

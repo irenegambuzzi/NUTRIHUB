@@ -1,9 +1,7 @@
 import { CATEGORY_RULES } from '../data/categoryKeywords'
 
-// Guesses a category (and sub-category) from an item name using a keyword
-// list: the HOME list in data/categoryKeywords.js, and (through
-// createGuesser) the MONEY list in data/budgetKeywords.js. Both use the same
-// matching rules below.
+// Guesses an inventory category (and sub-category) from an item name using
+// the keyword list in data/categoryKeywords.js.
 
 // Words that only describe the amount, dropped before matching.
 const AMOUNT = /\b\d+(?:[.,]\d+)?\s*(?:kg|g|gr|grammi|grams?|mg|ml|cl|dl|l|lt|litri|liters?|litres?|pz|pcs|pezzi|x|oz)?\b|\bx\s*\d+\b/g
@@ -74,6 +72,7 @@ function buildIndex(rules) {
   return { phrases, stems }
 }
 
+const INDEX = buildIndex(CATEGORY_RULES)
 const MAX_PHRASE = 5
 
 // Words after these describe the item ("torta di mele", "budino al
@@ -83,9 +82,9 @@ const MAX_PHRASE = 5
 const LINKS = new Set(['di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', 'al', 'all', 'alla', 'allo', 'ai', 'agli', 'alle', 'con', 'with', 'of', 'flavour', 'flavor', 'gusto', 'rasa', 'dengan'])
 const DESCRIBING = 0.75
 
-// Every keyword of the index found in the name, as spans of its words.
-// Weak keywords count only when they are the whole name.
-function findMatches(index, tokens) {
+// Every keyword found in the name, as spans of its words. Weak keywords
+// count only when they are the whole name.
+function findMatches(tokens) {
   const link = tokens.findIndex((t, i) => i > 0 && LINKS.has(t))
   const describes = (start) => link > 0 && start > link
   const matches = []
@@ -93,7 +92,7 @@ function findMatches(index, tokens) {
     for (let len = 1; len <= Math.min(MAX_PHRASE, tokens.length - start); len++) {
       const part = tokens.slice(start, start + len)
       for (const key of new Set([part.join(' '), part.join('')])) {
-        for (const e of index.phrases.get(key) || []) {
+        for (const e of INDEX.phrases.get(key) || []) {
           if (e.weak && len !== tokens.length) continue
           // "pop corn" matching "popcorn" counts as two words.
           const full = Math.max(e.words, len) + (e.kind ? 0.5 : 0) - (e.weak ? 0.5 : 0)
@@ -102,7 +101,7 @@ function findMatches(index, tokens) {
         }
       }
     }
-    for (const s of index.stems) {
+    for (const s of INDEX.stems) {
       if (tokens[start].startsWith(s.stem) && (!s.weak || tokens.length === 1)) {
         matches.push({ rule: s.rule, start, end: start + 1, score: describes(start) ? DESCRIBING : 1 })
       }
@@ -126,58 +125,44 @@ function ruleFor(rule, available) {
   return subOk ? rule : { ...rule, subcategoryId: null }
 }
 
-// A guesser for one keyword list. Each rule: [categoryId, subcategoryId
-// (or null), keywords, options] (see data/categoryKeywords.js). The list is
-// indexed once, here.
-export function createGuesser(rules) {
-  const index = buildIndex(rules)
-
-  // { categoryId, subcategoryId } or null. The most specific match wins:
-  // more words beat fewer, and a word saying what the product is beats a
-  // flavour or ingredient. If the best matches point to different main
-  // categories, it's unclear and nothing is guessed. With `available`, rules
-  // for categories that don't exist are ignored *before* this is decided, so
-  // a missing category can never make a clear answer "unclear".
-  function guessCategory(name, available = null) {
-    const tokens = tokensOf(name)
-    if (!tokens.length || tokens.join('').length < 2) return null
-    const matches = findMatches(index, tokens)
-      .map((m) => ({ ...m, rule: ruleFor(m.rule, available) }))
-      .filter((m) => m.rule)
-    if (!matches.length) return null
-    const best = Math.max(...matches.map((m) => m.score))
-    const top = matches.filter((m) => m.score === best).map((m) => m.rule)
-    if (new Set(top.map((r) => r.categoryId)).size > 1) return null
-    const rule = top.reduce((a, b) => (b.order < a.order ? b : a))
-    return { categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }
-  }
-
-  // The best distinct rules for a name, best first: [{ categoryId,
-  // subcategoryId }] (at most `limit`). Same scoring as guessCategory, but
-  // instead of one answer (or nothing when the best matches disagree) it
-  // lists them, so the form can show a few chips. Rules for categories that
-  // don't exist are ignored first, exactly like guessCategory.
-  function guessCategories(name, available = null, limit = 3) {
-    const tokens = tokensOf(name)
-    if (!tokens.length || tokens.join('').length < 2) return []
-    const best = new Map() // "category|sub" → { rule, score }
-    for (const m of findMatches(index, tokens)) {
-      const rule = ruleFor(m.rule, available)
-      if (!rule) continue
-      const key = `${rule.categoryId}|${rule.subcategoryId ?? ''}`
-      const known = best.get(key)
-      if (!known || m.score > known.score || (m.score === known.score && rule.order < known.rule.order)) best.set(key, { rule, score: m.score })
-    }
-    return [...best.values()]
-      .sort((a, b) => b.score - a.score || a.rule.order - b.rule.order)
-      .slice(0, limit)
-      .map(({ rule }) => ({ categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }))
-  }
-
-  return { guessCategory, guessCategories }
+// { categoryId, subcategoryId } or null. The most specific match wins:
+// more words beat fewer, and a word saying what the product is beats a
+// flavour or ingredient. If the best matches point to different main
+// categories, it's unclear and nothing is guessed. With `available`, rules
+// for categories that don't exist are ignored *before* this is decided, so
+// a missing category can never make a clear answer "unclear".
+export function guessCategory(name, available = null) {
+  const tokens = tokensOf(name)
+  if (!tokens.length || tokens.join('').length < 2) return null
+  const matches = findMatches(tokens)
+    .map((m) => ({ ...m, rule: ruleFor(m.rule, available) }))
+    .filter((m) => m.rule)
+  if (!matches.length) return null
+  const best = Math.max(...matches.map((m) => m.score))
+  const top = matches.filter((m) => m.score === best).map((m) => m.rule)
+  if (new Set(top.map((r) => r.categoryId)).size > 1) return null
+  const rule = top.reduce((a, b) => (b.order < a.order ? b : a))
+  return { categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }
 }
 
-// The HOME guesser, used everywhere an item gets a HOME category.
-const home = createGuesser(CATEGORY_RULES)
-export const guessCategory = home.guessCategory
-export const guessCategories = home.guessCategories
+// The best distinct rules for a name, best first: [{ categoryId,
+// subcategoryId }] (at most `limit`). Same scoring as guessCategory, but
+// instead of one answer (or nothing when the best matches disagree) it
+// lists them, so the form can show a few chips. Rules for categories that
+// don't exist are ignored first, exactly like guessCategory.
+export function guessCategories(name, available = null, limit = 3) {
+  const tokens = tokensOf(name)
+  if (!tokens.length || tokens.join('').length < 2) return []
+  const best = new Map() // "category|sub" → { rule, score }
+  for (const m of findMatches(tokens)) {
+    const rule = ruleFor(m.rule, available)
+    if (!rule) continue
+    const key = `${rule.categoryId}|${rule.subcategoryId ?? ''}`
+    const known = best.get(key)
+    if (!known || m.score > known.score || (m.score === known.score && rule.order < known.rule.order)) best.set(key, { rule, score: m.score })
+  }
+  return [...best.values()]
+    .sort((a, b) => b.score - a.score || a.rule.order - b.rule.order)
+    .slice(0, limit)
+    .map(({ rule }) => ({ categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }))
+}

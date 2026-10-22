@@ -40,13 +40,11 @@ function rememberSort(sort) {
 // yet go where their category is. A group is one card ("Chips &
 // Snacks") with a row per variant, each tapped into the cart on its own
 // (`groupOf(entry)`, see lib/groupShop.js).
-export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm }) {
+export function ShoppingMode({ items, parents, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   const { positions, savePositions } = useShopOrder()
-  // The usual place of a category without a saved position: the main
-  // categories in shop order (sort_order), not the A–Z of the lists.
-  const defaultOrder = shopOrder ?? []
+  const defaultOrder = parents.map((p) => p.id)
 
   const open = items.filter((i) => !i.in_cart)
   // In the order they went into the cart, oldest first.

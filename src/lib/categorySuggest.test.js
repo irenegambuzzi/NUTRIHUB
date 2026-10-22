@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { ASYNC_SUGGESTERS, differsFromFirst, suggestBudgetCategories, suggestCategories, suggestCategoriesAsync, suggestCategory, suggestCategoryAsync, worthRemembering } from './categorySuggest'
-import { LIVE_MONEY_CATEGORIES, MONEY_CATEGORIES_024 } from '../data/moneyCategories.fixture'
 
 const parents = [{ id: 'frozen' }, { id: 'snacks' }, { id: 'dairy' }, { id: 'my-stuff' }]
 const subsByParent = new Map([
@@ -201,81 +200,5 @@ describe('learning from a different pick', () => {
     const budget = [{ categoryId: null, subcategoryId: null, expenseCategoryId: 'groceries' }]
     expect(differsFromFirst({ categoryId: null, subcategoryId: null, expenseCategoryId: 'groceries' }, budget)).toBe(false)
     expect(differsFromFirst({ categoryId: null, subcategoryId: null, expenseCategoryId: 'gifts' }, budget)).toBe(true)
-  })
-})
-
-describe('round 6C: MONEY keywords for a row not added to HOME (by id, so renames never break them)', () => {
-  const live = [...LIVE_MONEY_CATEGORIES, ...MONEY_CATEGORIES_024]
-  const groceries = live.find((c) => c.name === 'Groceries').id
-  const context = (expenseCategories = live) => ({
-    memory: new Map(),
-    pantryByName: new Map(),
-    parents: [{ id: 'household', name: 'Household Supplies' }],
-    subsByParent: new Map([['household', [{ id: 'household:batteries', name: 'Batteries & Bulbs' }]]]),
-    expenseCategories,
-    budgetFor: () => groceries,
-  })
-  const labels = (name, ctx = context()) => suggestBudgetCategories(name, ctx).map((c) => c.label)
-  const first = (name, ctx) => labels(name, ctx)[0]
-
-  it.each([
-    ['Benzina', 'Car / Vehicle › Fuel'],
-    ['Netflix', 'Subscription › Streaming'],
-    ['Veterinario', 'Pets › Veterinary'],
-    ['Marca da bollo', 'Bank & Fee › Taxes & Fines'],
-    ['Bollo auto', 'Car / Vehicle › Insurance & Tax'],
-    ['Bolletta luce', 'Housing & Utilities › Electricity'],
-    ['Rent a car Hertz', 'Trips & Holidays › Transport'],
-    ['Affitto', 'Housing & Utilities › Rent'],
-    ['Sewa mobil', 'Trips & Holidays › Transport'],
-    ['Hotel Bali', 'Trips & Holidays › Accommodation'],
-    ['Booking.com', 'Trips & Holidays › Accommodation'],
-    ['B&B La Rosa', 'Trips & Holidays › Accommodation'],
-    ['Agriturismo', 'Trips & Holidays › Accommodation'],
-    ['Uber Eats', 'Going out › Takeaway & Delivery'],
-    ['Taxi aeroporto', 'Trips & Holidays › Transport'],
-    ['Ryanair BLQ–BCN', 'Trips & Holidays › Flights'],
-    ['Remitly', 'Family Support'],
-    ['Western Union', 'Family Support'],
-    ['Wise', 'Family Support'],
-    ['Commissione bonifico', 'Bank & Fee'],
-    ['Parrucchiere', 'Personal Care › Hairdresser'],
-    ['Museo Egizio', 'Entertainment › Cinema & Events'],
-  ])('%s → %s', (name, expected) => {
-    expect(first(name)).toBe(expected)
-  })
-
-  it('weak words count only as the whole name', () => {
-    expect(labels('Lampadina luce LED')).not.toContain('Housing & Utilities › Electricity')
-    expect(first('Lampadina luce LED')).toBe('Groceries')
-    expect(labels('Rent a car Hertz')).not.toContain('Housing & Utilities › Rent')
-    expect(labels('Sewa mobil')).not.toContain('Housing & Utilities › Rent')
-    expect(labels('Cena agriturismo')).not.toContain('Trips & Holidays › Accommodation')
-    expect(labels('Uber Eats')).not.toContain('Trips & Holidays › Transport')
-    expect(labels('Protein bar')).not.toContain('Going out › Bar & Coffee')
-  })
-
-  it('Remitly, Western Union and Wise are no longer Bank & Fee', () => {
-    for (const name of ['Remitly', 'Western Union', 'Wise']) expect(labels(name)).not.toContain('Bank & Fee')
-  })
-
-  it('a sub that is missing falls back to its main; a main that is missing is ignored', () => {
-    const before024 = LIVE_MONEY_CATEGORIES
-    expect(first('Ryanair', context(before024))).toBe('Trips & Holidays')
-    expect(labels('Remitly', context(before024))).toEqual([])
-    expect(first('Netflix', context(before024))).toBe('Subscription')
-    const noTaxes = live.filter((c) => c.name !== 'Taxes & Fines')
-    expect(first('Marca da bollo', context(noTaxes))).toBe('Bank & Fee')
-  })
-
-  it('chips show the names as they are now: Trips renamed "Travel", Family Support renamed "Family"', () => {
-    const renamed = live.map((c) => (c.name === 'Trips & Holidays' ? { ...c, name: 'Travel' } : c.name === 'Family Support' ? { ...c, name: 'Family' } : c))
-    expect(first('Ryanair', context(renamed))).toBe('Travel › Flights')
-    expect(first('Remitly', context(renamed))).toBe('Family')
-  })
-
-  it('what was remembered for the name still comes first', () => {
-    const memory = new Map([['benzina', { expense_category_id: groceries }]])
-    expect(labels('Benzina', { ...context(), memory })).toEqual(['Groceries', 'Car / Vehicle › Fuel'])
   })
 })

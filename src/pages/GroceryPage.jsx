@@ -104,7 +104,7 @@ export function GroceryPage() {
   const [ordering, setOrdering] = useState(null) // a list entry
   const [arriving, setArriving] = useState(null) // { order, item } | { order }
   const today = localDateString()
-  const { parents, subsByParent, shopOrder, categoryName, addCategory, addSubcategory } = useInventoryCategories()
+  const { parents, subsByParent, categoryName, addCategory, addSubcategory } = useInventoryCategories()
 
   const [view, setViewState] = useState(readView)
   const [fullForm, setFullForm] = useState(null) // null | name to start the full form with
@@ -485,7 +485,7 @@ export function GroceryPage() {
           {quickAdd}
           <ShoppingMode
             items={items}
-            shopOrder={shopOrder}
+            parents={parents}
             categoryName={categoryName}
             totalOf={totalOf}
             costOf={costOf}

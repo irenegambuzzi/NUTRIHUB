@@ -2,7 +2,6 @@ import { useCallback, useMemo } from 'react'
 import { APPLIANCES_ID } from '../lib/inventoryCategoryEdit'
 import { mappingToStore } from '../lib/newCategory'
 import { budgetMapStore, inventoryCategoryStore } from '../lib/stores'
-import { sortCategories } from '../lib/categoryOrder'
 import { useInventoryCategories } from './useInventoryCategories'
 import { useExpenseCategories } from './useExpenses'
 import { setBudgetMapping } from './useBudgetMap'
@@ -18,10 +17,9 @@ export function useCategoryCreation() {
   const { rows: mapRows } = budgetMapStore.useRows()
   const ctx = useMemo(() => ({ expenseCategories, inventoryCategories: inventoryRows, mapRows }), [expenseCategories, inventoryRows, mapRows])
   // Main categories a new sub-category can go under (Home & Appliances
-  // keeps its own tree), A–Z with the catch-alls last (HOME `parents` are
-  // already sorted).
+  // keeps its own tree).
   const homeMains = useMemo(() => parents.filter((p) => p.id !== APPLIANCES_ID), [parents])
-  const moneyMains = useMemo(() => sortCategories(expenseCategories.filter((c) => !c.parent_id)), [expenseCategories])
+  const moneyMains = useMemo(() => expenseCategories.filter((c) => !c.parent_id), [expenseCategories])
 
   // → { error, pick: { categoryId, subcategoryId, expenseCategoryId } }
   const createHome = useCallback(

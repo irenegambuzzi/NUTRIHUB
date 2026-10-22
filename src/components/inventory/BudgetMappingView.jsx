@@ -10,7 +10,6 @@ import { useExpenseCategories } from '../../hooks/useExpenses'
 import { FLOW_NOTICE, useFlow } from '../../hooks/useFlow'
 import { applyPastPurchases, previewPastPurchases, setBudgetMapping } from '../../hooks/useBudgetMap'
 import { effectiveBudget } from '../../lib/budgetMap'
-import { sortCategoryTree } from '../../lib/categoryOrder'
 import { inventoryCategoryStore } from '../../lib/stores'
 import { cn } from '../../lib/cn'
 
@@ -38,8 +37,10 @@ export function BudgetMappingView({ parents, subsByParent }) {
     const parent = c.parent_id ? byId.get(c.parent_id) : null
     return parent ? `${parent.name} › ${c.name}` : c.name
   }
-  // Each main A–Z followed by its subs A–Z, "Other" last.
-  const options = useMemo(() => sortCategoryTree(expenseCategories).filter((c) => !c.parent_id || byId.has(c.parent_id)), [expenseCategories, byId])
+  const options = useMemo(() => {
+    const mains = expenseCategories.filter((c) => !c.parent_id)
+    return mains.flatMap((m) => [m, ...expenseCategories.filter((c) => c.parent_id === m.id)])
+  }, [expenseCategories])
 
   if (!flow.ready) {
     return (

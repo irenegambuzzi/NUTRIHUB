@@ -23,13 +23,4 @@ export const CATEGORY_SYNONYMS = {
   cleaning: ['Housekeeping', 'Tidying'],
   tools: ['Hardware', 'Equipment'],
   stationery: ['Office supplies', 'Paperwork'],
-  // Round 6C: the new categories of supabase/024_categories.sql.
-  perfume: ['Fragrance', 'Scents'],
-  diapers: ['Nappies'],
-  fuel: ['Petrol'],
-  vet: ['Veterinary'],
-  pharmacy: ['Chemist'],
-  hairdresser: ['Hair Salon', 'Barber'],
-  streaming: ['TV & Music'],
-  toiletries: ['Hygiene'],
 }

@@ -92,7 +92,6 @@ export const SUGGESTED_UNITS = {
   laundry: ['pack', 'btl', 'pcs'],
   toiletries: ['pcs', 'pack', 'btl'],
   'personal-care': ['pcs', 'btl', 'tube'],
-  baby: ['pack', 'pcs', 'gr', 'jar', 'btl'],
   health: ['pcs', 'tablet', 'capsule'],
   pet: ['pack', 'can', 'pcs'],
   household: ['pcs', 'pack', 'roll'],
@@ -113,10 +112,8 @@ export const DURABLE_CATEGORY_IDS = ['appliances']
 export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 
 // Removed categories that must never be offered again, even if a stale
-// row is still in the database. "+ New category" never gives a new
-// category one of these ids. ("baby" was here until round 6C: the HOME
-// main "Baby" now uses that id again, see supabase/024_categories.sql.)
-export const HIDDEN_CATEGORY_IDS = ['automotive']
+// row is still in the database.
+export const HIDDEN_CATEGORY_IDS = ['baby', 'automotive']
 
 // Display names that differ from what an older database may still have.
 // Used only while the stored name is still the original one below: once

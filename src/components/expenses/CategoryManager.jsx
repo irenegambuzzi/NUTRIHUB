@@ -6,7 +6,6 @@ import { SimilarNote } from '../ui/SimilarNote'
 import { expenseUsageStore } from '../../lib/stores'
 import { moveProblem, renameProblem } from '../../lib/categoryEdit'
 import { DURABLE_EXPENSE_CATEGORY } from '../../data/constants'
-import { sortCategories } from '../../lib/categoryOrder'
 
 // Used by the grocery list (Groceries), as the fallback for deleted
 // categories (Other) and for durable purchases (Home & Appliances), so none
@@ -50,9 +49,8 @@ export function CategoryManager({
   const [editing, setEditing] = useState(null)
   const lockedNames = Object.keys(lockedHints)
 
-  // A–Z, "Other" last (the list, "Main category" and Move).
-  const parents = sortCategories(categories.filter((c) => !c.parent_id))
-  const subsOf = (id) => sortCategories(categories.filter((c) => c.parent_id === id))
+  const parents = categories.filter((c) => !c.parent_id)
+  const subsOf = (id) => categories.filter((c) => c.parent_id === id)
   // Counts every expense ever, not just the period on screen.
   const { rows: expenses } = usageStore.useRows()
   const usage = (c) => expenses.filter((e) => e.category_id === c.id || subsOf(c.id).some((s) => s.id === e.category_id)).length
