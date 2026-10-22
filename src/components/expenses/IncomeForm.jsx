@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Plus, Check, Settings2 } from 'lucide-react'
+import { Plus, Check } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Label, Input, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { moneyText, parseDecimal } from '../../lib/decimal'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
@@ -53,38 +54,20 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
 
       <div>
         <Label>Category</Label>
-        <div className="flex gap-2">
-          <Select
-            value={mainId}
-            onChange={(e) => {
-              setMainId(e.target.value)
-              setSubId('')
-            }}
-            className="flex-1"
-            aria-label="Income category"
-          >
-            {tree.mainCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          {onManage && (
-            <Button type="button" variant="ghost" onClick={onManage} className="px-3" title="Add or delete income categories">
-              <Settings2 size={14} /> Manage
-            </Button>
-          )}
-        </div>
-        {mainId && tree.subsOf(mainId).length > 0 && (
-          <Select value={subId} onChange={(e) => setSubId(e.target.value)} className="mt-2" aria-label="Income subcategory">
-            <option value="">No subcategory</option>
-            {tree.subsOf(mainId).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        )}
+        <MoneyCategorySelect
+          value={subId || mainId}
+          onChange={(id, pick) => {
+            setMainId(pick.mainId)
+            setSubId(pick.subId)
+          }}
+          mainCategories={tree.mainCategories}
+          subsOf={tree.subsOf}
+          label="Income category"
+          emptyLabel={null}
+          onManage={onManage}
+          manageLabel="Manage income categories"
+          manageTitle="Add or delete income categories"
+        />
       </div>
 
       <div>

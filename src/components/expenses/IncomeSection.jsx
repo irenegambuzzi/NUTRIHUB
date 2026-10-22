@@ -172,6 +172,7 @@ export function IncomeSection({
           plural="income entries"
           usageStore={incomeUsageStore}
           protectedNames={['Salary', 'Other']}
+          fixedHints={{}}
         />
       )}
     </section>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { ASYNC_SUGGESTERS, differsFromFirst, suggestBudgetCategories, suggestCategories, suggestCategoriesAsync, suggestCategory, suggestCategoryAsync, worthRemembering } from './categorySuggest'
+import { ASYNC_SUGGESTERS, budgetAutoFill, differsFromFirst, suggestBudgetCategories, suggestCategories, suggestCategoriesAsync, suggestCategory, suggestCategoryAsync, worthRemembering } from './categorySuggest'
 import { LIVE_MONEY_CATEGORIES, MONEY_CATEGORIES_024 } from '../data/moneyCategories.fixture'
 
 const parents = [{ id: 'frozen' }, { id: 'snacks' }, { id: 'dairy' }, { id: 'my-stuff' }]
@@ -277,5 +277,34 @@ describe('round 6C: MONEY keywords for a row not added to HOME (by id, so rename
   it('what was remembered for the name still comes first', () => {
     const memory = new Map([['benzina', { expense_category_id: groceries }]])
     expect(labels('Benzina', { ...context(), memory })).toEqual(['Groceries', 'Car / Vehicle › Fuel'])
+  })
+
+  describe('round 6C2: the first chip fills the budget category in by itself', () => {
+    const auto = (name, ctx = context()) => budgetAutoFill(suggestBudgetCategories(name, ctx))?.label ?? null
+
+    it('"Ryanair" → Trips & Holidays › Flights (MONEY keywords)', () => {
+      expect(auto('Ryanair')).toBe('Trips & Holidays › Flights')
+    })
+
+    it('"Lampadina luce LED" → Groceries (Household Supplies › Batteries & Bulbs through the mapping), not Electricity', () => {
+      expect(auto('Lampadina luce LED')).toBe('Groceries')
+    })
+
+    it('what was remembered for the name wins', () => {
+      const memory = new Map([['benzina', { expense_category_id: groceries }]])
+      expect(auto('Benzina', { ...context(), memory })).toBe('Groceries')
+    })
+
+    it('nothing without a chip (an empty name too)', () => {
+      expect(auto('Stuff for Marco')).toBeNull()
+      expect(auto('')).toBeNull()
+    })
+
+    it('a chip that only has a similar name is offered, never filled in (like the HOME category)', () => {
+      const gifts = [{ id: 'shopping', name: 'Shopping', parent_id: null }, { id: 'gifts', name: 'Gifts', parent_id: 'shopping' }]
+      const ctx = { ...context(gifts), parents: [], subsByParent: new Map() }
+      expect(suggestBudgetCategories('Gift', ctx)).toEqual([expect.objectContaining({ expenseCategoryId: 'gifts', source: 'name' })])
+      expect(auto('Gift', ctx)).toBeNull()
+    })
   })
 })

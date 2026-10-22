@@ -3,14 +3,14 @@ import { createPortal } from 'react-dom'
 import { ChevronDown, History, Info, Settings2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
-import { Select } from '../ui/Field'
+import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { InventoryCategoryManager } from './InventoryCategoryManager'
 import { useExpenseCategories } from '../../hooks/useExpenses'
 import { FLOW_NOTICE, useFlow } from '../../hooks/useFlow'
 import { applyPastPurchases, previewPastPurchases, setBudgetMapping } from '../../hooks/useBudgetMap'
 import { effectiveBudget } from '../../lib/budgetMap'
-import { sortCategoryTree } from '../../lib/categoryOrder'
+import { categoryTree } from '../../lib/moneyList'
 import { inventoryCategoryStore } from '../../lib/stores'
 import { cn } from '../../lib/cn'
 
@@ -38,8 +38,8 @@ export function BudgetMappingView({ parents, subsByParent }) {
     const parent = c.parent_id ? byId.get(c.parent_id) : null
     return parent ? `${parent.name} › ${c.name}` : c.name
   }
-  // Each main A–Z followed by its subs A–Z, "Other" last.
-  const options = useMemo(() => sortCategoryTree(expenseCategories).filter((c) => !c.parent_id || byId.has(c.parent_id)), [expenseCategories, byId])
+  // Mains A–Z and their subs A–Z, "Other" last.
+  const tree = useMemo(() => categoryTree(expenseCategories), [expenseCategories])
 
   if (!flow.ready) {
     return (
@@ -62,20 +62,17 @@ export function BudgetMappingView({ parents, subsByParent }) {
     const { target, source } = effectiveBudget(category, ctx)
     const fallback = source === 'own' ? null : parentName && source === 'main' ? `Same as ${parentName}: ${nameOf(target)}` : `Default: ${nameOf(target)}`
     const ownFallback = source === 'own' ? (category.parent_id ? `Same as ${parentName}` : 'Default (as before)') : fallback
+    // The default (nothing chosen) stays the first option on the left.
     return (
-      <Select
+      <MoneyCategorySelect
         value={own}
-        onChange={(e) => setBudgetMapping(category.id, e.target.value || null)}
-        aria-label={`Budget category for ${category.name}`}
-        className={cn('text-xs py-2', !own && 'text-[var(--color-text-muted)]')}
-      >
-        <option value="">{ownFallback}</option>
-        {options.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.parent_id ? `   › ${c.name}` : c.name}
-          </option>
-        ))}
-      </Select>
+        onChange={(id) => setBudgetMapping(category.id, id)}
+        mainCategories={tree.mainCategories}
+        subsOf={tree.subsOf}
+        label={`Budget category for ${category.name}`}
+        emptyLabel={ownFallback}
+        selectClassName={cn('text-xs py-2', !own && 'text-[var(--color-text-muted)]')}
+      />
     )
   }
 
@@ -110,7 +107,8 @@ export function BudgetMappingView({ parents, subsByParent }) {
           const custom = subs.filter((s) => flow.mapRows.some((r) => r.id === s.id)).length
           return (
             <div key={p.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-2">
+              {/* The name, then main | sub on their own line: two selects don't fit next to the name on a phone. */}
+              <div className="space-y-1.5">
                 <span className="flex items-center gap-2 min-w-0 text-xs font-bold text-[var(--color-text)]">
                   <CategoryIcon category={p.id} size={14} />
                   <span className="truncate">{p.name}</span>
@@ -125,8 +123,8 @@ export function BudgetMappingView({ parents, subsByParent }) {
               )}
               {subsOpen &&
                 subs.map((sub) => (
-                  <div key={sub.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-2 pl-5">
-                    <span className="text-[11px] text-[var(--color-text-soft)] truncate">{sub.name}</span>
+                  <div key={sub.id} className="space-y-1 pl-5">
+                    <span className="block text-[11px] text-[var(--color-text-soft)] truncate">{sub.name}</span>
                     {picker(sub, p.name)}
                   </div>
                 ))}

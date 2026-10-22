@@ -154,6 +154,15 @@ describe('the budget category of a row', () => {
     expect(budgetOf(row({ categoryId: 'pet', budgetId: 'groceries', budgetTouched: true }), ctx)).toBe('groceries')
     expect(budgetOf(row({ categoryId: 'pet', budgetId: 'groceries' }), ctx)).toBe('pets')
   })
+  it('round 6C2: a row not added to HOME shows the budget its name filled in (the first chip); a pick by hand still wins', () => {
+    expect(budgetOf(row({ name: 'Ryanair', autoBudgetId: 'flights' }), ctx)).toBe('flights')
+    expect(budgetOf(row({ name: 'Ryanair', autoBudgetId: 'flights', budgetId: 'other', budgetTouched: true }), ctx)).toBe('other')
+    expect(budgetOf(row({ name: 'Cat food', categoryId: 'pet', addToHome: false, autoBudgetId: 'groceries' }), ctx)).toBe('groceries')
+    expect(budgetOf(row({ name: '', autoBudgetId: '' }), ctx)).toBe('')
+  })
+  it('round 6C2: with Add to HOME on the mapping decides, as before', () => {
+    expect(budgetOf(row({ name: 'Cat food', categoryId: 'pet', autoBudgetId: 'groceries' }), ctx)).toBe('pets')
+  })
 })
 
 describe('the payload for confirm_shopping_trip', () => {

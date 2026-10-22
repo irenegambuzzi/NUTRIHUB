@@ -3,9 +3,10 @@ import { Plus, X } from 'lucide-react'
 import { Input, Select } from './Field'
 import { cn } from '../../lib/cn'
 import { categoryPath } from '../../lib/categoryNames'
-import { sortCategories } from '../../lib/categoryOrder'
+import { categoryTree } from '../../lib/moneyList'
 import { checkNewName, defaultNewBudget, titleCase } from '../../lib/newCategory'
 import { useCategoryCreation } from '../../hooks/useCategoryCreation'
+import { MoneyCategorySelect } from './MoneyCategorySelect'
 
 const NEW_MAIN = ''
 
@@ -46,6 +47,9 @@ function ChipsAndNewRow({ mode = 'home', name, chips = [], selected = null, onPi
   const categories = home ? creation.homeCategories : creation.expenseCategories
   const mains = home ? creation.homeMains : creation.moneyMains
   const mainName = draft?.parentId ? categories.find((c) => c.id === draft.parentId)?.name ?? null : null
+
+  // The budget select of a new HOME category: main | sub, A–Z.
+  const moneyTree = useMemo(() => categoryTree(creation.expenseCategories), [creation.expenseCategories])
 
   const check = useMemo(() => (draft ? checkNewName({ kind: home ? 'home' : 'money', name: draft.name, categories, mainName }) : null), [draft, home, categories, mainName])
 
@@ -132,19 +136,13 @@ function ChipsAndNewRow({ mode = 'home', name, chips = [], selected = null, onPi
           {home && (
             <div>
               <p className="text-[10px] font-bold uppercase text-[var(--color-text-muted)] mb-1">Budget category</p>
-              <Select value={budgetId} onChange={(e) => setDraft((d) => ({ ...d, budgetId: e.target.value, budgetTouched: true }))} aria-label="Budget category of the new category">
-                <option value="">Uncategorized</option>
-                {creation.moneyMains.map((main) => [
-                  <option key={main.id} value={main.id}>
-                    {main.name}
-                  </option>,
-                  ...sortCategories(creation.expenseCategories.filter((c) => c.parent_id === main.id)).map((sub) => (
-                    <option key={sub.id} value={sub.id}>
-                      {main.name} › {sub.name}
-                    </option>
-                  )),
-                ])}
-              </Select>
+              <MoneyCategorySelect
+                value={budgetId}
+                onChange={(id) => setDraft((d) => ({ ...d, budgetId: id ?? '', budgetTouched: true }))}
+                mainCategories={moneyTree.mainCategories}
+                subsOf={moneyTree.subsOf}
+                label="Budget category of the new category"
+              />
             </div>
           )}
 

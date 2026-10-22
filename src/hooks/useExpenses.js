@@ -2,8 +2,8 @@ import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
-import { deleteProblem } from '../lib/categoryEdit'
-import { DURABLE_EXPENSE_CATEGORY } from '../data/constants'
+import { deleteProblem, moveProblem } from '../lib/categoryEdit'
+import { DURABLE_EXPENSE_CATEGORY, TRIPS_CATEGORY_ID } from '../data/constants'
 import { updateRows } from '../lib/inventory'
 import { unitPriceFromTotal } from '../lib/pricing'
 import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore, orderStore, shopStore } from '../lib/stores'
@@ -52,15 +52,18 @@ export function useExpenseCategories() {
   }, [])
 
   // Under another main category (parentId) or as a main category (null).
-  // Only the category's own row changes: its expenses stay attached.
+  // Only the category's own row changes: its expenses stay attached. The
+  // Trips main can't go under another one (found by id; renaming is fine).
   const moveCategory = useCallback(async (id, parentId) => {
+    const fixed = id === TRIPS_CATEGORY_ID ? moveProblem(categories, id, parentId, [], [TRIPS_CATEGORY_ID]) : null
+    if (fixed) return { error: { message: fixed } }
     const { data, error } = await attempt(
       async () => must(await supabase.from('expense_categories').update({ parent_id: parentId, type: parentId ? 'sub' : 'parent' }).eq('id', id).select())[0],
       { retry: false, onFail: () => expenseCategoryStore.refresh() }
     )
     if (!error && data) expenseCategoryStore.upsertLocal([data])
     return { data, error }
-  }, [])
+  }, [categories])
 
   // Deleting a category never loses expenses: they (and those in its
   // sub-categories) move to "Other" first, which is created if missing.
@@ -69,8 +72,8 @@ export function useExpenseCategories() {
       const other = categories.find((c) => c.name === 'Other' && !c.parent_id)
       if (other?.id === id) return { error: { message: '"Other" holds moved expenses and can\'t be deleted.' } }
       // Confirm purchase books durable items under "Home & Appliances", so
-      // it must always exist.
-      const locked = deleteProblem(categories, id, [DURABLE_EXPENSE_CATEGORY])
+      // it must always exist; trips find their main category by id.
+      const locked = deleteProblem(categories, id, [DURABLE_EXPENSE_CATEGORY], [TRIPS_CATEGORY_ID])
       if (locked) return { error: { message: locked } }
       const ids = [id, ...categories.filter((c) => c.parent_id === id).map((c) => c.id)]
       const refreshAll = () => Promise.all([expenseCategoryStore.refresh(), refreshExpenses()])

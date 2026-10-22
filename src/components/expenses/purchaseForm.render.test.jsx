@@ -38,7 +38,14 @@ const rememberBudget = vi.fn()
 // has its own tests): HOME chips, and budget chips for a row not added to HOME.
 const homeChip = (categoryId, label) => ({ categoryId, subcategoryId: null, expenseCategoryId: null, source: 'keywords', label })
 const HOME_CHIPS = { milk: [homeChip('dairy', 'Dairy')], shampoo: [homeChip('toiletries', 'Toiletries'), homeChip('dairy', 'Dairy')], chips: [homeChip('snacks', 'Snacks')] }
-const BUDGET_CHIPS = { gift: [{ categoryId: null, subcategoryId: null, expenseCategoryId: 'dining', source: 'name', label: 'Dining' }] }
+const budgetChip = (expenseCategoryId, label, source = 'keywords') => ({ categoryId: null, subcategoryId: null, expenseCategoryId, source, label })
+const BUDGET_CHIPS = {
+  gift: [budgetChip('dining', 'Dining', 'name')],
+  ryanair: [budgetChip('flights', 'Trips & Holidays › Flights')],
+  'ryanair bcn': [budgetChip('flights', 'Trips & Holidays › Flights')],
+  'lampadina luce led': [budgetChip('groceries', 'Groceries')],
+  milk: [budgetChip('dining', 'Dining')],
+}
 vi.mock('../../hooks/useCategorySuggestions', () => ({
   useCategorySuggestions: () => ({
     suggest: (name) => HOME_CHIPS[name.trim().toLowerCase()]?.[0] ? { ...HOME_CHIPS[name.trim().toLowerCase()][0], subcategoryId: null } : null,
@@ -58,6 +65,7 @@ const addExpenseOnce = vi.fn()
 vi.mock('../../hooks/useExpenses', () => ({ addExpenseOnce: (...args) => addExpenseOnce(...args) }))
 
 const { PurchaseForm } = await import('./PurchaseForm')
+const { categoryTree } = await import('../../lib/moneyList')
 
 afterEach(() => {
   cleanup()
@@ -302,5 +310,83 @@ describe('MONEY Add expense: the purchase form', () => {
     data.last = { price: 9, quantity: 1, unit: 'kg', source: 'trip', at: 2 }
     type('Name', 'Rice 2')
     expect(screen.getByLabelText('Price').value).toBe('3')
+  })
+})
+
+describe('round 6C2: the budget category fills itself in from the first chip (Add to HOME off)', () => {
+  const categories = [
+    { id: 'groceries', name: 'Groceries', parent_id: null },
+    { id: 'dining', name: 'Dining', parent_id: null },
+    { id: 'trips', name: 'Trips & Holidays', parent_id: null },
+    { id: 'flights', name: 'Flights', parent_id: 'trips' },
+    { id: 'other', name: 'Other', parent_id: null },
+  ]
+  const tree = categoryTree(categories)
+  const open = () => form({ expenseCategories: categories, mainCategories: tree.mainCategories, subsOf: tree.subsOf })
+  const main = () => screen.getByLabelText('Budget category')
+  const sub = () => screen.getByLabelText('Budget category: sub-category')
+  const note = () => screen.queryByText(/Budget category suggested from the name/)
+
+  it('"Ryanair" → Trips & Holidays › Flights, its chip selected, with the note; saved without a tap and not remembered', async () => {
+    addExpenseOnce.mockResolvedValue({ error: null })
+    open()
+    type('Name', 'Ryanair')
+    expect(screen.getByLabelText('Add to HOME').checked).toBe(false)
+    expect(main().value).toBe('trips')
+    expect(sub().value).toBe('flights')
+    expect(screen.getByRole('button', { name: 'Trips & Holidays › Flights' }).getAttribute('aria-pressed')).toBe('true')
+    expect(note()).toBeTruthy()
+    type('Price', '40')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €40.00' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
+    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ categoryId: 'flights', description: 'Ryanair' })
+    expect(rememberBudget).not.toHaveBeenCalled()
+  })
+
+  it('a later name updates it; "Other" chosen by hand stays while typing on', () => {
+    open()
+    type('Name', 'Ryanair')
+    type('Name', 'Ryanair bcn')
+    expect(sub().value).toBe('flights')
+    fireEvent.change(main(), { target: { value: 'other' } })
+    expect(note()).toBeNull()
+    type('Name', 'Ryanair bcn')
+    type('Name', 'Lampadina luce LED')
+    expect(main().value).toBe('other')
+    expect(sub().value).toBe('')
+  })
+
+  it('clearing the name goes back to Uncategorized', () => {
+    open()
+    type('Name', 'Ryanair')
+    type('Name', '')
+    expect(main().value).toBe('')
+    expect(sub().disabled).toBe(true)
+  })
+
+  it('"Lampadina luce LED" → Groceries (the first chip)', () => {
+    open()
+    type('Name', 'Lampadina luce LED')
+    expect(main().value).toBe('groceries')
+    expect(screen.getByRole('button', { name: 'Groceries' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('with Add to HOME on nothing changes: the budget follows the HOME category; turned off, the first budget chip fills it', () => {
+    open()
+    type('Name', 'Milk')
+    expect(screen.getByLabelText('Add to HOME').checked).toBe(true)
+    expect(main().value).toBe('groceries')
+    expect(note()).toBeNull()
+    expect(screen.getByText("From the HOME category's budget mapping — change it if needed.")).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Add to HOME'))
+    expect(main().value).toBe('dining')
+    expect(note()).toBeTruthy()
+  })
+
+  it('the budget category is two selects (main | sub) with the sliders button kept', () => {
+    open()
+    expect(main().tagName).toBe('SELECT')
+    expect(sub().tagName).toBe('SELECT')
+    expect(screen.getByRole('button', { name: 'Manage budget categories' })).toBeTruthy()
   })
 })

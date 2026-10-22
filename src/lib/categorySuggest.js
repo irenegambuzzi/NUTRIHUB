@@ -171,6 +171,17 @@ export function suggestBudgetCategories(name, context, { limit = DEFAULT_LIMIT }
   return chips
 }
 
+// The budget chip a MONEY row not added to HOME fills in by itself (shown
+// selected, until a budget category is chosen by hand): the first chip,
+// from the same kinds of sources the HOME category fills itself from
+// (memory, the HOME item, keywords — here also the MONEY keywords).
+// Never a chip that only has a similar name: suggestCategory doesn't
+// fill a similar name in either, it is only offered.
+export function budgetAutoFill(chips) {
+  const first = chips?.[0]
+  return first && first.source !== 'name' ? first : null
+}
+
 // The same, then the slower layers (AI, round 8) when the quick ones gave
 // nothing. A slower layer answers { categoryId, subcategoryId }.
 export async function suggestCategoriesAsync(name, context, options = {}) {

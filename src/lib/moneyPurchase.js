@@ -38,6 +38,7 @@ export function emptyRow(key) {
     suggested: false,
     budgetId: '',
     budgetTouched: false,
+    autoBudgetId: '',
     addToHome: null,
     oneTime: false,
     minText: '0',
@@ -77,9 +78,14 @@ export function defaultBudget(row, ctx) {
   }
 }
 
-// The budget category shown for a row: the one picked by hand, else the
-// mapped one.
-export const budgetOf = (row, ctx) => (row.budgetTouched ? row.budgetId : defaultBudget(row, ctx))
+// The budget category shown for a row: the one picked by hand; else, for
+// a row not added to HOME, the one its name filled in (the first budget
+// chip, `autoBudgetId`); else the mapped one.
+export const budgetOf = (row, ctx) => {
+  if (row.budgetTouched) return row.budgetId
+  if (row.autoBudgetId && !addsToHome(row)) return row.autoBudgetId
+  return defaultBudget(row, ctx)
+}
 
 // What a row does, worked out from what was typed:
 //   total       the price as on the receipt, BEFORE any discount (the normal

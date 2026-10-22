@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Plus, Settings2, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, Wand2, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { CategoryChips } from '../ui/CategoryChips'
+import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { CategoryFields } from '../inventory/CategoryFields'
@@ -13,9 +14,11 @@ import { UnitOptions } from '../grocery/shared'
 import { ShopPicker } from './ShopPicker'
 import { ExpenseCategoryManager } from './ExpenseCategoryPicker'
 import { DEFAULT_UNIT, PAID_BY_OPTIONS } from '../../data/constants'
+import { budgetAutoFill } from '../../lib/categorySuggest'
 import { cn } from '../../lib/cn'
 import { decimalProblem, moneyText } from '../../lib/decimal'
 import { localDateString } from '../../lib/expensePeriods'
+import { splitCategory } from '../../lib/moneyList'
 import { normName } from '../../lib/grocery'
 import { withGroupTotals } from '../../lib/groups'
 import { money } from '../../lib/pricing'
@@ -94,9 +97,11 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
 
   const change = (key, patch) => setRows((all) => all.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
-  // The name fills in the HOME category (until one is picked by hand) and
-  // the unit of the HOME item (or group) with that name (until one is
-  // picked), so its stock converts without asking.
+  // The name fills in the HOME category (until one is picked by hand), the
+  // budget category used while "Add to HOME" is off (the first budget
+  // chip, until one is picked by hand; none without a chip) and the unit
+  // of the HOME item (or group) with that name (until one is picked), so
+  // its stock converts without asking.
   const changeName = (row, name) => {
     const patch = { name }
     if (!row.categoryTouched) {
@@ -105,6 +110,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
       patch.subcategoryId = pick?.subcategoryId ?? ''
       patch.suggested = Boolean(pick)
     }
+    if (!row.budgetTouched) patch.autoBudgetId = budgetAutoFill(budgetSuggestions(name))?.expenseCategoryId ?? ''
     const known = homeItemFor(name, pantryItems)
     if (!row.unitTouched && !row.autoFilled) patch.unit = known?.unit ?? DEFAULT_UNIT
     if (normName(name) !== normName(row.name)) patch.variantId = undefined
@@ -164,7 +170,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   }
 
   const managedRow = rows.find((r) => r.key === managing)
-  const managedValue = managedRow ? budgetPick(budgetOf(managedRow, budgetCtx), expenseCategories) : { mainId: '', subId: '' }
+  const managedValue = managedRow ? splitCategory(budgetOf(managedRow, budgetCtx), mainCategories, subsOf) : { mainId: '', subId: '' }
 
   return (
     <>
@@ -276,13 +282,6 @@ function pickPatch(pick, home) {
   return { categoryId: pick.categoryId, subcategoryId: pick.subcategoryId ?? '', categoryTouched: true, suggested: false, budgetTouched: false, budgetId: '' }
 }
 
-// { mainId, subId } of a budget category id, for the category manager.
-function budgetPick(id, categories) {
-  const c = categories.find((x) => x.id === id)
-  if (!c) return { mainId: '', subId: '' }
-  return c.parent_id ? { mainId: c.parent_id, subId: c.id } : { mainId: c.id, subId: '' }
-}
-
 // One item of the receipt.
 function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
@@ -292,6 +291,8 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCatego
   const label = (what) => (single ? what : `${what} of item ${index + 1}`)
   const badNumber = [row.priceText, row.quantityText, row.minText, row.packSizeText].find((t) => decimalProblem(t)) ?? ''
   const chips = chipsFor(row.name, home)
+  // The budget category came from the first chip, not from a pick by hand.
+  const budgetSuggested = !home && !row.budgetTouched && Boolean(row.autoBudgetId) && budgetId === row.autoBudgetId
 
   // Bought before: the last normal price and the unit it was bought in fill
   // in (until the price, quantity or unit is edited by hand). The store is
@@ -368,25 +369,22 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCatego
 
       <div>
         <p className="text-[10px] font-bold uppercase text-[var(--color-text-muted)] mb-1">Budget category</p>
-        <div className="flex gap-2">
-          <Select value={budgetId} onChange={(e) => onChange({ budgetId: e.target.value, budgetTouched: true })} aria-label={label('Budget category')} className="flex-1">
-            <option value="">Uncategorized</option>
-            {mainCategories.map((main) => [
-              <option key={main.id} value={main.id}>
-                {main.name}
-              </option>,
-              ...subsOf(main.id).map((sub) => (
-                <option key={sub.id} value={sub.id}>
-                  {main.name} › {sub.name}
-                </option>
-              )),
-            ])}
-          </Select>
-          <button type="button" onClick={onManageBudget} title="Add or delete budget categories" aria-label={label('Manage budget categories')} className="w-9 h-9 flex items-center justify-center rounded-2xl border border-[var(--color-border)] text-[var(--color-icon-muted)] shrink-0">
-            <Settings2 size={14} />
-          </button>
-        </div>
-        {!row.budgetTouched && row.categoryId && budgetId && <p className="text-[10px] text-[var(--color-text-muted)] mt-1">From the HOME category's budget mapping — change it if needed.</p>}
+        <MoneyCategorySelect
+          value={budgetId}
+          onChange={(id) => onChange({ budgetId: id ?? '', budgetTouched: true })}
+          mainCategories={mainCategories}
+          subsOf={subsOf}
+          label={label('Budget category')}
+          onManage={onManageBudget}
+          manageLabel={label('Manage budget categories')}
+        />
+        {budgetSuggested ? (
+          <p className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5 mt-1">
+            <Wand2 size={12} className="text-[var(--color-accent)]" /> Budget category suggested from the name — change it if it's wrong (it will be remembered).
+          </p>
+        ) : (
+          !row.budgetTouched && row.categoryId && budgetId && <p className="text-[10px] text-[var(--color-text-muted)] mt-1">From the HOME category's budget mapping — change it if needed.</p>
+        )}
       </div>
 
       <label className={cn('flex items-start gap-2.5 min-h-9', locked ? 'opacity-60' : 'cursor-pointer')}>

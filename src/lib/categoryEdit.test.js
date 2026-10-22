@@ -62,3 +62,23 @@ describe('deleteProblem', () => {
     expect(deleteProblem(withHome, 'nope', [])).toBe('This category no longer exists.')
   })
 })
+
+describe('round 6C2: the Trips main is found by id (rename free, move and delete locked)', () => {
+  const TRIPS = 'dc79f604-19fd-4bdd-817e-335816c4afe7'
+  const withTrips = [...cats, { id: TRIPS, name: 'Travel', parent_id: null }, { id: 'flights', name: 'Flights', parent_id: TRIPS }]
+
+  it('refuses moving or deleting it, whatever its name is now', () => {
+    expect(moveProblem(withTrips, TRIPS, 'g', locked, [TRIPS])).toBe('"Travel" can\'t be moved.')
+    expect(deleteProblem(withTrips, TRIPS, ['Home & Appliances'], [TRIPS])).toBe('"Travel" can\'t be deleted.')
+  })
+
+  it('allows renaming it', () => {
+    expect(renameProblem(withTrips, TRIPS, 'Trips & Holidays', locked)).toBeNull()
+  })
+
+  it('its sub-categories stay free, and others can still move under it', () => {
+    expect(moveProblem(withTrips, 'flights', 'g', locked, [TRIPS])).toBeNull()
+    expect(deleteProblem(withTrips, 'flights', [], [TRIPS])).toBeNull()
+    expect(moveProblem(withTrips, 'a', TRIPS, locked, [TRIPS])).toBeNull()
+  })
+})

@@ -1,3 +1,5 @@
+import { TRIPS_CATEGORY_ID } from './constants'
+
 // Keywords for guessing a MONEY (budget) category from an expense name,
 // for a MONEY row that isn't added to HOME ("Benzina Eni" → Car / Vehicle ›
 // Fuel). Same matching as the HOME list (data/categoryKeywords.js, read its
@@ -17,7 +19,7 @@
 // Each rule: [main category id, sub-category id (or null), keywords, options].
 
 // ── Existing MONEY categories (ids from the live database, 21/10/2026) ──
-const TRIPS = 'dc79f604-19fd-4bdd-817e-335816c4afe7' // Trips & Holidays (was "Holiday"; may be renamed again)
+const TRIPS = TRIPS_CATEGORY_ID // Trips & Holidays (was "Holiday"; may be renamed again)
 const TRIPS_ACCOMMODATION = '72cb10f3-3fbd-4bb1-b0f8-81c5cc357077' // Trips & Holidays › Accommodation
 const TRIPS_TRANSPORT = '5d4cc03f-a148-43b1-b2eb-2186012a20c9' // Trips & Holidays › Transport
 const TRIPS_ACTIVITIES = 'df3c1786-b4e8-40b8-b55a-b74f8816e7c2' // Trips & Holidays › Activities

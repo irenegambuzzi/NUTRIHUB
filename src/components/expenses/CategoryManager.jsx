@@ -5,7 +5,7 @@ import { Input, Label, Select } from '../ui/Field'
 import { SimilarNote } from '../ui/SimilarNote'
 import { expenseUsageStore } from '../../lib/stores'
 import { moveProblem, renameProblem } from '../../lib/categoryEdit'
-import { DURABLE_EXPENSE_CATEGORY } from '../../data/constants'
+import { DURABLE_EXPENSE_CATEGORY, TRIPS_CATEGORY_ID } from '../../data/constants'
 import { sortCategories } from '../../lib/categoryOrder'
 
 // Used by the grocery list (Groceries), as the fallback for deleted
@@ -21,6 +21,14 @@ const EXPENSE_LOCKED = {
   Other: 'Where expenses go when a category is deleted.',
   Groceries: 'Used by the shopping list for purchases.',
   [DURABLE_EXPENSE_CATEGORY]: 'Used for home and appliance purchases.',
+}
+
+// Main categories the app finds by id: they can be renamed (any name
+// keeps working) but not moved or deleted; each shows why. Their
+// sub-categories are free, and others can still be moved under them.
+// (Income has none.)
+const EXPENSE_FIXED = {
+  [TRIPS_CATEGORY_ID]: "Locked: it can't be moved or deleted. You can rename it.",
 }
 
 // Expense categories by default; income passes its own wording and usage
@@ -40,6 +48,7 @@ export function CategoryManager({
   usageStore = expenseUsageStore,
   protectedNames = PROTECTED,
   lockedHints = EXPENSE_LOCKED,
+  fixedHints = EXPENSE_FIXED,
   smallSubDots = false,
 }) {
   const [name, setName] = useState('')
@@ -49,6 +58,7 @@ export function CategoryManager({
   // The one row being renamed or moved: { id, mode: 'rename' | 'move', value }.
   const [editing, setEditing] = useState(null)
   const lockedNames = Object.keys(lockedHints)
+  const fixedIds = Object.keys(fixedHints)
 
   // A–Z, "Other" last (the list, "Main category" and Move).
   const parents = sortCategories(categories.filter((c) => !c.parent_id))
@@ -89,7 +99,7 @@ export function CategoryManager({
     e.preventDefault()
     const { id, mode, value } = editing
     if (value === MOVE_UNSET) return setError('Choose where to move it.')
-    const problem = mode === 'rename' ? renameProblem(categories, id, value, lockedNames) : moveProblem(categories, id, value || null, lockedNames)
+    const problem = mode === 'rename' ? renameProblem(categories, id, value, lockedNames) : moveProblem(categories, id, value || null, lockedNames, fixedIds)
     if (problem) return setError(problem)
     const category = categories.find((c) => c.id === id)
     // Nothing to save when the name is as it was.
@@ -150,8 +160,9 @@ export function CategoryManager({
   const row = (c, isSub) => {
     if (editing?.id === c.id) return editRow(c, isSub)
     const count = usage(c)
-    const locked = protectedNames.includes(c.name) && !c.parent_id
     const hint = !c.parent_id ? lockedHints[c.name] : null
+    const fixedHint = !c.parent_id && !hint ? fixedHints[c.id] : null
+    const locked = (protectedNames.includes(c.name) && !c.parent_id) || Boolean(fixedHint)
     return (
       <div key={c.id} className="py-1.5 text-xs">
       <div className="flex items-center gap-2">
@@ -180,7 +191,7 @@ export function CategoryManager({
               </button>
             )}
             {onMove && (
-              <button onClick={() => startEdit(c, 'move')} disabled={!!hint} title={hint ? 'Can\'t be moved' : 'Move'} aria-label={`Move ${c.name}`} className={`${iconButton} hover:text-[var(--color-primary)]`}>
+              <button onClick={() => startEdit(c, 'move')} disabled={!!(hint || fixedHint)} title={hint || fixedHint ? 'Can\'t be moved' : 'Move'} aria-label={`Move ${c.name}`} className={`${iconButton} hover:text-[var(--color-primary)]`}>
                 <FolderInput size={13} />
               </button>
             )}
@@ -197,6 +208,7 @@ export function CategoryManager({
         )}
       </div>
       {hint && <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-[18px]">{hint} Locked: it can't be renamed, moved or deleted.</p>}
+      {fixedHint && <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-[18px]">{fixedHint}</p>}
       </div>
     )
   }

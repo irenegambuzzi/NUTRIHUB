@@ -1669,6 +1669,101 @@ After 024 (reload both iPhones):
 6. Rename "Trips & Holidays" to "Travel" in MONEY → Manage: "Ryanair" now
    shows "Travel › Flights". (Rename it back if wanted.)
 
+### As built in round 6C2 (22/10/2026) — fixes after testing 6C on the iPhone
+
+No SQL, nothing in the database changes.
+
+**Fix 1 — the budget category fills itself in from the first chip.** In
+MONEY "Add expense", a row with "Add to HOME" off now gets "BUDGET
+CATEGORY" from the first budget chip, shown selected (green), with the note
+"Budget category suggested from the name — change it if it's wrong (it will
+be remembered)." ("Ryanair" → Trips & Holidays › Flights without a tap.)
+
+- Chip order unchanged (remembered budget → MONEY keywords → HOME
+  suggestion through the mapping → similar name). The auto-fill uses
+  `categorySuggest.budgetAutoFill(chips)`: the first chip, unless its
+  source is `name`. Why: the HOME auto-fill (`suggestCategory`) uses
+  memory, pantry and keywords only, never the similar-name layer, so the
+  budget one doesn't either; a similar-name chip is still offered.
+- The row keeps `autoBudgetId` (`moneyPurchase.emptyRow`), set on every
+  name change until a budget category is chosen by hand (chip, the two
+  selects, or Manage → `budgetTouched`), exactly like the HOME
+  `categoryTouched` rule. No chip → `''` (Uncategorized).
+  `moneyPurchase.budgetOf`: picked by hand → that; else, Add to HOME off
+  and an `autoBudgetId` → that; else the HOME mapping as before (so Add to
+  HOME on is unchanged; a row with a HOME category picked by hand and Add
+  to HOME turned off, with no budget chip, still follows the mapping).
+- Not a user pick: it is never remembered by itself; a pick by hand is
+  remembered only when it differs from the first chip (unchanged).
+- Places: budget chips are shown only in the MONEY "Add expense" item rows
+  (`components/expenses/PurchaseForm.jsx`, one row = plain expense, more
+  rows = purchase). SHOP add, QuickAdd and FixCategory show HOME chips only.
+
+**Fix 2 — one MONEY category picker, main | sub.** New
+`components/ui/MoneyCategorySelect.jsx`: two selects side by side (left
+main, right its subs with "No sub-category" first, disabled when the main
+has none), order from `moneyList.categoryTree` (A–Z, "Other" last), the
+optional sliders button (`onManage`) on the right. Still one id:
+`onChange(id | null, { mainId, subId })`; "Uncategorized" → null.
+`moneyList.splitCategory(id, mains, subsOf)` opens an existing value with
+both columns filled. Changing the main always resets the sub (a sub
+belongs to one main only). Used in:
+
+| Place | File |
+|---|---|
+| MONEY "Add expense" item rows (was one long select) | `expenses/PurchaseForm.jsx` |
+| Edit expense | `expenses/ExpenseForm.jsx` via `ExpenseCategoryPicker` |
+| Order form (MONEY Orders) | `expenses/OrderForm.jsx` via `ExpenseCategoryPicker` |
+| SHOP "Order online" | `grocery/OrderOnlineDialog.jsx` → `OrderForm` |
+| "+ New category" row: budget of a new HOME category (was one long select) | `ui/CategoryChips.jsx` |
+| HOME → Categories (mapping), mains and subs (was one long select) | `inventory/BudgetMappingView.jsx` |
+| Income add / edit (no "Uncategorized": a category is required) | `expenses/IncomeForm.jsx` |
+
+SHOP Confirm purchase has no budget select (it books by the mapping).
+Not changed (they pick a *main* as a parent, not a category for money):
+the "Main category" / "Move to" selects in MONEY and Income Manage.
+
+**Fix 3 — Trips & Holidays locked (move and delete), rename free.**
+`data/constants.js`: `TRIPS_CATEGORY_ID` (`dc79f604-…`; round 7 may move
+it to `household_settings`); `budgetKeywords.js` uses it. `categoryEdit`
+`moveProblem` / `deleteProblem` take `fixedIds` (by id, any name).
+`CategoryManager` gets `fixedHints` (expenses: the Trips id; Income
+passes none): Move and Delete disabled, Rename on, hint "Locked: it can't
+be moved or deleted. You can rename it." Its subs keep all buttons and
+other categories can still be moved under it. `useExpenses.deleteCategory`
+refuses it, and `moveCategory` refuses putting it under another main.
+
+**Deviations, and why**
+
+- Edit expense, Order form and Income had a "⚙ Manage" text button next to
+  a full-width select; it is now the same small sliders button as the
+  purchase rows, so two selects fit beside it on a phone (same action).
+- "No subcategory" is now "No sub-category" everywhere (as in HOME).
+- HOME → Categories: each row's picker moved under its name (two selects
+  don't fit next to the name at phone width).
+
+**Tests:** 1178 → 1211 (87 → 88 files). New
+`ui/moneyCategorySelect.render.test.jsx`; additions in `categorySuggest`
+(auto-fill: Ryanair, Lampadina luce LED → Groceries, memory, none,
+similar name not filled), `moneyPurchase` (`budgetOf`), `moneyList`
+(`splitCategory`), `categoryEdit`, `expenseCategoryLock`, MONEY Manage
+render, the purchase form render (Ryanair, Other by hand then typing,
+clearing, Lampadina, Add to HOME on), the "+ New category" row and
+edit expense / income.
+
+### iPhone checklist for round 6C2
+
+1. MONEY → Add expense, type "Ryanair": BUDGET CATEGORY shows "Trips &
+   Holidays" | "Flights", the chip is green, the wand note is under it.
+   Save without tapping: the expense is in Trips & Holidays › Flights.
+2. Pick "Other" in the left select, keep typing: it stays Other. Clear the
+   name: Uncategorized.
+3. "Milk" (Add to HOME on): budget from the HOME mapping as before.
+4. Edit an expense, an order, SHOP Order online, Income, HOME →
+   Categories, "+ New category": two selects, A–Z, "Other" last.
+5. MONEY → Manage: Trips & Holidays has Move and Delete greyed, Rename
+   works, the hint is under it; its subs have all buttons.
+
 ## 9D. Decided 21–22/10 for later rounds
 
 **Trips (MONEY main).** The MONEY main is now "Trips & Holidays" (renamed
@@ -1697,6 +1792,20 @@ earlier expenses"; the summary labels them "booked before the trip".
 subs (Restaurant / Bar / Groceries → Food & Drinks, Fuel / Parking →
 Transport, Cinema & Events → Activities…). Details are decided in round 7.
 Still open: trips must not overlap (point 13).
+
+**OPEN — to discuss before round 7 (added in round 6C2):**
+
+- (a) Today's plan: every NEW expense dated inside an active trip goes
+  into the trip automatically, including rent; the tick-list exclusion
+  (Housing & Utilities, Subscription, Savings & Investments) only applies
+  to expenses that already existed when the trip is started or
+  lengthened. Open: should new expenses in those categories typed during
+  a trip also stay out automatically?
+- (b) Since round 6C2, the first MONEY keyword chip auto-fills the budget
+  category. Outside any trip, everyday words such as "taxi" / "uber"
+  therefore auto-fill Trips & Holidays › Transport. Open: outside an
+  active or upcoming trip, should Trips sub-categories only be offered as
+  a chip and not auto-filled?
 
 **Round 6D (before round 7) replaces the group feature with "one item,
 many names":**

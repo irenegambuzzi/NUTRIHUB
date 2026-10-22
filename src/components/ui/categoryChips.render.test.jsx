@@ -182,6 +182,18 @@ describe('a new HOME category (from SHOP, or a MONEY row with Add to HOME on)', 
     expect(screen.getByLabelText('Budget category of the new category').value).toBe('shopping')
   })
 
+  it('round 6C2: its budget category is main | sub, and a sub picked is the id saved', async () => {
+    const c = setup()
+    render(<CategoryChips name="Party Bags" chips={[]} onPick={vi.fn()} />)
+    open()
+    fireEvent.change(screen.getByLabelText('Budget category of the new category'), { target: { value: 'shopping' } })
+    const sub = screen.getByLabelText('Budget category of the new category: sub-category')
+    expect([...sub.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['No sub-category', 'Gifts'])
+    fireEvent.change(sub, { target: { value: 'm-gifts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(c.createHome).toHaveBeenCalledWith(expect.objectContaining({ budgetId: 'm-gifts' })))
+  })
+
   it('a taken HOME name is explained with free names (HOME rule: all levels)', () => {
     setup()
     render(<CategoryChips name="misc" chips={[]} onPick={vi.fn()} />)

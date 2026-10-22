@@ -9,6 +9,7 @@ const { ExpenseForm } = await import('./ExpenseForm')
 const { IncomeForm } = await import('./IncomeForm')
 const { OrderForm } = await import('./OrderForm')
 const { DECIMAL_MESSAGE } = await import('../../lib/decimal')
+const { categoryTree } = await import('../../lib/moneyList')
 
 afterEach(cleanup)
 
@@ -80,5 +81,43 @@ describe.each(forms)('the money field of $name', (form) => {
     expect(field().value).toBe('13.60')
     submit()
     expect(form.value(onSubmit.mock.calls[0])).toBe(13.6)
+  })
+})
+
+describe('round 6C2: edit expense and income pick main | sub, and keep saving one id', () => {
+  const money = [
+    { id: 'trips', name: 'Trips & Holidays', parent_id: null },
+    { id: 'flights', name: 'Flights', parent_id: 'trips' },
+    { id: 'bank', name: 'Bank & Fee', parent_id: null },
+  ]
+
+  it('an expense in a sub-category opens with both columns filled; changing the main resets the sub', async () => {
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    const tree = categoryTree(money)
+    render(<ExpenseForm {...picker} categories={money} mainCategories={tree.mainCategories} subsOf={tree.subsOf} initial={{ amount: 40, category_id: 'flights', description: 'Ryanair', paid_by: 'shared', expense_date: '2026-10-17' }} onSubmit={onSubmit} />)
+    expect(screen.getByLabelText('Budget category').value).toBe('trips')
+    expect(screen.getByLabelText('Budget category: sub-category').value).toBe('flights')
+    fireEvent.change(screen.getByLabelText('Budget category'), { target: { value: 'bank' } })
+    expect(screen.getByLabelText('Budget category: sub-category').disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /Save|Update|Add/ }))
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].categoryId).toBe('bank')
+  })
+
+  it('income: no "Uncategorized", and a sub is the id saved', async () => {
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    const incomeTree = categoryTree([
+      { id: 'salary', name: 'Salary', parent_id: null },
+      { id: 'other', name: 'Other', parent_id: null },
+      { id: 'refunds', name: 'Refunds', parent_id: 'other' },
+    ])
+    render(<IncomeForm tree={incomeTree} submitLabel="Add income" onSubmit={onSubmit} />)
+    expect([...screen.getByLabelText('Income category').querySelectorAll('option')].map((o) => o.textContent)).toEqual(['Salary', 'Other'])
+    fireEvent.change(screen.getByLabelText('Income category'), { target: { value: 'other' } })
+    fireEvent.change(screen.getByLabelText('Income category: sub-category'), { target: { value: 'refunds' } })
+    fireEvent.change(screen.getByLabelText('Amount (€)'), { target: { value: '12' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add income' }))
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].categoryId).toBe('refunds')
   })
 })

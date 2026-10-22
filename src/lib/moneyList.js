@@ -108,6 +108,16 @@ export function categoryTree(categories) {
   }
 }
 
+// Which main and sub-category a MONEY category id stands for, among
+// `mainCategories` and `subsOf` (as categoryTree gives them): { mainId,
+// subId } ('' for none). An id that is no longer on offer gives nothing.
+export function splitCategory(id, mainCategories, subsOf) {
+  if (!id) return { mainId: '', subId: '' }
+  if (mainCategories.some((m) => m.id === id)) return { mainId: id, subId: '' }
+  const main = mainCategories.find((m) => subsOf(m.id).some((s) => s.id === id))
+  return main ? { mainId: main.id, subId: id } : { mainId: '', subId: '' }
+}
+
 // A list of expenses with the ones from the same shopping trip together:
 // [{ key, entry }] for an expense on its own, [{ key, tripId, items,
 // total }] for two or more expenses of one trip, placed where the trip's

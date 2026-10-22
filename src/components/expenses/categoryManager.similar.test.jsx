@@ -67,3 +67,42 @@ describe('MONEY Manage (and Income Manage): A–Z, "Other" last', () => {
     expect(options).toEqual(['Main category', 'Sub-category of Bank & Fee', 'Sub-category of Shopping', 'Sub-category of Trips & Holidays', 'Sub-category of Other'])
   })
 })
+
+describe('round 6C2: the Trips main is locked by id (rename free)', () => {
+  const TRIPS = 'dc79f604-19fd-4bdd-817e-335816c4afe7'
+  const list = [
+    { id: TRIPS, name: 'Travel', parent_id: null },
+    { id: 'flights', name: 'Flights', parent_id: TRIPS },
+    { id: 'bank', name: 'Bank & Fee', parent_id: null },
+  ]
+  const openTrips = () => {
+    const onMove = vi.fn(async () => ({ error: null }))
+    render(<CategoryManager categories={list} styleFor={() => ({ hex: '#fff' })} onAdd={vi.fn()} onDelete={vi.fn()} onRename={vi.fn(async () => ({ error: null }))} onMove={onMove} onClose={() => {}} />)
+    return { onMove }
+  }
+
+  it('Delete and Move are disabled even after a rename; Rename stays on; the hint says so', () => {
+    openTrips()
+    expect(screen.getByLabelText('Delete Travel').disabled).toBe(true)
+    expect(screen.getByLabelText('Move Travel').disabled).toBe(true)
+    expect(screen.getByLabelText('Rename Travel').disabled).toBe(false)
+    expect(screen.getByText("Locked: it can't be moved or deleted. You can rename it.")).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Rename Travel'))
+    expect(screen.getByLabelText('New name for Travel')).toBeTruthy()
+  })
+
+  it('its sub-categories keep all their buttons, and others can still move under it', async () => {
+    const { onMove } = openTrips()
+    for (const action of ['Rename', 'Move', 'Delete']) expect(screen.getByLabelText(`${action} Flights`).disabled).toBe(false)
+    fireEvent.click(screen.getByLabelText('Move Bank & Fee'))
+    fireEvent.change(screen.getByLabelText('Move Bank & Fee to'), { target: { value: TRIPS } })
+    fireEvent.click(screen.getByLabelText('Save'))
+    await waitFor(() => expect(onMove).toHaveBeenCalledWith('bank', TRIPS))
+  })
+
+  it('Income Manage has no such lock', () => {
+    render(<CategoryManager categories={list} styleFor={() => ({ hex: '#fff' })} onAdd={vi.fn()} onDelete={vi.fn()} onRename={vi.fn()} onMove={vi.fn()} onClose={() => {}} fixedHints={{}} lockedHints={{}} protectedNames={[]} />)
+    expect(screen.getByLabelText('Delete Travel').disabled).toBe(false)
+    expect(screen.getByLabelText('Move Travel').disabled).toBe(false)
+  })
+})

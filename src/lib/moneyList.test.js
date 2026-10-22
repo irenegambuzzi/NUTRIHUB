@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChartFilters, categoryTree, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections } from './moneyList'
+import { applyChartFilters, categoryTree, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections, splitCategory } from './moneyList'
 
 const food = { id: 'food', name: 'Groceries' }
 const fun = { id: 'fun', name: 'Going out' }
@@ -186,5 +186,23 @@ describe('categoryTree (every MONEY and Income picker)', () => {
     expect(tree.mainCategories.map((c) => c.name)).toEqual(['Groceries', 'Shopping', 'Trips & Holidays', 'Other'])
     expect(tree.subsOf('s').map((c) => c.name)).toEqual(['Clothing', 'Gifts', 'Others'])
     expect(tree.namesOf('s1')).toEqual({ main: 'Shopping', sub: 'Gifts' })
+  })
+})
+
+describe('splitCategory (the two MONEY category selects)', () => {
+  const { mainCategories, subsOf } = categoryTree([
+    { id: 'trips', name: 'Trips & Holidays', parent_id: null },
+    { id: 'flights', name: 'Flights', parent_id: 'trips' },
+    { id: 'family', name: 'Family Support', parent_id: null },
+    { id: 'orphan', name: 'Orphan', parent_id: 'gone' },
+  ])
+
+  it('a sub gives its main and itself; a main gives itself and no sub', () => {
+    expect(splitCategory('flights', mainCategories, subsOf)).toEqual({ mainId: 'trips', subId: 'flights' })
+    expect(splitCategory('family', mainCategories, subsOf)).toEqual({ mainId: 'family', subId: '' })
+  })
+
+  it('none, or an id no longer on offer, gives nothing', () => {
+    for (const id of [null, '', 'deleted', 'orphan']) expect(splitCategory(id, mainCategories, subsOf)).toEqual({ mainId: '', subId: '' })
   })
 })

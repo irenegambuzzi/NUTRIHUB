@@ -112,6 +112,11 @@ export const SUGGESTED_UNITS = {
 export const DURABLE_CATEGORY_IDS = ['appliances']
 export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 
+// The MONEY main category for trips (now "Trips & Holidays"). Found by id,
+// never by name, so it can be renamed freely; it can't be moved under
+// another main or deleted. Round 7 may move this id to household_settings.
+export const TRIPS_CATEGORY_ID = 'dc79f604-19fd-4bdd-817e-335816c4afe7'
+
 // Removed categories that must never be offered again, even if a stale
 // row is still in the database. "+ New category" never gives a new
 // category one of these ids. ("baby" was here until round 6C: the HOME
