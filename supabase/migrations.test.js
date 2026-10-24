@@ -10,14 +10,20 @@ import path from 'node:path'
 // the real function below.
 vi.mock('../src/lib/supabaseClient', () => ({ supabase: {} }))
 const { emptyRow, listEntryFor, moneyPurchasePayload, pricedLines, rowLine } = await import('../src/lib/moneyPurchase.js')
+// For 025: the remembered-name keys and "Apply the mapping to past purchases", as the app works them out.
+const { normalizeName } = await import('../src/lib/categoryGuess.js')
+const { pastPurchaseChanges, purchasedItemsByExpense } = await import('../src/lib/budgetMap.js')
+const { LIVE_MONEY_CATEGORIES } = await import('../src/data/moneyCategories.fixture.js')
 
 const dir = path.join(import.meta.dirname)
 let db
 const q = async (sql, params) => (await db.query(sql, params)).rows
 const one = async (sql, params) => (await q(sql, params))[0]
 
-beforeAll(async () => {
-  db = new PGlite()
+// A new database with what Supabase provides and the migrations before
+// 015 (015 to 025 rely on the login lock and are run by their own blocks).
+async function newDatabase() {
+  const db = new PGlite()
   // What Supabase provides that plain Postgres doesn't.
   await db.exec(`
     create role anon; create role authenticated;
@@ -33,10 +39,15 @@ beforeAll(async () => {
     grant usage on schema public, auth, storage to anon, authenticated;
   `)
   // 006 uses columns that 007 formally adds (they existed before 006 ran).
-  // 015 (the login lock) and 016 to 024 (which rely on it) are tested on their own at the end.
-  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && !f.startsWith('015') && !f.startsWith('016') && !f.startsWith('017') && !f.startsWith('018') && !f.startsWith('019') && !f.startsWith('020') && !f.startsWith('021') && !f.startsWith('022') && !f.startsWith('023') && !f.startsWith('024')).sort()
+  // 015 (the login lock) and 016 to 025 (which rely on it) are tested on their own at the end.
+  const all = fs.readdirSync(dir).filter((f) => /^0\d\d_.*\.sql$/.test(f) && f < '015').sort()
   const order = ['schema.sql', ...all.filter((f) => f < '006'), ...all.filter((f) => f.startsWith('007')), ...all.filter((f) => f >= '006' && !f.startsWith('007'))]
   for (const f of order) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+  return db
+}
+
+beforeAll(async () => {
+  db = await newDatabase()
 }, 60000)
 
 describe('migrations', () => {
@@ -2012,5 +2023,514 @@ describe('024: new HOME and MONEY categories, found by id so renames never break
     for (const r of again.filter((r) => !r.section.startsWith('4 '))) {
       expect(['ok', 'already Pharmacy'], `${r.section} · ${r.planned}`).toContain(r.status)
     }
+  })
+})
+
+describe('025: data fix for the SHOP purchase at Action on 17/10/2026', () => {
+  const file = '025_action_17_10_fix.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const MEMBER = '2d8a40ba-d751-4c22-9662-df3b758a4749'
+  const TRIP = '1d47dd08-f03a-4df8-a214-ac00f671d54f'
+  // The new MONEY sub-categories: fixed ids, the same in 025 and in
+  // docs/plan-oct-2026.md (9E).
+  const NEW = {
+    accessories: 'b13b4e6b-a8d6-4e03-8ca1-0d775c8c2d7e',
+    homeTextiles: 'f924edef-bf90-477d-8303-ddc4a2b27391',
+    homeDecor: '3472a299-73f6-4249-bee4-a5469d1c807a',
+    petAccessories: 'd0c05f29-1418-485f-9433-b4b0e97c2423',
+  }
+  // Live MONEY ids (tmp-export, 24/10/2026).
+  const M = {
+    groceries: '61f92237-3392-4f71-aca8-4dbb1df9b256',
+    other: '6d9d08f2-c8a7-4f40-bf88-9e5de1b44449',
+    pharmacy: '8fbe343f-6fd9-4c58-874b-d9bd809be461',
+    beauty: '4eb77042-660a-41e9-a1b6-cd2057605256',
+    toiletries: '01a993f2-d9af-4881-bc8e-1df5af027000',
+    shopping: '654a80a3-2e6f-4ada-b214-0486d91d869c',
+    clothing: '732af8e0-924c-471c-b0e8-ac9286ce074e',
+    shoes: '0f7f387b-0c4a-4095-8865-59cfac4c586a',
+    homeAppliances: '199ec782-505a-4292-984e-08ae1d76469f',
+    kitchenAppliances: '4125ed9e-da65-4b76-8e35-cb1239d8093b',
+    kitchenware: 'a364fa44-7513-47ca-aabc-7c5254c0a961',
+    pets: 'ecd9a924-7f46-4991-83ce-02825c73ce42',
+    health: '06729df9-06b2-4465-955b-17d03f3fe125',
+  }
+  const HAIR = '3ff635c0-7fd1-46ff-ac49-8e408c032398'
+  const PET_TREATS = '3d924169-d334-44ee-947a-3e3a498706fc'
+
+  // The 31 lines as in Irene's export of 24/10/2026 (check-action-1-lines):
+  // [line, name, quantity, unit, paid, HOME item, its name, main, sub, 1×,
+  // stock now, expense, budget category]. A line without a HOME item was an
+  // appliance (expense only); its main / sub is the category in the line.
+  const LINES = [
+    ['e95ae4da-51f4-40f1-9e49-2058ecd0ebe3', 'big towel', 1, 'pcs', 0.69, 'e4250e5b-910e-466f-9e27-194fb1257af7', 'big towel', 'clothes', null, true, 1, '92b2b31e-5b74-44a9-a2fe-7d3e941befe4', M.shopping],
+    ['8cfce438-a1a5-438c-975e-87b42d589683', 'bonnet hair cover for sleeping', 1, 'pcs', 0.35, '68f96d81-a730-4341-8590-dd4d08f36863', 'bonnet hair cover for sleeping', 'clothes', null, true, 1, 'd7575954-3c5e-45d7-aea7-c70189ea18bc', M.shopping],
+    ['fef3d676-3ba2-4333-94de-be190232199b', 'bra', 1, 'pcs', 1.74, 'e8c07826-8ecf-4ff2-9f8e-ebc4d653b154', 'bra', 'clothes', null, false, 1, '54dda4c1-dfdc-424a-9578-0e55c2f7d4c5', M.shopping],
+    ['e9a8a655-233d-45eb-8554-262ee53dc582', 'Cat House Christmas Tree', 1, 'pcs', 1.74, 'a35c5cfd-e5df-4614-88ce-9ef2d269d228', 'Cat House Christmas Tree', 'misc', 'misc:seasonal', true, 1, 'ecb05397-a0a5-4fe3-9545-383e8a5ab49d', M.groceries],
+    ['45089ecd-9bd4-44fa-aba5-abb7e6385b7a', 'cat toy', 1, 'pcs', 0.29, 'c37b962d-19d2-4d8a-bf90-2502cb3305aa', 'cat toy', 'pet', PET_TREATS, true, 1, 'f5577c71-1527-4f8f-bf9a-f877225b4416', M.pets],
+    ['718ac5d6-5159-4bd5-88ca-44b7e02b40b0', 'Cat wet food', 8, 'pcs', 1.95, '65e4e9b1-71a6-4dee-8da1-a4df615e5421', 'Cat Wet Food', 'pet', 'pet:food', false, 104, 'f6cbb58a-f032-4563-8f4c-6c40fc00412a', M.pets],
+    ['22a8272b-731f-424f-8dc3-fb96c6c1494c', 'ceramic bowl', 1, 'pcs', 0.45, null, null, 'appliances', 'appliances:kitchenware', false, 0, '5bc262b5-8033-4a6d-a4ec-13f52659418f', M.kitchenware],
+    ['e404f138-8d15-42cb-8af8-4459fabfea5c', 'cheesy chili sauce', 1, 'btl', 0.83, '6d913041-0e82-45ba-a3fd-60ef08aeaf2b', 'cheesy chili sauce', 'pantry-staples', 'pantry-staples:sauces', false, 1, '71d29dae-8422-4f03-8f6a-0c94736f8324', M.groceries],
+    ['3e932369-d04c-4e68-a027-3446c3d5fa77', 'cleaning sponges', 1, 'pack', 0.27, 'c00bce61-acfb-47ff-87a9-5871a866239f', 'cleaning sponges', 'cleaning', 'cleaning:tools', false, 1, 'ef4be733-451a-41d3-bd8c-80d8671cbfc1', M.groceries],
+    ['e75e3734-5380-401d-bcf3-81545e2124d2', 'coffee syrup', 6, 'pcs', 1.39, 'f3556bde-425d-4bdf-b58a-cd8de81bf74c', 'coffee syrup', null, null, true, 6, '6c27e414-ff8d-46d9-86a5-f01be3b57b27', M.groceries],
+    ['49fb0cbd-89eb-4e36-9a32-a447a37eb61d', 'Dish soap', 1, 'btl', 0.47, '71009106-c8f8-4a1b-9046-e00312377410', 'Dish soap', 'cleaning', 'cleaning:dish', false, 1, '09183598-bf28-4389-a2fd-db39cbd4329b', M.groceries],
+    ['e7dacee7-5037-467e-998c-4176f70cb818', 'Dishwasher Detergent', 1, 'pack', 0.83, null, null, 'appliances', 'appliances:kitchen', false, 0, '5b04fc1c-153a-412e-960b-1465656339b0', M.kitchenAppliances],
+    ['747ed6ad-4882-469f-962b-60e3419baad7', 'eletrolytes powder', 1, 'pcs', 1.74, '4e0c3dd0-88de-4c38-9267-0f039d0005b0', 'eletrolytes powder', 'misc', null, true, 1, '1d96c083-ef57-4d5e-b380-e1da9fe6f254', M.groceries],
+    ['3d12223f-4e83-4094-8cec-22a5c2639a77', 'eye mask', 1, 'pcs', 0.35, 'c2ba9a90-6c56-4945-b0b6-7b320836f870', 'eye mask', 'personal-care', null, true, 1, 'f46ff8fe-27b7-4884-9a04-8ea35c62ca28', M.beauty],
+    ['6590160e-15f2-4614-9dc5-7bd678afba4e', 'face serum milk', 1, 'pack', 0.63, '0d2cfa7e-6dc6-4aa3-8282-15ca888ddff8', 'face serum milk', 'personal-care', 'personal-care:skin', true, 1, '1ed4614b-ff05-4d26-9f1a-d985f3d84046', M.beauty],
+    ['04be8150-492a-4813-b372-c6ebbcce109d', 'hair clip', 1, 'pcs', 0.35, 'f02fe6a2-8daf-469d-b5a9-faf893da60fb', 'hair clip', 'personal-care', null, false, 1, 'df31b3d4-b0ff-4e9b-afbc-dcc871139cb0', M.beauty],
+    ['d4a11c6a-ca81-410f-8abc-27e078af70b1', 'hair oil', 1, 'btl', 0.8, 'ea21e2e4-8ed6-43f8-b9a3-8750aa296250', 'hair oil', 'toiletries', 'toiletries:hair', false, 1, '8ad2e519-fea1-43ad-b663-2af866c1d3b3', M.toiletries],
+    ['c5a57022-370b-4e11-b0a9-6d735e83a943', 'hair water', 1, 'btl', 0.68, '5fa2c1d5-fb3c-4eec-a74f-9745aa1ef547', 'hair water', 'personal-care', HAIR, true, 1, '18dffaeb-cdf0-4f32-9c09-928be13cf7ae', M.beauty],
+    ['f2eb0500-a8c0-497c-927a-e96b282d8b08', 'hairband', 1, 'pcs', 0.41, '53cbd441-1ba1-4243-9cf5-391666296b5e', 'hairband', 'personal-care', null, true, 1, 'b3154fe2-b92f-4172-be9f-c01db9176963', M.beauty],
+    ['14e49fbc-c52b-41ef-82a5-d97fe7b9f8b3', 'incense holder', 1, 'pcs', 0.97, 'afd18a37-53de-472e-835b-4687c740d342', 'incense holder', 'household', 'household:air', true, 1, '10985ab4-80d1-43c3-807a-7d03dcee51d0', M.groceries],
+    ['fd04417a-a40d-483a-a71e-80f092d71668', 'inox sponges', 4, 'pcs', 0.19, 'cef3aefe-fd62-40d2-9c50-7e38c3d10f72', 'inox sponges', 'cleaning', 'cleaning:tools', false, 4, 'c18b5a63-298e-466c-aadd-4728812ec9c4', M.groceries],
+    ['4840f450-d4b3-4f3e-8301-376233f613a7', 'liquid measuring glass', 1, 'pcs', 1.04, null, null, 'appliances', 'appliances:kitchenware', false, 0, 'f4d618b5-bce3-40ae-8016-382375e04ebb', M.kitchenware],
+    ['48bfc064-2515-498f-9f74-ac89e495553d', 'Oven Detergent', 1, 'btl', 0.61, null, null, 'appliances', 'appliances:kitchen', false, 0, 'b0558eea-4dde-4094-a743-440cc72ab83d', M.kitchenAppliances],
+    ['17580f08-9827-45fd-8109-982607ac30d0', 'perfume', 2, 'btl', 1.79, '7e59e4f4-e044-49d6-94ad-6ec461b4aed4', 'perfume', 'personal-care', 'personal-care:perfume', false, 2, '608e5e2f-c27e-4bae-894b-c84901944b20', M.beauty],
+    ['d7a06b7b-1f6b-4a90-9f32-5b7602b895b3', 'powder set makeup', 1, 'pcs', 1.04, '5c926e35-1cdb-4902-8ab0-6917d2015384', 'powder set makeup', 'personal-care', 'personal-care:makeup', false, 1, '781effa6-4b77-4777-be8d-2d168d956bd3', M.beauty],
+    ['440bfc12-7065-4417-b08b-a1d9a9664ab6', 'shower gel', 1, 'pcs', 0.55, '3f702df8-4a06-4f6e-9bbc-c4a4fceb1800', 'shower gel', 'toiletries', 'toiletries:soap', false, 1, 'aa5b2ea8-9392-4250-a068-c34358a746ca', M.toiletries],
+    ['aaa18000-cc38-4e1a-887f-d2c4862c4557', 'small towel', 1, 'pcs', 0.24, 'd3365efa-e523-4d3c-93a3-d4fadd5218c9', 'small towel', 'clothes', null, true, 1, '8e5dff64-b8e3-4b3d-869f-f592a922a2ea', M.shopping],
+    ['ba22a5e1-7366-4007-a04a-808255524464', 'Spicy truffle sauce', 1, 'btl', 0.83, 'a987bf2f-2386-4a34-b71f-c7b8ef7ef162', 'Spicy truffle sauce', 'pantry-staples', 'pantry-staples:sauces', false, 1, 'c3806be3-0db8-4d69-a440-d37a062bdafb', M.groceries],
+    ['0f71336a-648f-44b5-a864-b3b868b1dc46', 'Toilet Paper', 10, 'pcs', 0.99, '5ffdeba2-dec6-4b70-9737-157ea4b9a34b', 'Toilet Paper', 'toiletries', 'toiletries:paper', false, 14, 'e19dada4-bfa9-4f6f-ae03-2af118de7cb6', M.toiletries],
+    ['faec2ec3-915e-4992-a901-ce13884b9003', 'toy elf Christmas', 1, 'pcs', 1.04, '8b164c9e-524f-4ed5-9fd0-1deaed235956', 'toy elf Christmas', 'misc', 'misc:seasonal', true, 1, 'a4473501-f21b-49f8-9118-0c5e1ab899cf', M.groceries],
+    ['c11feacd-2761-474c-99a1-b6cb7c7772ba', 'washing machine powder', 1, 'pcs', 1.51, 'c97a568a-2807-48f0-8de5-d671ddd048ac', 'washing machine powder', 'laundry', 'laundry:stain', false, 1, '9051246b-53be-4c8d-bcde-29c87c3060ce', M.groceries],
+  ].map(([id, name, qty, unit, paid, item, itemName, main, sub, oneTime, stock, expense, budget]) => ({ id, name, qty, unit, paid, item, itemName, main, sub, oneTime, stock, expense, budget }))
+  // HOME items bought before this purchase: their stock before it, and their minimum.
+  const BOUGHT_BEFORE = { '65e4e9b1-71a6-4dee-8da1-a4df615e5421': { before: 96, min: 24 }, '5ffdeba2-dec6-4b70-9737-157ea4b9a34b': { before: 4, min: 5 } }
+  // Not in the real purchase: discounts on two lines, so the tests see them stay.
+  const DISCOUNTS = {
+    '0f71336a-648f-44b5-a864-b3b868b1dc46': { list: 1.29, kind: 'amount', value: 0.3, coupon: 0 },
+    'e95ae4da-51f4-40f1-9e49-2058ecd0ebe3': { list: 0.99, kind: 'percent', value: 30, coupon: 0 },
+  }
+  const DURABLE = ['big towel', 'small towel', 'toy elf Christmas', 'incense holder', 'bra', 'bonnet hair cover for sleeping', 'hair clip', 'hairband', 'Cat House Christmas Tree', 'cat toy']
+  const durableLines = LINES.filter((l) => DURABLE.includes(l.name))
+  const lineNamed = (name) => LINES.find((l) => l.name === name)
+
+  let fx
+  const rows = async (text, params) => (await fx.query(text, params)).rows
+  const row = async (text, params) => (await rows(text, params))[0]
+  // The file as Irene runs it (its own begin … commit); the result of its
+  // last SELECT (the check).
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  // Inside a scenario that is rolled back afterwards: the same file without
+  // its own begin / commit (a commit would end the scenario's transaction).
+  const runInside = async () => (await fx.exec(sql.replace(/^begin;$/m, '').replace(/^commit;$/m, ''))).at(-1).rows
+  async function undone(fn) {
+    await fx.exec('begin')
+    try {
+      return await fn()
+    } finally {
+      await fx.exec('rollback')
+    }
+  }
+  async function asMember(fn) {
+    await fx.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await fx.exec('set role authenticated')
+    try {
+      return await fn()
+    } finally {
+      await fx.exec('reset role')
+    }
+  }
+  const lineRow = (check, item) => check.find((r) => r.section === '1 line' && r.item === item)
+  const statusOf = (check, section, item) => check.find((r) => r.section === section && r.item === item)?.status
+
+  // What must never change: the purchase, its money, its lines' amounts
+  // and discounts, and the stock and 1× of every HOME item that stays.
+  const untouchable = async () => ({
+    trip: await row(`select id, trip_date::text as date, total::float as total, shop_id, paid_by, source, coupon_kind, coupon_value::float as coupon_value, coupon_total::float as coupon_total, receipt_match from shopping_trips where id = $1`, [TRIP]),
+    expenses: await rows(`select id, amount::float as amount, expense_date::text as date, paid_by, shop_id, trip_id, merged_at, travel_id from expenses order by id`),
+    lines: await rows(`select id, trip_id, position, line_total::float as total, list_total::float as list, item_discount_kind, item_discount_value::float as discount, coupon_share::float as coupon, quantity::float as quantity, unit, expense_id, grocery_item_id, line_kind from shopping_trip_items order by id`),
+    stock: await rows(`select id, current_stock::float as stock, min_stock::float as min, one_time, unit, price::float as price, expiry_date::text as expiry from pantry_items where id <> all($1::uuid[]) order by id`, [durableLines.map((l) => l.item)]),
+  })
+  // Every row 025 may touch, as stored (with their update times).
+  const everything = async () => ({
+    expenses: await rows(`select * from expenses order by id`),
+    lines: await rows(`select * from shopping_trip_items order by id`),
+    entries: await rows(`select * from grocery_items order by id`),
+    items: await rows(`select * from pantry_items order by id`),
+    logs: await rows(`select * from stock_logs order by id`),
+    memory: await rows(`select * from category_memory order by id`),
+    home: await rows(`select * from inventory_categories order by id`),
+    money: await rows(`select * from expense_categories order by id`),
+    map: await rows(`select * from category_budget_map order by id`),
+    trips: await rows(`select * from shopping_trips order by id`),
+  })
+
+  beforeAll(async () => {
+    // Its own database: the MONEY categories need their live ids, and
+    // Groceries / Home & Appliances already exist (from 008) with other
+    // ids in the shared one.
+    fx = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-3])_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+      await fx.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    }
+    // The live MONEY categories (by their ids), the two mapping rows of
+    // 21/10, then 024 as it was run.
+    await fx.exec(`delete from expense_categories`)
+    for (const c of [...LIVE_MONEY_CATEGORIES.filter((c) => !c.parent_id), ...LIVE_MONEY_CATEGORIES.filter((c) => c.parent_id)]) {
+      await fx.query(`insert into expense_categories (id, name, type, parent_id) values ($1, $2, $3, $4)`, [c.id, c.name, c.parent_id ? 'sub' : 'parent', c.parent_id])
+    }
+    await fx.query(`insert into category_budget_map (id, expense_category_id) values ('pet', $1), ('health', $2)`, [M.pets, M.health])
+    await fx.exec(fs.readFileSync(path.join(dir, '024_categories.sql'), 'utf8'))
+
+    // HOME categories made by hand: Hair Water, Pet Treats & Care, and the
+    // main "clothes" (24/10, booked to Shopping).
+    await fx.exec(`
+      insert into inventory_categories (id, name, parent_id, type, sort_order) values
+        ('${HAIR}', 'Hair Water', 'personal-care', 'sub', 6),
+        ('${PET_TREATS}', 'Pet Treats & Care', 'pet', 'sub', 3),
+        ('clothes', 'clothes', null, 'parent', 20);
+      insert into category_budget_map (id, expense_category_id) values ('clothes', '${M.shopping}');
+      insert into shops (id, name) values ('aaaaaaaa-0000-4000-8000-000000000001', 'Action');
+      -- Not part of this purchase: never touched.
+      insert into pantry_items (name, unit, current_stock, category_id, subcategory_id) values ('Rice', 'pcs', 3, 'pantry-staples', 'pantry-staples:grains');
+      insert into expenses (category_id, amount, description, expense_date) values ('${M.shoes}', 3.5, 'Shoe Deodorizer', '2026-10-10');
+    `)
+
+    // The purchase, as SHOP Confirm purchase made it on 24/10 (dated
+    // 17/10): each entry in the cart is copied into its line, then
+    // marked bought.
+    await fx.query(`insert into shopping_trips (id, trip_date, total, shop_id, paid_by, source) values ($1, '2026-10-17', 26.76, 'aaaaaaaa-0000-4000-8000-000000000001', 'shared', 'shop')`, [TRIP])
+    for (const [i, l] of LINES.entries()) {
+      const before = BOUGHT_BEFORE[l.item]
+      if (l.item) {
+        await fx.query(
+          `insert into pantry_items (id, name, unit, current_stock, category_id, subcategory_id, one_time, min_stock, last_purchased_at, created_at) values ($1, $2, $3, $4, $5, $6, $7, $8, '2026-10-24T10:00:00Z', $9)`,
+          [l.item, l.itemName, l.unit, l.stock, l.main, l.sub, l.oneTime, before?.min ?? 0, before ? '2026-10-04T10:00:00Z' : '2026-10-24T10:00:00Z']
+        )
+      }
+      const entry = (
+        await row(
+          `insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, category_id, subcategory_id, in_cart, pantry_item_id, payer) values ($1, $2, $3, $4, $2, $3, $5, $6, true, $7, 'shared') returning id`,
+          [l.name, l.qty, l.unit, l.paid, l.main, l.sub, before ? l.item : null]
+        )
+      ).id
+      await fx.query(`insert into expenses (id, category_id, amount, description, paid_by, expense_date, trip_id, shop_id) values ($1, $2, $3, $4, 'shared', '2026-10-17', $5, 'aaaaaaaa-0000-4000-8000-000000000001')`, [l.expense, l.budget, l.paid, l.name, TRIP])
+      const logs = l.item ? [(await row(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, $2, $3, $4, $5, 'purchased') returning id`, [l.item, l.itemName, l.qty, l.stock, l.unit])).id] : []
+      const d = DISCOUNTS[l.id]
+      await fx.query(
+        `insert into shopping_trip_items (id, trip_id, position, grocery_item_id, grocery_snapshot, name, line_total, pantry_item_id, pantry_created, pantry_before, stock_added, expense_id, log_ids, line_kind, quantity, unit, list_total, item_discount_kind, item_discount_value, coupon_share)
+         select $1, $2, $3, g.id, to_jsonb(g), g.name, $4, $5, $6, $7, $8, $9, $10, 'shop', g.quantity, g.unit, $11, $12, $13, $14 from grocery_items g where g.id = $15`,
+        [l.id, TRIP, i + 1, l.paid, l.item, Boolean(l.item) && !before, before ? { price: null, price_qty: null, price_unit: null, payer: 'shared' } : null, l.item ? l.qty : 0, l.expense, logs, d?.list ?? null, d?.kind ?? null, d?.value ?? null, d?.coupon ?? 0, entry]
+      )
+      await fx.query(`update grocery_items set completed = true, in_cart = false, expense_id = $1, pantry_item_id = $2, trip_id = $3 where id = $4`, [l.expense, l.item, TRIP, entry])
+    }
+
+    // Remembered names as in the export.
+    await fx.exec(`
+      insert into category_memory (id, name, category_id, subcategory_id, source) values
+        ('big towel', 'big towel', 'clothes', null, 'user'),
+        ('bonnet hair cover for sleeping', 'bonnet hair cover for sleeping', 'clothes', null, 'user'),
+        ('bra', 'bra', 'clothes', null, 'user'),
+        ('cat wet food', 'Cat wet food', 'pet', 'pet:food', 'user'),
+        ('eletrolytes powder', 'eletrolytes powder', 'misc', null, 'user'),
+        ('eye mask', 'eye mask', 'personal-care', null, 'user'),
+        ('face serum milk', 'face serum milk', 'personal-care', 'personal-care:skin', 'user'),
+        ('hair clip', 'hair clip', 'personal-care', null, 'user'),
+        ('hair water', 'hair water', 'personal-care', '${HAIR}', 'user'),
+        ('hairband', 'hairband', 'personal-care', null, 'user'),
+        ('small towel', 'small towel', 'clothes', null, 'user'),
+        ('washing machine powder', 'washing machine powder', 'laundry', 'laundry:stain', 'user');
+    `)
+  }, 120000)
+
+  it('the fixture is the purchase of the export: 31 lines, 31 expenses, € 26.76', async () => {
+    expect(await row(`select count(*)::int as n, sum(amount)::float as total from expenses where trip_id = $1`, [TRIP])).toEqual({ n: 31, total: 26.76 })
+    expect((await row(`select count(*)::int as n from shopping_trip_items where trip_id = $1`, [TRIP])).n).toBe(31)
+  })
+
+  it('one transaction; no table, policy or grant; the purchase itself and its amounts are never written', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    expect(code.match(/^begin;$/gm)).toHaveLength(1)
+    expect(code.match(/^commit;$/gm)).toHaveLength(1)
+    expect(code).not.toMatch(/\b(drop|truncate|alter|create|grant|revoke|policy|anon)\b/i)
+    expect(code).not.toMatch(/\bupdate\s+shopping_trips\b/i)
+    expect(code.match(/\b(?:update|delete from|insert into)\s+\w+/gi).map((s) => s.toLowerCase().replace(/\s+/g, ' ')).sort()).toEqual(
+      [
+        'delete from category_memory',
+        'delete from inventory_categories',
+        'delete from pantry_items',
+        'delete from stock_logs',
+        'insert into category_memory',
+        'insert into expense_categories',
+        'insert into inventory_categories',
+        'update category_memory',
+        'update expense_categories',
+        'update expenses',
+        'update expenses',
+        'update grocery_items',
+        'update grocery_items',
+        'update grocery_items',
+        'update inventory_categories',
+        'update pantry_items',
+        'update pantry_items',
+        'update shopping_trip_items',
+        'update shopping_trip_items',
+        'update shopping_trip_items',
+      ].sort()
+    )
+    // No SET ever writes an amount, a date, a payer, a store, a purchase
+    // link, a quantity, a discount, stock or 1×.
+    const sets = [...code.matchAll(/\bset\b([\s\S]*?)(?:\bfrom\b|\bwhere\b)/gi)].map((m) => m[1])
+    expect(sets.length).toBeGreaterThan(10)
+    for (const s of sets) {
+      expect(s).not.toMatch(/\b(amount|expense_date|paid_by|shop_id|trip_id|merged_at|line_total|list_total|item_discount_kind|item_discount_value|coupon_share|quantity|unit|current_stock|min_stock|one_time|total|completed|in_cart)\s*=/)
+    }
+    // MONEY categories are found by id: no name of a MONEY category in what
+    // the file writes (the check reads Groceries and Home & Appliances by
+    // name, as the app does).
+    const writes = code.split(/^commit;$/m)[0]
+    expect(writes).not.toMatch(/name\s*=\s*'(Groceries|Home & Appliances|Shopping|Pets|Health|Personal Care|Other)'/)
+  })
+
+  it('the new MONEY ids are fixed: the same in 025 and in the plan', () => {
+    const plan = fs.readFileSync(path.join(dir, '..', 'docs', 'plan-oct-2026.md'), 'utf8')
+    for (const id of Object.values(NEW)) {
+      expect(sql).toContain(id)
+      expect(plan).toContain(id)
+    }
+  })
+
+  it('the remembered-name keys are what the app makes of the names (normalizeName)', () => {
+    const keys = {
+      'eletrolytes powder': 'eletrolytes powder',
+      'washing machine powder': 'washing machine powder',
+      hairband: 'hairband',
+      'bonnet hair cover for sleeping': 'bonnet hair cover for sleeping',
+      'Electrolytes Powder': 'electrolytes powder',
+      'eye mask': 'eye mask',
+      'hair oil': 'hair oil',
+      'hair water': 'hair water',
+      'coffee syrup': 'coffee syrup',
+      'Stain Remover Powder': 'stain remover powder',
+      'Dishwasher Detergent': 'dishwasher detergent',
+      'Oven Detergent': 'oven detergent',
+      'big towel': 'big towel',
+      'small towel': 'small towel',
+      'toy elf Christmas': 'toy elf christmas',
+      'incense holder': 'incense holder',
+      bra: 'bra',
+      'Satin Bonnet': 'satin bonnet',
+      'hair clip': 'hair clip',
+      Headband: 'headband',
+      'Cat House Christmas Tree': 'cat house christmas tree',
+      'cat toy': 'cat toy',
+    }
+    for (const [name, key] of Object.entries(keys)) {
+      expect(normalizeName(name), name).toBe(key)
+      expect(sql).toContain(`('${key}', `)
+    }
+  })
+
+  it('a category renamed by hand before 025 is never renamed back; one renamed after it stays too', async () => {
+    await undone(async () => {
+      await fx.query(`update expense_categories set name = 'Scarpe' where id = $1`, [M.shoes])
+      await fx.query(`update inventory_categories set name = 'Capelli' where id = $1`, [HAIR])
+      const check = await runInside()
+      expect((await row(`select name from expense_categories where id = $1`, [M.shoes])).name).toBe('Scarpe')
+      expect((await row(`select name from inventory_categories where id = $1`, [HAIR])).name).toBe('Capelli')
+      expect(statusOf(check, '4 renamed', 'MONEY Shoes & Accessories → Footwear')).toBe('left: renamed by hand')
+      expect(statusOf(check, '4 renamed', 'HOME Hair Water → Hair Care')).toBe('left: renamed by hand')
+      expect(check.filter((r) => r.section !== '4 renamed').every((r) => r.status === 'ok')).toBe(true)
+    })
+    await undone(async () => {
+      await runInside()
+      await fx.query(`update expense_categories set name = 'Shoes' where id = $1`, [M.shoes])
+      await fx.query(`update inventory_categories set name = 'Hair' where id = $1`, [HAIR])
+      await fx.query(`update expense_categories set name = 'Gatti' where id = $1`, [NEW.petAccessories])
+      const check = await runInside()
+      expect((await row(`select name from expense_categories where id = $1`, [M.shoes])).name).toBe('Shoes')
+      expect((await row(`select name from inventory_categories where id = $1`, [HAIR])).name).toBe('Hair')
+      expect((await row(`select count(*)::int as n from expense_categories where lower(name) in ('footwear', 'pet accessories & toys')`)).n).toBe(0)
+      expect(lineRow(check, 'cat toy').budget_category).toBe('Pets › Gatti')
+    })
+  })
+
+  it('a value changed by hand in the app is left alone, and the check says so', async () => {
+    await undone(async () => {
+      await fx.query(`update expenses set category_id = $1 where id = $2`, [M.other, lineNamed('bra').expense])
+      await fx.query(`update category_memory set subcategory_id = 'personal-care:makeup' where id = 'eye mask'`)
+      const check = await runInside()
+      expect((await row(`select category_id from expenses where id = $1`, [lineNamed('bra').expense])).category_id).toBe(M.other)
+      expect(await row(`select category_id, subcategory_id from category_memory where id = 'eye mask'`)).toEqual({ category_id: 'personal-care', subcategory_id: 'personal-care:makeup' })
+      expect(lineRow(check, 'bra').status).toBe('CHECK: budget category')
+      expect(statusOf(check, '6 remembered names', 'eye mask')).toBe('CHECK: remembered differently (left alone)')
+      // Everything else is still fixed.
+      expect(lineRow(check, 'Satin Bonnet').status).toBe('ok')
+    })
+  })
+
+  it('"clothes" is kept while something still uses it, and the check says what', async () => {
+    await undone(async () => {
+      await fx.query(`insert into pantry_items (name, unit, current_stock, category_id) values ('Scarf', 'pcs', 1, 'clothes')`)
+      const check = await runInside()
+      expect((await row(`select count(*)::int as n from inventory_categories where id = 'clothes'`)).n).toBe(1)
+      expect((await row(`select expense_category_id from category_budget_map where id = 'clothes'`)).expense_category_id).toBe(M.shopping)
+      expect(statusOf(check, '5 clothes', 'HOME category "clothes" deleted')).toBe('kept: still used (see the next row)')
+      expect(check.find((r) => r.item === 'nothing points to "clothes"')).toMatchObject({ value: 'HOME items 1, budget mapping 1', status: 'CHECK: still used' })
+      // The purchase is fixed all the same.
+      expect(check.filter((r) => r.section === '1 line').every((r) => r.status === 'ok')).toBe(true)
+    })
+  })
+
+  it('a HOME item "Shoe Deodorizer" leaves HOME like the other durables (its expense stays); not while it is in a cart', async () => {
+    const tigota = 'bbbbbbbb-0000-4000-8000-000000000002'
+    const setUp = async (inCart) => {
+      const item = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Shoe deodorizer', 'pcs', 1, 'household') returning id`)).id
+      const entry = (await row(`insert into grocery_items (name, quantity, unit, price, category_id, completed, pantry_item_id) values ('Shoe deodorizer', 1, 'pcs', 3.5, 'household', true, $1) returning id`, [item])).id
+      const expense = (await row(`select id from expenses where description = 'Shoe Deodorizer'`)).id
+      const log = (await row(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, 'Shoe deodorizer', 1, 1, 'pcs', 'purchased') returning id`, [item])).id
+      await fx.query(`insert into shopping_trips (id, trip_date, total, source) values ($1, '2026-10-10', 3.5, 'shop')`, [tigota])
+      await fx.query(`update expenses set trip_id = $1 where id = $2`, [tigota, expense])
+      await fx.query(`update grocery_items set trip_id = $1, expense_id = $2 where id = $3`, [tigota, expense, entry])
+      await fx.query(
+        `insert into shopping_trip_items (trip_id, position, grocery_item_id, grocery_snapshot, name, line_total, pantry_item_id, pantry_created, stock_added, expense_id, log_ids) select $1, 1, g.id, to_jsonb(g), g.name, 3.5, $2, true, 1, $3, $4 from grocery_items g where g.id = $5`,
+        [tigota, item, expense, [log], entry]
+      )
+      if (inCart) await fx.query(`insert into grocery_items (name, quantity, unit, in_cart, pantry_item_id) values ('Shoe deodorizer', 1, 'pcs', true, $1)`, [item])
+      return { item, entry, expense }
+    }
+    await undone(async () => {
+      const { item, entry, expense } = await setUp(false)
+      const check = await runInside()
+      expect((await row(`select count(*)::int as n from pantry_items where id = $1`, [item])).n).toBe(0)
+      expect((await row(`select count(*)::int as n from stock_logs where item_id = $1 or item_name = 'Shoe deodorizer'`, [item])).n).toBe(0)
+      expect(await row(`select pantry_item_id, pantry_created, stock_added::float as added, log_ids from shopping_trip_items where trip_id = $1`, [tigota])).toEqual({ pantry_item_id: null, pantry_created: false, added: 0, log_ids: [] })
+      expect((await row(`select pantry_item_id from grocery_items where id = $1`, [entry])).pantry_item_id).toBe(null)
+      expect(await row(`select amount::float as amount, category_id from expenses where id = $1`, [expense])).toEqual({ amount: 3.5, category_id: M.shoes })
+      expect(statusOf(check, '7 Shoe Deodorizer', 'no HOME item "Shoe Deodorizer"')).toBe('ok')
+      // Reopening that purchase works and puts nothing into HOME.
+      expect((await asMember(() => row(`select reopen_shopping_trip($1) as n`, [tigota]))).n).toBe(1)
+      expect((await row(`select count(*)::int as n from pantry_items where lower(name) = 'shoe deodorizer'`)).n).toBe(0)
+    })
+    await undone(async () => {
+      const { item } = await setUp(true)
+      const check = await runInside()
+      expect((await row(`select count(*)::int as n from pantry_items where id = $1`, [item])).n).toBe(1)
+      expect(check.find((r) => r.section === '7 Shoe Deodorizer')).toMatchObject({ value: 'Shoe deodorizer (in a cart)', status: 'CHECK: kept (see value)' })
+    })
+  })
+
+  it('the real run: every check is ok; amounts, discounts, the purchase and the stock that stays are untouched', async () => {
+    const before = await untouchable()
+    const check = await run()
+    expect(check.length).toBeLessThan(100)
+    expect(check.filter((r) => r.section === '1 line')).toHaveLength(31)
+    for (const r of check) expect(r.status, `${r.section} · ${r.item}: ${r.value ?? ''}`).toBe('ok')
+    expect(await untouchable()).toEqual(before)
+
+    // The lines, as the check shows them.
+    expect(lineRow(check, 'Electrolytes Powder')).toMatchObject({ line_name: 'Electrolytes Powder', expense_description: 'Electrolytes Powder', home_item: 'Electrolytes Powder', budget_category: 'Health › Pharmacy', mapping_button: 'no change' })
+    expect(lineRow(check, 'hair oil')).toMatchObject({ home_category: 'Beauty Care › Hair Care', budget_category: 'Personal Care › Beauty & Perfume', mapping_button: 'no change' })
+    expect(lineRow(check, 'Dishwasher Detergent')).toMatchObject({ home_item: 'none', home_category: 'line: Cleaning Supplies › Dishwashing', budget_category: 'Groceries', mapping_button: 'no change' })
+    expect(lineRow(check, 'big towel')).toMatchObject({ home_item: 'none', home_category: 'line: Home & Appliances › Home Textiles', budget_category: 'Home & Appliances › Home Textiles', mapping_button: 'no change' })
+    expect(lineRow(check, 'incense holder')).toMatchObject({ budget_category: 'Home & Appliances › Home Decor', mapping_button: 'no change' })
+    expect(lineRow(check, 'Satin Bonnet')).toMatchObject({ home_item: 'none', home_category: 'line: no category', budget_category: 'Shopping › Accessories', mapping_button: 'would move to Groceries (known: app fix in a later round)' })
+    expect(lineRow(check, 'cat toy')).toMatchObject({ budget_category: 'Pets › Pet Accessories & Toys' })
+    expect(lineRow(check, 'ceramic bowl')).toMatchObject({ value: 'not changed by 025', budget_category: 'Home & Appliances › Kitchenware & Utensils', mapping_button: 'no change' })
+    expect(check.find((r) => r.item === 'MONEY Shoes & Accessories → Footwear').value).toBe('Shopping › Footwear')
+    expect(check.find((r) => r.item === 'HOME Home & Appliances › Home Textiles').value).toBe('Home & Appliances › Home Textiles · books to Home & Appliances › Home Textiles')
+
+    // The durable items are gone with their history; their expenses stay,
+    // with the new categories; their lines and entries no longer point at them.
+    for (const l of durableLines) {
+      expect((await row(`select count(*)::int as n from pantry_items where id = $1`, [l.item])).n, l.name).toBe(0)
+      expect((await row(`select count(*)::int as n from stock_logs where item_id = $1 or item_name = $2`, [l.item, l.itemName])).n, l.name).toBe(0)
+      expect(await row(`select pantry_item_id, pantry_created, pantry_before, stock_added::float as added, log_ids, grocery_snapshot->'pantry_item_id' as snap from shopping_trip_items where id = $1`, [l.id])).toEqual({ pantry_item_id: null, pantry_created: false, pantry_before: null, added: 0, log_ids: [], snap: null })
+      expect((await row(`select g.pantry_item_id from grocery_items g join shopping_trip_items l on l.grocery_item_id = g.id where l.id = $1`, [l.id])).pantry_item_id).toBe(null)
+    }
+    const budgets = Object.fromEntries((await rows(`select description, category_id from expenses where trip_id = $1`, [TRIP])).map((e) => [e.description, e.category_id]))
+    expect(budgets).toMatchObject({
+      'big towel': NEW.homeTextiles,
+      'small towel': NEW.homeTextiles,
+      'toy elf Christmas': NEW.homeDecor,
+      'incense holder': NEW.homeDecor,
+      bra: M.clothing,
+      'Satin Bonnet': NEW.accessories,
+      'hair clip': NEW.accessories,
+      Headband: NEW.accessories,
+      'Cat House Christmas Tree': NEW.petAccessories,
+      'cat toy': NEW.petAccessories,
+      'Electrolytes Powder': M.pharmacy,
+      'hair oil': M.beauty,
+      'eye mask': M.beauty,
+      'Dishwasher Detergent': M.groceries,
+      'Oven Detergent': M.groceries,
+      'Stain Remover Powder': M.groceries,
+      'ceramic bowl': M.kitchenware,
+    })
+    expect(await rows(`select name, category_id, subcategory_id from pantry_items where id = any($1::uuid[]) order by lower(name)`, [['4e0c3dd0-88de-4c38-9267-0f039d0005b0', 'c97a568a-2807-48f0-8de5-d671ddd048ac', 'f3556bde-425d-4bdf-b58a-cd8de81bf74c', 'ea21e2e4-8ed6-43f8-b9a3-8750aa296250', 'c2ba9a90-6c56-4945-b0b6-7b320836f870']])).toEqual([
+      { name: 'coffee syrup', category_id: 'beverages', subcategory_id: 'beverages:coffee-tea' },
+      { name: 'Electrolytes Powder', category_id: 'health', subcategory_id: 'health:vitamins' },
+      { name: 'eye mask', category_id: 'personal-care', subcategory_id: 'personal-care:skin' },
+      { name: 'hair oil', category_id: 'personal-care', subcategory_id: HAIR },
+      { name: 'Stain Remover Powder', category_id: 'laundry', subcategory_id: 'laundry:stain' },
+    ])
+    expect((await row(`select count(*)::int as n from inventory_categories where id = 'clothes'`)).n).toBe(0)
+    expect((await row(`select count(*)::int as n from category_budget_map where id = 'clothes'`)).n).toBe(0)
+    expect(await rows(`select id, name, category_id, subcategory_id, expense_category_id, source from category_memory where id in ('big towel', 'bra', 'satin bonnet', 'cat wet food') order by id`)).toEqual([
+      { id: 'big towel', name: 'big towel', category_id: 'appliances', subcategory_id: 'appliances:textiles', expense_category_id: NEW.homeTextiles, source: 'user' },
+      { id: 'bra', name: 'bra', category_id: null, subcategory_id: null, expense_category_id: M.clothing, source: 'user' },
+      { id: 'cat wet food', name: 'Cat wet food', category_id: 'pet', subcategory_id: 'pet:food', expense_category_id: null, source: 'user' },
+      { id: 'satin bonnet', name: 'Satin Bonnet', category_id: null, subcategory_id: null, expense_category_id: NEW.accessories, source: 'user' },
+    ])
+    expect((await row(`select count(*)::int as n from expenses where description = 'Shoe Deodorizer' and category_id = $1`, [M.shoes])).n).toBe(1)
+  })
+
+  it('"Apply the mapping to past purchases" (the app\'s own code) moves none of the 31 expenses, except the 6 Shopping / Pets durables', async () => {
+    const ctx = {
+      expenseCategories: await rows(`select id, name, parent_id from expense_categories`),
+      inventoryCategories: await rows(`select id, name, parent_id from inventory_categories`),
+      mapRows: await rows(`select id, expense_category_id from category_budget_map`),
+    }
+    const tripLines = await rows(`select id, expense_id, grocery_snapshot, line_kind from shopping_trip_items where expense_id is not null`)
+    const groceries = await rows(`select id, expense_id, category_id, subcategory_id from grocery_items where expense_id is not null`)
+    const byExpense = purchasedItemsByExpense({ groceries, tripLines })
+    const expenses = await rows(`select id, category_id, amount::float as amount, description from expenses where trip_id = $1`, [TRIP])
+    const { changes } = pastPurchaseChanges(expenses, (id) => byExpense.get(id) ?? null, ctx)
+    expect(changes.map((c) => [c.expense.description, c.to]).sort()).toEqual(
+      [['bra', M.groceries], ['Satin Bonnet', M.groceries], ['hair clip', M.groceries], ['Headband', M.groceries], ['Cat House Christmas Tree', M.groceries], ['cat toy', M.groceries]].sort()
+    )
+    // The check of 025 says the same, line by line.
+    const check = (await fx.exec(sql.split(/^commit;$/m)[1])).at(-1).rows
+    const moved = check.filter((r) => r.section === '1 line' && r.mapping_button !== 'no change').map((r) => r.item)
+    expect(moved.sort()).toEqual(changes.map((c) => c.expense.description).sort())
+  })
+
+  it('run again: nothing changes (not even an update time), and every check is still ok', async () => {
+    const after = await everything()
+    const check = await run()
+    expect(await everything()).toEqual(after)
+    for (const r of check) expect(r.status, `${r.section} · ${r.item}`).toBe('ok')
+  })
+
+  it('Reopen of the purchase still works: it deletes only what this purchase made, and puts nothing into HOME for the durables', async () => {
+    await undone(async () => {
+      const others = await rows(`select id, name, current_stock::float as stock from pantry_items where id <> all($1::uuid[]) order by id`, [LINES.map((l) => l.item).filter(Boolean)])
+      expect((await asMember(() => row(`select reopen_shopping_trip($1) as n`, [TRIP]))).n).toBe(31)
+      // Items bought before it get their stock back; items it made are
+      // deleted (as Reopen always does); nothing else changes.
+      expect(await rows(`select id, current_stock::float as stock from pantry_items where id = any($1::uuid[]) order by id`, [Object.keys(BOUGHT_BEFORE)])).toEqual(
+        Object.entries(BOUGHT_BEFORE).map(([id, b]) => ({ id, stock: b.before })).sort((a, b) => a.id.localeCompare(b.id))
+      )
+      expect((await row(`select count(*)::int as n from pantry_items where id = any($1::uuid[])`, [LINES.map((l) => l.item).filter((id) => id && !BOUGHT_BEFORE[id])])).n).toBe(0)
+      expect(others.map((p) => p.name)).toContain('Rice')
+      expect(await rows(`select id, name, current_stock::float as stock from pantry_items where id <> all($1::uuid[]) order by id`, [LINES.map((l) => l.item).filter(Boolean)])).toEqual(others)
+      // No HOME item for any durable line, and no stock history left.
+      expect((await row(`select count(*)::int as n from pantry_items where lower(name) = any($1)`, [[...DURABLE, 'Satin Bonnet', 'Headband'].map((n) => n.toLowerCase())])).n).toBe(0)
+      expect((await row(`select count(*)::int as n from stock_logs`)).n).toBe(0)
+      // Its expenses are gone (Reopen undoes the purchase); the store's other expense stays.
+      expect((await row(`select count(*)::int as n from expenses where trip_id = $1 or id = any($2::uuid[])`, [TRIP, LINES.map((l) => l.expense)])).n).toBe(0)
+      expect((await row(`select count(*)::int as n from expenses where description = 'Shoe Deodorizer'`)).n).toBe(1)
+      // Every entry is back in the cart with its fixed name and category;
+      // the durable ones point at no HOME item.
+      const cart = await rows(`select name, category_id, subcategory_id, pantry_item_id from grocery_items where in_cart and not completed order by name`)
+      expect(cart).toHaveLength(31)
+      expect(cart.find((g) => g.name === 'Satin Bonnet')).toEqual({ name: 'Satin Bonnet', category_id: null, subcategory_id: null, pantry_item_id: null })
+      expect(cart.find((g) => g.name === 'big towel')).toEqual({ name: 'big towel', category_id: 'appliances', subcategory_id: 'appliances:textiles', pantry_item_id: null })
+      expect(cart.find((g) => g.name === 'Dishwasher Detergent')).toMatchObject({ category_id: 'cleaning', subcategory_id: 'cleaning:dish' })
+      expect(cart.find((g) => g.name === 'Electrolytes Powder')).toMatchObject({ category_id: 'health', subcategory_id: 'health:vitamins' })
+    })
   })
 })

@@ -1900,6 +1900,62 @@ many names":**
   names keep being recognised; MONEY history unchanged).
 - Screen details are decided before round 6D.
 
+### 9E. Data fix 025 (Action 17/10/2026)
+
+**Irene's rule (24/10): HOME stock = consumables only (things bought
+again); durable items are MONEY expenses only.** Today the app enforces it
+only for the HOME appliances tree (`DURABLE_CATEGORY_IDS`); the app-level
+lock for other durables is a later round.
+
+`supabase/025_action_17_10_fix.sql` (not run yet; Irene runs it after
+review) fixes one SHOP purchase by hand: Action, 17/10/2026, trip
+`1d47dd08-f03a-4df8-a214-ac00f671d54f`, 31 lines, € 26.76. Data only, one
+transaction, every write by id and only while the row still holds the
+value of the 24/10 export (a second run changes nothing; a value changed
+by hand is left alone and the check says CHECK). Amounts, dates, payers,
+stores, line totals, discounts, coupon shares, quantities, the purchase
+row, stock and 1× never change.
+
+- MONEY: "Shoes & Accessories" (`0f7f387b-0c4a-4095-8865-59cfac4c586a`,
+  Shopping) → "Footwear". New subs, fixed ids:
+
+  | Category | Under | Id |
+  |---|---|---|
+  | Accessories | Shopping | `b13b4e6b-a8d6-4e03-8ca1-0d775c8c2d7e` |
+  | Home Textiles | Home & Appliances | `f924edef-bf90-477d-8303-ddc4a2b27391` |
+  | Home Decor | Home & Appliances | `3472a299-73f6-4249-bee4-a5469d1c807a` |
+  | Pet Accessories & Toys | Pets | `d0c05f29-1418-485f-9433-b4b0e97c2423` |
+
+- HOME: `appliances:textiles` "Home Textiles" and `appliances:decor` "Home
+  Decor" under Home & Appliances (no mapping rows: an appliance sub books
+  to the Home & Appliances sub with the same name, so renaming one of the
+  two MONEY subs breaks that link, as for every appliance sub). Beauty Care
+  › "Hair Water" (`3ff635c0-…`) → "Hair Care". The HOME main `clothes`
+  (24/10, mapped to Shopping) is deleted when nothing uses it any more.
+- Items: eletrolytes powder → "Electrolytes Powder" (Health & Medicine ›
+  Vitamins & Supplements, budget Health › Pharmacy); eye mask → Beauty Care
+  › Skincare; hair oil → Beauty Care › Hair Care (budget Personal Care ›
+  Beauty & Perfume); coffee syrup → Beverages › Coffee & Tea; washing
+  machine powder → "Stain Remover Powder". Dishwasher / Oven Detergent:
+  budget Groceries, line category Cleaning Supplies › Dishwashing /
+  Surface Cleaners (Irene adds the HOME items by hand).
+- Durables leave HOME (item, its history and its links deleted; line made
+  expense-only like an appliance line; expense kept): big / small towel
+  (Home Textiles), toy elf Christmas, incense holder (Home Decor), bra
+  (Shopping › Clothing), Satin Bonnet, hair clip, Headband (Shopping ›
+  Accessories), Cat House Christmas Tree, cat toy (Pets › Pet Accessories
+  & Toys), and a HOME item "Shoe Deodorizer" if there is one.
+- Remembered names: 4 old keys forgotten, 18 names set (source `user`).
+- **Open for the next round:** "Apply the mapping to past purchases" still
+  proposes Groceries for the six Shopping / Pets durables (bra, Satin
+  Bonnet, hair clip, Headband, Cat House Christmas Tree, cat toy): their
+  lines have no HOME category, and a SHOP line without one defaults to
+  Groceries (`budgetMap.budgetCategoryFor`). No data can fix that; until
+  the app does, don't apply the mapping (or press Undo).
+
+Tests: `supabase/migrations.test.js` block "025" (own PGlite database with
+the live MONEY ids and a fixture of the 31 lines).
+
 ---
 
 ## 10. Risks and decisions
