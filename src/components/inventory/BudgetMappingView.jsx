@@ -21,7 +21,9 @@ import { cn } from '../../lib/cn'
 // (Groceries; appliances under Home & Appliances). A sub-category follows
 // its main category unless it gets its own. Changing it only affects
 // future purchases; past ones change only with "Apply the mapping to past
-// purchases", after a preview.
+// purchases", after a preview. A sub-category that follows its main shows
+// "Same as <main>" and, in grey, the budget category it really books to;
+// grey = inherited, white = chosen for that row.
 export function BudgetMappingView({ parents, subsByParent }) {
   const flow = useFlow()
   const { categories: expenseCategories } = useExpenseCategories()
@@ -60,9 +62,10 @@ export function BudgetMappingView({ parents, subsByParent }) {
   const picker = (category, parentName = null) => {
     const own = flow.mapRows.find((r) => r.id === category.id && byId.has(r.expense_category_id))?.expense_category_id ?? ''
     const { target, source } = effectiveBudget(category, ctx)
-    const fallback = source === 'own' ? null : parentName && source === 'main' ? `Same as ${parentName}: ${nameOf(target)}` : `Default: ${nameOf(target)}`
-    const ownFallback = source === 'own' ? (category.parent_id ? `Same as ${parentName}` : 'Default (as before)') : fallback
-    // The default (nothing chosen) stays the first option on the left.
+    // A sub-category's first option is always "Same as <its main>"; when it has
+    // no choice of its own, the main and sub it really books to show in grey.
+    const emptyLabel = category.parent_id ? `Same as ${parentName}` : source === 'own' ? 'Default (as before)' : `Default: ${nameOf(target)}`
+    const inheritedFrom = category.parent_id && source !== 'own' ? inheritedNames(byId, target) : null
     return (
       <MoneyCategorySelect
         value={own}
@@ -70,7 +73,8 @@ export function BudgetMappingView({ parents, subsByParent }) {
         mainCategories={tree.mainCategories}
         subsOf={tree.subsOf}
         label={`Budget category for ${category.name}`}
-        emptyLabel={ownFallback}
+        emptyLabel={emptyLabel}
+        inherited={inheritedFrom}
         selectClassName={cn('text-xs py-2', !own && 'text-[var(--color-text-muted)]')}
       />
     )
@@ -124,7 +128,10 @@ export function BudgetMappingView({ parents, subsByParent }) {
               {subsOpen &&
                 subs.map((sub) => (
                   <div key={sub.id} className="space-y-1 pl-5">
-                    <span className="block text-[11px] text-[var(--color-text-soft)] truncate">{sub.name}</span>
+                    <div className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                      <span className="text-[var(--color-text-soft)]">{sub.name}</span>
+                      {!flow.mapRows.some((r) => r.id === sub.id && byId.has(r.expense_category_id)) && <span className="text-[var(--color-text-muted)]">Same as {p.name}</span>}
+                    </div>
                     {picker(sub, p.name)}
                   </div>
                 ))}
@@ -146,6 +153,15 @@ export function BudgetMappingView({ parents, subsByParent }) {
       {preview && <PastPurchasesPreview preview={preview} nameOf={nameOf} onClose={() => setPreview(null)} />}
     </div>
   )
+}
+
+// The main and sub budget category a follower books to, by name, for the grey
+// text: { mainName, subName } (subName null when it books to a main only).
+function inheritedNames(byId, targetId) {
+  const c = byId.get(targetId)
+  if (!c) return { mainName: 'No budget category', subName: null }
+  const parent = c.parent_id ? byId.get(c.parent_id) : null
+  return parent ? { mainName: parent.name, subName: c.name } : { mainName: c.name, subName: null }
 }
 
 function PastPurchasesPreview({ preview, nameOf, onClose }) {

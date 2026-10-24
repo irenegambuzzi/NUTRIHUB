@@ -105,4 +105,17 @@ describe('MoneyCategorySelect: main | sub, like HOME item category', () => {
     render(<Form />)
     expect(screen.queryByRole('button')).toBeNull()
   })
+
+  it('inherited: grey names over both selects, right one disabled, text hidden even with a text colour class; a chosen value wins', () => {
+    const inherited = { mainName: 'Trips & Holidays', subName: null }
+    render(<Form inherited={inherited} selectClassName="text-xs text-[var(--color-text-muted)]" />)
+    expect(document.querySelector('[data-inherited="main"]').textContent).toBe('Trips & Holidays')
+    expect(document.querySelector('[data-inherited="sub"]').textContent).toBe('No sub-category')
+    expect(sub().disabled).toBe(true)
+    expect(main().className).toContain('text-transparent')
+    fireEvent.change(main(), { target: { value: 'trips' } })
+    expect(document.querySelector('[data-inherited]')).toBeNull()
+    expect(sub().disabled).toBe(false)
+    expect(main().className).not.toContain('text-transparent')
+  })
 })

@@ -1764,6 +1764,77 @@ edit expense / income.
 5. MONEY → Manage: Trips & Holidays has Move and Delete greyed, Rename
    works, the hint is under it; its subs have all buttons.
 
+### As built in round 6C3 (24/10/2026) — one display fix in HOME → Categories
+
+No SQL, nothing in the database changes, no mapping row is added or
+changed: what is saved when a category is picked is exactly as before.
+
+**The rule for the whole screen: grey = inherited / default, white =
+chosen for this row.** A sub-category with no mapping row of its own (it
+follows its main) used to show "Same as Beauty Care: Personal Care › Beauty
+& P…" (cut off) on the left and a grey "No sub-category" on the right, which
+was wrong: Perfume really books to Personal Care › Beauty & Perfume. Now:
+
+1. A small grey label "Same as <main HOME name>" next to the sub-category
+   name (it wraps under it on a narrow phone). It uses the current name of
+   the main, so a rename shows at once.
+2. Left select: the inherited MONEY main in grey ("Personal Care").
+3. Right select: the inherited MONEY sub in grey ("Beauty & Perfume"), or
+   grey "No sub-category" only when the inherited value has no sub.
+4. The right select is disabled while the row is inherited. Picking a real
+   category in the left select makes the row its own choice (white), and
+   the right select is enabled, as before.
+5. The first option of the left list stays "Same as <main HOME name>"
+   (before it read "Same as X: Y"); choosing it removes the row's own
+   mapping and the row goes back to grey. The list is otherwise unchanged
+   (mains A–Z, "Other" last).
+6. The grey values are computed from the main's mapping on every render
+   (`budgetMap.effectiveBudget`), so changing the main updates every
+   inherited sub row at once, with nothing saved per row.
+7. Rows with their own mapping (Household Supplies › Car Care → Car /
+   Vehicle) are white, exactly as before. Main rows are unchanged
+   ("Default: Groceries" while nothing is chosen). Subs under a main with
+   no mapping show label "Same as Household Supplies", grey "Groceries",
+   grey "No sub-category".
+
+**How (phone first).** A native select can only show its selected option,
+so `ui/MoneyCategorySelect.jsx` has a new prop `inherited = { mainName,
+subName }`: while nothing is chosen, each select's own text is made
+transparent and the grey name is drawn on top (`pointer-events-none`, so a
+tap still opens the select; up to two lines, so nothing is cut off at 375
+px; select height stays `min-h-9`, ≥ 36 px). The dropdown list keeps its
+normal text colour. The text-transparent class is applied after the
+caller's `selectClassName` so the grey caller class cannot show through.
+`inventory/BudgetMappingView.jsx` passes `inherited` only for sub rows
+that follow their main (`effectiveBudget` source is not `own`) and shows
+the label. No other screen passes `inherited`, so they are unchanged.
+
+**Deviation.** None, apart from the label sitting on the sub-category's
+name line instead of above the selects (it saves a line per row).
+
+**Tests:** 1211 → 1219 (88 → 89 files). New
+`inventory/budgetMappingView.render.test.jsx` (inherited row: label, grey
+main and sub, right select disabled, first option; grey "No sub-category";
+default main; own mapping stays white and enabled; "Same as <main>" removes
+the mapping and goes grey; picking a category saves for that row only; main
+change updates inherited rows; rename shows the new name) and one case in
+`ui/moneyCategorySelect.render.test.jsx`.
+
+### iPhone checklist for round 6C3
+
+1. HOME → Categories → Beauty Care → Sub-categories → Perfume: label "Same
+   as Beauty Care"; grey "Personal Care" and grey "Beauty & Perfume"; the
+   right select does not open.
+2. Health & Medicine subs: grey "Health" and grey "Pharmacy" (or the
+   sub the main is mapped to).
+3. Household Supplies › Car Care → "Car / Vehicle": white, right select
+   enabled. Open the left list: "Same as Household Supplies" is first;
+   choose it: the row turns grey.
+4. Change the main's budget category: the grey values of its subs change
+   at once.
+5. Rename the HOME main (Manage categories): the label shows the new name.
+6. No text cut off, no sideways scroll at 375 px.
+
 ## 9D. Decided 21–22/10 for later rounds
 
 **Trips (MONEY main).** The MONEY main is now "Trips & Holidays" (renamed
@@ -1793,19 +1864,27 @@ subs (Restaurant / Bar / Groceries → Food & Drinks, Fuel / Parking →
 Transport, Cinema & Events → Activities…). Details are decided in round 7.
 Still open: trips must not overlap (point 13).
 
-**OPEN — to discuss before round 7 (added in round 6C2):**
+**DECISION (Irene, 22/10) — new expenses in three categories (was open
+point (a)):** A NEW expense in Housing & Utilities, Subscription or Savings &
+Investments is NEVER put into a trip automatically, even when it is typed
+while a trip is active or its date is inside the trip period. Edge cases
+still to discuss in round 7: adding such an expense to the trip by hand
+(for example a hotel booked by mistake under Housing & Utilities); a trip
+expense whose category is later changed to one of these three.
 
-- (a) Today's plan: every NEW expense dated inside an active trip goes
-  into the trip automatically, including rent; the tick-list exclusion
-  (Housing & Utilities, Subscription, Savings & Investments) only applies
-  to expenses that already existed when the trip is started or
-  lengthened. Open: should new expenses in those categories typed during
-  a trip also stay out automatically?
+**OPEN — to discuss before round 7:**
+
 - (b) Since round 6C2, the first MONEY keyword chip auto-fills the budget
   category. Outside any trip, everyday words such as "taxi" / "uber"
   therefore auto-fill Trips & Holidays › Transport. Open: outside an
   active or upcoming trip, should Trips sub-categories only be offered as
   a chip and not auto-filled?
+  Irene's wish: while trip mode is active, the app should remember every
+  category choice made during earlier trips. Note: today `category_memory`
+  keeps ONE category per name, so a later everyday choice (for example
+  "Taxi" → another category in Modena) overwrites the trip choice; round 7
+  may need a separate memory for trips. To be discussed before the round 7
+  prompt.
 
 **Round 6D (before round 7) replaces the group feature with "one item,
 many names":**
