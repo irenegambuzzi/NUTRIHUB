@@ -18,8 +18,9 @@ import { TRIPS_CATEGORY_ID, WORK_CATEGORY_ID } from './constants'
 //
 // Each rule: [main category id, sub-category id (or null), keywords, options].
 // options.priority: a purpose word (what the money was for) that beats
-// every other word, 1 first. A rule with no category only hides the words
-// inside its phrases (see lib/categoryGuess.js).
+// every other word, 1 first. options.notAlone: its words count only next
+// to other words, never as the whole name. A rule with no category only
+// hides the words inside its phrases (see lib/categoryGuess.js).
 
 // ── Existing MONEY categories (ids from the live database, 21/10/2026) ──
 const TRIPS = TRIPS_CATEGORY_ID // Trips & Holidays (was "Holiday"; may be renamed again)
@@ -111,8 +112,11 @@ export const BUDGET_RULES = [
   // baby, suami, istri, marito, moglie. Never a real person's name here.
   [N.familySupport, null, 'mamma|madre|papa|padre|ibu|bapak|ayah|sorella|fratello|adik|kakak|nipote|nipoti|keponakan|suocera|suocero|mertua|nonno|nonna|nenek|kakek|zio|zia|om|tante|cugino|cugina|sepupu', { priority: 1 }],
   // "workout" is another word and doesn't match; "Microsoft Office" is
-  // Software & Apps (its longer phrase hides "office").
-  [WORK, null, 'work|working|kerja|lavoro|ufficio|office', { priority: 2 }],
+  // Software & Apps (its longer phrase hides "office"), and so is "Office"
+  // as the whole name ("Office 365": numbers are dropped). `notAlone`:
+  // "office" is Work only next to other words ("Office Chair").
+  [WORK, null, 'work|working|kerja|lavoro|ufficio', { priority: 2 }],
+  [WORK, null, 'office', { priority: 2, notAlone: true }],
   [SHOPPING, GIFTS, 'gift|regalo|regali|kado|hadiah', { priority: 3 }],
   // Names with a purpose word that mean something else: these phrases
   // only hide the word inside them (no suggestion of their own).
@@ -143,7 +147,7 @@ export const BUDGET_RULES = [
 
   // ── Subscription ────────────────────────────────────────────────
   [SUBSCRIPTION, N.streaming, 'netflix|disney plus|prime video|amazon prime|spotify|apple music|youtube premium|dazn|now tv|paramount plus|apple tv|crunchyroll|vidio|iqiyi|wetv|tidal|deezer|audible', { weak: 'sky|disney|viu' }],
-  [SUBSCRIPTION, N.softwareApps, 'microsoft 365|microsoft office|adobe|canva|chatgpt|claude pro|notion|duolingo|nordvpn|vpn|1password|app store|apple one|software'],
+  [SUBSCRIPTION, N.softwareApps, 'microsoft 365|microsoft office|adobe|canva|chatgpt|claude pro|notion|duolingo|nordvpn|vpn|1password|app store|apple one|software', { weak: 'office' }],
   [SUBSCRIPTION, CLOUD_STORAGE, 'icloud|google one|google drive|dropbox|onedrive'],
   [SUBSCRIPTION, MEMBERSHIPS, 'gym|palestra|abbonamento palestra|membership|quota associativa|tessera'],
 

@@ -270,7 +270,7 @@ export const CATEGORY_RULES = [
   [
     'cleaning',
     'cleaning:tools',
-    'sponge|spugna|spugne|spons|cloth|panno|panni|panno microfibra|microfiber cloth|lap|kain lap|pel lantai|kain pel|rubber gloves|guanti in gomma|sarung tangan karet|scrubber|paglietta|spazzolone|brush|swiffer|vileda|scotch brite',
+    'sponge|spugna|spugne|spons|cloth|panno|panni|panno microfibra|microfiber cloth|lap|kain lap|kain pel|panni swiffer|refill|ricarica|ricambio mocio|ricambi mocio|ricambi|rubber gloves|guanti in gomma|sarung tangan karet|scrubber|paglietta|brush|scotch brite',
     { weak: 'pel' },
   ],
   [
@@ -383,8 +383,8 @@ export const CATEGORY_RULES = [
   [
     'household',
     'household:batteries',
-    'battery|batteries|batterie|batteria|pile|baterai|batre|light bulb|lampadina|lampadine|bohlam|led bulb|lampadina led|duracell|energizer|varta|alkaline|abc baterai|panasonic batteries|philips lampadina|osram|candle|candele|candela|lilin|matches|fiammiferi|korek api|lighter|accendino|accendini|adapter',
-    { weak: 'pile|alkaline|adapter' },
+    'battery|batteries|batterie|batteria|pile|baterai|batre|light bulb|lampadina|lampadine|bohlam|led bulb|lampadina led|duracell|energizer|varta|alkaline|abc baterai|panasonic batteries|philips lampadina|osram|candle|candele|candela|lilin|matches|fiammiferi|korek api|lighter|accendino|accendini',
+    { weak: 'pile|alkaline' },
   ],
   [
     'household',
@@ -464,9 +464,14 @@ export const CATEGORY_RULES = [
   ['deli', 'deli:ready', 'poke|poke bowl|acai bowl|buddha bowl'],
   ['produce', 'produce:vegetables', 'fiori di zucca|zucchini flowers'],
   ['pantry-staples', 'pantry-staples:spices', 'table salt'],
-  // Bulbs and lamps share words: "Lampada LED" can be either, so it gets
-  // no guess (the same phrase in both rules makes it unclear).
-  ['household', 'household:batteries', 'lampada led|lampu led'],
+  // "Lampu LED" is a bulb. "Lampu", "lampada", "lamp" and "Lampada LED"
+  // alone can be a bulb or a lamp: no guess (only lamp phrases are decor).
+  ['household', 'household:batteries', 'lampu led'],
+  ['pantry-staples', 'pantry-staples:spices', 'bunga lawang'],
+  ['snacks', null, 'party mix|party pack'],
+  // A water filter (Brita…): no guess yet, not Beverages › Water. The
+  // Fontana pet filters above are longer phrases and still win.
+  [null, null, 'water filter|water filters|filtro acqua|filtri acqua|brita'],
 
   // ── Durables (HOME main `appliances`, renamed by 026): last, so the
   // consumables above win. Never HOME stock, never 1× (lib/inventory.js
@@ -476,11 +481,11 @@ export const CATEGORY_RULES = [
   // product is ("Butter Glass Container" is a container). Rules for the
   // subs 026 adds fall back to the main until it is run.
   // Gifts & Party (`misc:gifts`, moved here by 026 with its id): first, so
-  // a gift word beats a toy word ("regalo giocattolo" is a gift). Only the
-  // gift words: party things that are used up (balloons, candles, flowers,
-  // cards, wrapping paper) get no guess until it is decided where they go.
-  ['appliances', 'misc:gifts', 'gift|regalo|regali|kado|hadiah'],
-  [null, null, 'gift wrap|carta regalo|kertas kado'],
+  // a gift word beats a toy word ("regalo giocattolo" is a gift). Party
+  // things too (Zidane, 25/10): bought for one day, never HOME stock. Food
+  // with these words wins with its own longer phrase ("fiori di zucca",
+  // "bunga lawang", "party mix").
+  ['appliances', 'misc:gifts', 'gift|regalo|regali|kado|hadiah|gift wrap|carta regalo|kertas kado|birthday card|biglietto auguri|biglietto di auguri|kartu ucapan|party|festa|party supplies|balloon|balloons|palloncino|palloncini|balon|candeline|birthday candles|lilin ulang tahun|flowers|fiori|bunga|bouquet|mazzo di fiori'],
   [
     'appliances',
     'appliances:pet',
@@ -490,7 +495,7 @@ export const CATEGORY_RULES = [
   [
     'appliances',
     'appliances:decor',
-    'decoration|decorazione|decorazioni|decorations|addobbi|ornament|dekorasi|hiasan|christmas tree|albero di natale|presepe|toy elf|statuetta|statue|soprammobile|vaso decorativo|cornice|photo frame|bingkai foto|poster|quadro|candle holder|portacandele|incense holder|portaincenso|porta incenso|incense burner|wreath|ghirlanda|fairy lights|luci di natale|string lights|lucine|wall clock|orologio da parete|jam dinding|flower pot|vaso per piante|pot bunga|annaffiatoio|watering can|lamp|lampada|lampu|desk lamp|lampada da scrivania|lampu meja|holder|lampada led|lampu led',
+    'decoration|decorazione|decorazioni|decorations|addobbi|ornament|dekorasi|hiasan|christmas tree|albero di natale|presepe|toy elf|statuetta|statue|soprammobile|vaso decorativo|cornice|photo frame|bingkai foto|poster|quadro|candle holder|portacandele|incense holder|portaincenso|porta incenso|incense burner|wreath|ghirlanda|fairy lights|luci di natale|string lights|lucine|wall clock|orologio da parete|jam dinding|flower pot|vaso per piante|pot bunga|annaffiatoio|watering can|desk lamp|table lamp|floor lamp|bedside lamp|lampada da scrivania|lampada da tavolo|lampada da terra|lampu meja|lampu tidur|lampu belajar|holder',
     { kind: 'holder' },
   ],
   [
@@ -535,7 +540,7 @@ export const CATEGORY_RULES = [
   [
     'appliances',
     'appliances:cleaning',
-    'vacuum|vacuum cleaner|aspirapolvere|aspirapolvere robot|robot vacuum|robot aspirapolvere|penyedot debu|steam mop|lavapavimenti|vaporetto|folletto|dyson|roomba|rowenta|hoover|washing machine|lavatrice|mesin cuci|dryer|asciugatrice|steam iron|ferro da stiro|setrika|ironing board|asse da stiro|meja setrika|mop|mocio|scopa|broom|sapu|bucket|secchio|ember|scopino|toilet brush|paletta|mollette bucato|clothes pegs|jepitan baju|stendibiancheria|drying rack|jemuran',
+    'vacuum|vacuum cleaner|aspirapolvere|aspirapolvere robot|robot vacuum|robot aspirapolvere|penyedot debu|steam mop|lavapavimenti|vaporetto|folletto|dyson|roomba|rowenta|hoover|washing machine|lavatrice|mesin cuci|dryer|asciugatrice|steam iron|ferro da stiro|setrika|ironing board|asse da stiro|meja setrika|mop|mocio|pel lantai|spazzolone|scopa|broom|sapu|bucket|secchio|ember|scopino|toilet brush|paletta|mollette bucato|clothes pegs|jepitan baju|stendibiancheria|drying rack|jemuran',
     { kind: 'mop|mocio|scopa|broom|bucket|secchio' },
   ],
   [
@@ -548,9 +553,9 @@ export const CATEGORY_RULES = [
   [
     'appliances',
     'appliances:electronics',
-    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico|extension cord|prolunga|ciabatta elettrica|multipresa|power strip|adattatore presa|kabel roll',
+    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico|extension cord|prolunga|ciabatta elettrica|multipresa|power strip|adapter|adaptor|adattatore|adattatore presa|kabel roll|phone case|phone cover|custodia telefono|cover telefono|cover hp|casing hp',
     { weak: 'phone|hp|tv|cable|tablet|pc' },
   ],
   // Durables with no sub-category of their own: Durables main only.
-  ['appliances', null, 'scissors|forbici|stapler|spillatrice|silicone gun|pistola silicone|pistola per silicone|screwdriver|cacciavite|hammer|martello|drill|trapano|phone case|custodia telefono|cover telefono'],
+  ['appliances', null, 'scissors|forbici|stapler|spillatrice|silicone gun|pistola silicone|pistola per silicone|screwdriver|cacciavite|hammer|martello|drill|trapano'],
 ]

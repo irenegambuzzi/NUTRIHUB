@@ -158,7 +158,7 @@ describe('guessCategory', () => {
     'snacks:savory': ['Patatine San Carlo', 'Pringles', 'Chips', 'Popcorn', 'Crackers', 'Chitato', 'Kerupuk', 'Tortilla chips'],
     'snacks:nuts': ['Mandorle', 'Noci', 'Arachidi', 'Pistacchi', 'Kacang mete', 'Datteri', 'Mixed nuts'],
     'cleaning:dish': ['Detersivo piatti', 'Pastiglie lavastoviglie', 'Finish', 'Svelto', 'Sabun cuci piring', 'Sunlight', 'Dish soap'],
-    'cleaning:tools': ['Spugne', 'Panno microfibra', 'Guanti in gomma', 'Swiffer'],
+    'cleaning:tools': ['Spugne', 'Panno microfibra', 'Guanti in gomma', 'Kain pel'],
     'cleaning:surface': ['Sgrassatore Chanteclair', 'Candeggina', 'Anticalcare', 'WC Net', 'Glass cleaner', 'Pembersih lantai', 'Ace', 'Amuchina', 'Mastro Lindo'],
     'laundry:detergent': ['Detersivo lavatrice', 'Dixan', 'Ariel pods', 'Rinso', 'So Klin', 'Laundry detergent', 'Dash'],
     'laundry:softener': ['Ammorbidente', 'Lenor', 'Molto', 'Downy', 'Fabric softener'],

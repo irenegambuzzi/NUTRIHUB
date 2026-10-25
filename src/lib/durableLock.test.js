@@ -258,7 +258,6 @@ describe('HOME keywords: the whole name decides', () => {
     ['Ciabatta elettrica', 'Durables › Electronics'],
     ['chair', 'Durables › Furniture'],
     ['Scrivania', 'Durables › Furniture'],
-    ['lamp', 'Durables › Home Decor'],
     ['Desk lamp', 'Durables › Home Decor'],
     ['Christmas tree', 'Durables › Home Decor'],
     ['Vaso per piante', 'Durables › Home Decor'],
@@ -284,7 +283,7 @@ describe('HOME keywords: the whole name decides', () => {
   })
 
   it('in doubt, no guess: two single words of different kinds, or a word that is both', () => {
-    for (const name of ['Bra formaggio', 'Lampada LED', 'Lampu LED', 'Salad bowl', 'Palloncini', 'Carta regalo', 'Gift wrap', 'Birthday card']) expect(homeGuess(name), name).toBe('—')
+    for (const name of ['Bra formaggio', 'Lampada LED', 'Salad bowl']) expect(homeGuess(name), name).toBe('—')
   })
 
   it('before 026 the new sub-categories fall back to their main: still durable, still consumable', () => {
@@ -396,7 +395,8 @@ describe('the MONEY "Add expense" row: HOME chip, budget auto-fill, lock', () =>
     ['scopa', 'Durables › Cleaning Appliances', 'Home & Appliances › Cleaning Appliances', true],
     ['prolunga', 'Durables › Electronics', 'Home & Appliances › Electronics', true],
     ['chair', 'Durables › Furniture', 'Home & Appliances › Furniture', true],
-    ['lamp', 'Durables › Home Decor', 'Home & Appliances › Home Decor', true],
+    ['Lampu meja', 'Durables › Home Decor', 'Home & Appliances › Home Decor', true],
+    ['Phone Case', 'Durables › Electronics', 'Home & Appliances › Electronics', true],
     ['Christmas tree', 'Durables › Home Decor', 'Home & Appliances › Home Decor', true],
     ['Silicone Gun', 'Durables', 'Home & Appliances', true],
     ['bra', 'Durables › Clothing', 'Shopping › Clothing', true],
@@ -479,5 +479,124 @@ describe('import (lib/inventoryBackup.js)', () => {
   it('leaves out rows whose category is durable and says how many; the rest is kept as it is', () => {
     const rows = [{ name: 'Milk', category_id: 'dairy' }, { name: 'Towel', category_id: 'appliances', subcategory_id: 'appliances:textiles' }, { name: 'Lamp', category_id: 'appliances' }, { name: 'Note', category_id: null }]
     expect(withoutDurables(rows)).toEqual({ items: [rows[0], rows[3]], skipped: 2 })
+  })
+})
+
+describe('round 9F follow-up: Zidane\'s answers to the 14 doubt words (25/10)', () => {
+  it.each([
+    // 2. Phone cases are Electronics; "case" alone no guess.
+    ['Phone Case', 'Durables › Electronics'],
+    ['Phone cover', 'Durables › Electronics'],
+    ['Custodia telefono', 'Durables › Electronics'],
+    ['Cover telefono', 'Durables › Electronics'],
+    ['Cover HP', 'Durables › Electronics'],
+    ['Casing HP', 'Durables › Electronics'],
+    // 6. Adapters.
+    ['Adapter', 'Durables › Electronics'],
+    ['Adaptor', 'Durables › Electronics'],
+    ['Adattatore', 'Durables › Electronics'],
+    ['Adattatore presa', 'Durables › Electronics'],
+    // 7. Bulbs are consumables; lamps (as phrases) are decor.
+    ['Lampu LED', 'Household Supplies › Batteries & Bulbs'],
+    ['lampadina', 'Household Supplies › Batteries & Bulbs'],
+    ['Lampadine', 'Household Supplies › Batteries & Bulbs'],
+    ['Bohlam', 'Household Supplies › Batteries & Bulbs'],
+    ['LED bulb', 'Household Supplies › Batteries & Bulbs'],
+    ['Light bulb', 'Household Supplies › Batteries & Bulbs'],
+    ['Lampadina LED', 'Household Supplies › Batteries & Bulbs'],
+    ['Lampu meja', 'Durables › Home Decor'],
+    ['Lampu tidur', 'Durables › Home Decor'],
+    ['Lampu belajar', 'Durables › Home Decor'],
+    ['Lampada da tavolo', 'Durables › Home Decor'],
+    ['Lampada da terra', 'Durables › Home Decor'],
+    ['Table lamp', 'Durables › Home Decor'],
+    ['Desk lamp', 'Durables › Home Decor'],
+    ['Floor lamp', 'Durables › Home Decor'],
+    ['Bedside lamp', 'Durables › Home Decor'],
+    // 8. The mop is a tool; what wears out is a refill.
+    ['Pel lantai', 'Durables › Cleaning Appliances'],
+    ['Spazzolone', 'Durables › Cleaning Appliances'],
+    ['Mop', 'Durables › Cleaning Appliances'],
+    ['Mocio', 'Durables › Cleaning Appliances'],
+    ['Mocio Vileda', 'Durables › Cleaning Appliances'],
+    ['Kain pel', 'Cleaning Supplies › Sponges & Cloths'],
+    ['Panni Swiffer', 'Cleaning Supplies › Sponges & Cloths'],
+    ['Refill', 'Cleaning Supplies › Sponges & Cloths'],
+    ['Ricarica', 'Cleaning Supplies › Sponges & Cloths'],
+    ['Ricambio mocio', 'Cleaning Supplies › Sponges & Cloths'],
+    ['Ricambi', 'Cleaning Supplies › Sponges & Cloths'],
+    // 11. Party and gift things: Gifts & Party; food with those words wins.
+    ['Palloncini', 'Durables › Gifts & Party'],
+    ['Palloncino', 'Durables › Gifts & Party'],
+    ['Balloons', 'Durables › Gifts & Party'],
+    ['Candeline', 'Durables › Gifts & Party'],
+    ['Birthday candles', 'Durables › Gifts & Party'],
+    ['Bunga', 'Durables › Gifts & Party'],
+    ['Fiori', 'Durables › Gifts & Party'],
+    ['Flowers', 'Durables › Gifts & Party'],
+    ['Carta regalo', 'Durables › Gifts & Party'],
+    ['Gift wrap', 'Durables › Gifts & Party'],
+    ['Birthday card', 'Durables › Gifts & Party'],
+    ['Biglietto auguri', 'Durables › Gifts & Party'],
+    ['Kartu ucapan', 'Durables › Gifts & Party'],
+    ['Party', 'Durables › Gifts & Party'],
+    ['Festa', 'Durables › Gifts & Party'],
+    ['Fiori di zucca', 'Fruit & Vegetables › Fresh Vegetables'],
+    ['Bunga lawang', 'Pantry Staples › Spices & Seasonings'],
+    ['Party mix', 'Snacks'],
+    ['Party pack', 'Snacks'],
+    // 5. Pet fountain filters stay consumables.
+    ['Fontana Water Filter', 'Pet Supplies › Litter & Hygiene'],
+    ['Fontana Water Pump Filter', 'Pet Supplies › Litter & Hygiene'],
+    ['Filtro fontanella', 'Pet Supplies › Litter & Hygiene'],
+    // 12. Unchanged.
+    ['Biberon', 'Baby › Feeding'],
+    ['Ciuccio', 'Baby › Feeding'],
+    // 10. Office Chair in HOME.
+    ['Office Chair', 'Durables › Furniture'],
+  ])('%s → %s', (name, expected) => {
+    expect(homeGuess(name)).toBe(expected)
+  })
+
+  it.each([
+    'bag', 'Bag', 'case', 'Case', 'cover', 'Cover', 'lenses', 'Lenti', 'filter', 'Filtro',
+    'Water filter', 'Filtro acqua', 'Filtri acqua', 'Brita', 'Filtri Brita',
+    'Lampu', 'Lampada', 'Lamp', 'Lampada LED', 'Swiffer', 'Vileda',
+    'figurine', 'Sleeping mask', 'Ear plug', 'Tappi orecchie', 'Working Ear Plug',
+  ])('%s → no HOME guess', (name) => {
+    expect(homeGuess(name)).toBe('—')
+  })
+
+  it('a unit word stays in the name when reading it, but a weak word alone still counts', () => {
+    expect(homeGuess('Party pack')).toBe('Snacks')
+    expect(homeGuess('Party')).toBe('Durables › Gifts & Party')
+    expect(homeGuess('Ace')).toBe('Cleaning Supplies › Surface Cleaners')
+    expect(homeGuess('Ace pz')).toBe('Cleaning Supplies › Surface Cleaners')
+    expect(homeGuess('Iceberg Salad (pack)')).toBe('Fruit & Vegetables › Salad & Leafy Greens')
+  })
+
+  it.each([
+    ['Office', 'Subscription › Software & Apps'],
+    ['Office 365', 'Subscription › Software & Apps'],
+    ['Microsoft 365', 'Subscription › Software & Apps'],
+    ['Microsoft Office', 'Subscription › Software & Apps'],
+    ['Office Chair', 'Work'],
+    ['Office desk', 'Work'],
+    ['Working Ear Plug', 'Work'],
+  ])('MONEY: %s → %s', (name, expected) => {
+    expect(moneyPath(MONEY_AFTER_026, budgetKeywordPicks(name, MONEY_AFTER_026)[0])).toBe(expected)
+  })
+
+  it('MONEY rows: Office 365 is Software & Apps; Office Chair is Work and HOME Durables › Furniture, locked', () => {
+    expect(moneyRow('Office 365')).toMatchObject({ home: '—', money: 'Subscription › Software & Apps', locked: false })
+    expect(moneyRow('Office Chair')).toMatchObject({ home: 'Durables › Furniture', money: 'Work', locked: true })
+    expect(moneyRow('Adapter')).toMatchObject({ home: 'Durables › Electronics', locked: true })
+    expect(moneyRow('Palloncini')).toMatchObject({ home: 'Durables › Gifts & Party', money: 'Shopping › Gifts', locked: true })
+    expect(moneyRow('Lampu LED')).toMatchObject({ home: 'Household Supplies › Batteries & Bulbs', locked: false, addToHome: true })
+  })
+
+  it('the 253 live names: still none durable', () => {
+    const tree = homeTree(HOME_AFTER_026)
+    expect(LIVE_ITEM_NAMES.filter((name) => guessCategory(name, tree)?.categoryId === 'appliances')).toEqual([])
   })
 })

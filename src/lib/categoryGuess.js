@@ -10,9 +10,15 @@ const AMOUNT = /\b\d+(?:[.,]\d+)?\s*(?:kg|g|gr|grammi|grams?|mg|ml|cl|dl|l|lt|li
 const UNIT_WORDS = new Set(['pcs', 'pz', 'pezzi', 'pack', 'conf', 'confezione', 'kg', 'gr', 'ml', 'lt', 'x'])
 
 // "Ice-Cream 500g" → "ice cream": lower case, no accents, punctuation and
-// amounts removed, single spaces.
+// amounts removed, single spaces. (Also the key of a remembered name.)
 export function normalizeName(name) {
-  return String(name ?? '')
+  return cleanWords(name)
+    .filter((w) => !UNIT_WORDS.has(w))
+    .join(' ')
+}
+
+const cleanWords = (name) =>
+  String(name ?? '')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
@@ -20,9 +26,7 @@ export function normalizeName(name) {
     .replace(AMOUNT, ' ')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .split(' ')
-    .filter((w) => w && !UNIT_WORDS.has(w))
-    .join(' ')
-}
+    .filter(Boolean)
 
 // Words that look like a plural but are a thing of their own: "glasses"
 // (to see with) is not two drinking "glass"es, so "Glasses" and "Wine
@@ -40,11 +44,11 @@ export function singular(word) {
   return word
 }
 
-const tokensOf = (name) =>
-  normalizeName(name)
-    .split(' ')
-    .filter(Boolean)
-    .map(singular)
+// The words a name is read by. Unit words stay ("Party pack" is a snack,
+// "Party" a party) but never count towards the whole name: "Ace pz" is
+// still just "Ace" for a weak word.
+const tokensOf = (name) => cleanWords(name).map(singular)
+const contentLength = (tokens) => tokens.filter((t) => !UNIT_WORDS.has(t)).length
 
 const split = (list) => (list ? list.split('|').map((k) => k.trim()).filter(Boolean) : [])
 
@@ -53,8 +57,8 @@ const split = (list) => (list ? list.split('|').map((k) => k.trim()).filter(Bool
 function buildIndex(rules) {
   const phrases = new Map() // key → [{ rule, words, kind, weak }]
   const stems = [] // { stem, rule, kind, weak }
-  rules.forEach(([categoryId, subcategoryId, keywords, { weak, kind, priority = null } = {}], order) => {
-    const rule = { categoryId, subcategoryId, order, priority }
+  rules.forEach(([categoryId, subcategoryId, keywords, { weak, kind, priority = null, notAlone = false } = {}], order) => {
+    const rule = { categoryId, subcategoryId, order, priority, notAlone }
     const kinds = new Set(split(kind).map((k) => tokensOf(k).join(' ')))
     const add = (keyword, isWeak) => {
       if (keyword.endsWith('*')) {
@@ -90,19 +94,24 @@ const LINKS = new Set(['di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', '
 const DESCRIBING = 0.75
 
 // Every keyword of the index found in the name, as spans of its words.
-// Weak keywords count only when they are the whole name. A purpose word
+// Weak keywords count only when they are the whole name; the words of a
+// `notAlone` rule only when they are not ("Office Chair" is for work, a
+// bare "Office" is the software). A purpose word
 // (a rule with a `priority`) after a linking word doesn't count at all:
 // "Torta della nonna" is a cake, not money for grandma.
 function findMatches(index, tokens) {
   const link = tokens.findIndex((t, i) => i > 0 && LINKS.has(t))
   const describes = (start) => link > 0 && start > link
+  const whole = contentLength(tokens)
   const matches = []
   for (let start = 0; start < tokens.length; start++) {
     for (let len = 1; len <= Math.min(MAX_PHRASE, tokens.length - start); len++) {
       const part = tokens.slice(start, start + len)
       for (const key of new Set([part.join(' '), part.join('')])) {
         for (const e of index.phrases.get(key) || []) {
-          if (e.weak && len !== tokens.length) continue
+          const isWhole = contentLength(part) === whole
+          if (e.weak && !isWhole) continue
+          if (e.rule.notAlone && isWhole) continue
           if (e.rule.priority && describes(start)) continue
           // "pop corn" matching "popcorn" counts as two words.
           const full = Math.max(e.words, len) + (e.kind ? 0.5 : 0) - (e.weak ? 0.5 : 0)
@@ -113,7 +122,7 @@ function findMatches(index, tokens) {
     }
     for (const s of index.stems) {
       if (s.rule.priority && describes(start)) continue
-      if (tokens[start].startsWith(s.stem) && (!s.weak || tokens.length === 1)) {
+      if (tokens[start].startsWith(s.stem) && (!s.weak || whole === 1)) {
         matches.push({ rule: s.rule, start, end: start + 1, score: describes(start) ? DESCRIBING : 1 })
       }
     }

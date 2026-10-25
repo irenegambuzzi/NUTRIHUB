@@ -2159,6 +2159,58 @@ block's fixture is now shared (`actionDatabase()`), and its "Apply the
 mapping" test says the app moves none of the 31 (the six were the known
 case this round fixes).
 
+**Zidane's answers to the 14 doubt words (25/10, after 026 was run: all 43
+checks ok).** Keywords and tests only, no SQL:
+
+1. "bag" alone: no guess.
+2. "case" alone: no guess. Phone case, phone cover, custodia / cover
+   telefono, cover / casing HP → Durables › Electronics.
+3. "cover" alone: no guess.
+4. "lenses" / "lenti" alone: no guess.
+5. "filter" / "filtro" alone, water filter, filtro / filtri acqua, Brita:
+   no guess (a "not this" phrase, never Beverages › Water). The Fontana pet
+   filters stay Pet Supplies › Litter & Hygiene.
+6. adapter, adaptor, adattatore (presa) → Durables › Electronics (out of
+   Batteries & Bulbs).
+7. Bulbs (lampu LED, lampadina/e, bohlam, LED bulb, light bulb, lampadina
+   LED) → Household Supplies › Batteries & Bulbs. Lamp phrases (lampu meja
+   / tidur / belajar, lampada da tavolo / da terra / da scrivania, table /
+   desk / floor / bedside lamp) → Durables › Home Decor. "lampu",
+   "lampada", "lamp", "Lampada LED" alone: no guess.
+8. The mop as a tool (mop, mocio, pel lantai, spazzolone) → Durables ›
+   Cleaning Appliances; what wears out (kain pel, panni Swiffer, refill,
+   ricarica, ricambio mocio, ricambi) → Cleaning Supplies › Sponges &
+   Cloths. "Swiffer", "Vileda" alone: no guess.
+9. "figurine", "sleeping mask": no guess.
+10. "ear plug", "tappi orecchie": no HOME guess ("Working Ear Plug" is Work
+    in MONEY through "working").
+11. Party and gift things → Durables › Gifts & Party (balloons, palloncini,
+    candeline, birthday candles, flowers, fiori, bunga, carta regalo, gift
+    wrap, birthday card, biglietto (di) auguri, kartu ucapan, party, festa,
+    and the old list's kertas kado, party supplies, lilin ulang tahun,
+    bouquet, mazzo di fiori). Food wins with its own phrase: fiori di zucca
+    → Fresh Vegetables, bunga lawang → Spices & Seasonings, party mix /
+    party pack → Snacks. None of the 253 live names clashes (only "Fontana
+    Water (Pump) Filter" share a word, "filter", and stay Litter & Hygiene).
+12. Baby › Feeding (biberon, ciuccio): unchanged.
+13. MONEY: "Office" as the whole name ("Office 365" reads "office": numbers
+    are dropped), "Microsoft 365", "Microsoft Office" → Subscription ›
+    Software & Apps `d9c27fc6-378b-475b-b4e9-097b6e448a27`; "office" next to
+    other words ("Office Chair", "office desk") → Work.
+14. Family words inside shop or brand names: accepted as they are.
+
+Kept as approved: sapu / ember → Cleaning Appliances, kabel roll →
+Electronics, pomade / minyak rambut / gel capelli → Hair Care, calgon /
+pulizia / igienizzante lavatrice → Washing Machine Care, "holder" → Home
+Decor, "mat" alone → Home Textiles.
+
+Engine changes for this (`lib/categoryGuess.js`): a rule option
+`notAlone` (its words count only next to other words: the Work "office");
+and unit words ("pack", "pz", "kg"…) now stay in the words a name is READ
+by, so "Party pack" is not "Party", while they never count towards the
+whole name ("Ace pz" is still the weak "Ace"). `normalizeName` — the key
+of a remembered name — is unchanged.
+
 **For round 7 (Trips).** Family Support and Work are never put into a trip
 automatically (like Housing & Utilities, Subscription, Savings &
 Investments). A durable bought on a trip stays locked (Add to HOME off, no
