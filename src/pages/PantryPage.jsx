@@ -30,7 +30,7 @@ import { FinishedItems } from '../components/inventory/FinishedItems'
 export function PantryPage() {
   const { items, addItem, updateItem, adjustStock, discardExpired, deleteItem, importItems } = usePantryItems()
   const { items: groceryItems, addItem: addGroceryItem } = useGroceryItems()
-  const { categories, pantryParents: parents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
+  const { categories, pantryParents: parents, parents: allParents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
   const newIds = useNewItemIds(items)
   // Finished one-time items are listed apart, at the bottom (the group of
@@ -411,6 +411,7 @@ export function PantryPage() {
           groups={ready ? groupRows : []}
           variantCount={editor.item?.is_group ? variantsOfGroup(editor.item).length : 0}
           parents={parents}
+          allParents={allParents}
           subsByParent={subsByParent}
           onAddCategory={addCategory}
           onAddSubcategory={addSubcategory}

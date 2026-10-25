@@ -38,6 +38,14 @@ describe('purchaseLine', () => {
     expect(purchaseLine(item({ name: 'Avocado', quantity: 2 }), pantry)).toMatchObject({ pantry: null, add: 2, ready: true })
     expect(purchaseLine(item({ name: 'Kettle', category_id: 'appliances' }), pantry)).toMatchObject({ durable: true, pantry: null, add: 0 })
   })
+
+  it('round 9F: every Durables sub, and a durable budget category, is an expense only — even for an item in HOME', () => {
+    for (const sub of ['appliances:clothing', 'appliances:footwear', 'appliances:accessories', 'appliances:pet', 'appliances:glasses', 'appliances:furniture', 'misc:gifts']) {
+      expect(purchaseLine(item({ name: 'Thing', category_id: 'appliances', subcategory_id: sub }), pantry), sub).toMatchObject({ durable: true, pantry: null, target: null, add: 0 })
+    }
+    expect(purchaseLine(item({ name: 'wine', category_id: 'beverages' }), pantry, {}, { durableBudget: true })).toMatchObject({ durable: true, pantry: null, add: 0, ready: true })
+    expect(purchaseLine(item({ name: 'wine', category_id: 'beverages' }), pantry, {}, { durableBudget: false })).toMatchObject({ durable: false, add: 1 })
+  })
 })
 
 describe('confirmationPayload', () => {

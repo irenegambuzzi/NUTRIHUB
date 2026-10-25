@@ -158,7 +158,7 @@ describe('guessCategory', () => {
     'snacks:savory': ['Patatine San Carlo', 'Pringles', 'Chips', 'Popcorn', 'Crackers', 'Chitato', 'Kerupuk', 'Tortilla chips'],
     'snacks:nuts': ['Mandorle', 'Noci', 'Arachidi', 'Pistacchi', 'Kacang mete', 'Datteri', 'Mixed nuts'],
     'cleaning:dish': ['Detersivo piatti', 'Pastiglie lavastoviglie', 'Finish', 'Svelto', 'Sabun cuci piring', 'Sunlight', 'Dish soap'],
-    'cleaning:tools': ['Spugne', 'Panno microfibra', 'Mocio Vileda', 'Guanti in gomma', 'Scopa'],
+    'cleaning:tools': ['Spugne', 'Panno microfibra', 'Guanti in gomma', 'Swiffer'],
     'cleaning:surface': ['Sgrassatore Chanteclair', 'Candeggina', 'Anticalcare', 'WC Net', 'Glass cleaner', 'Pembersih lantai', 'Ace', 'Amuchina', 'Mastro Lindo'],
     'laundry:detergent': ['Detersivo lavatrice', 'Dixan', 'Ariel pods', 'Rinso', 'So Klin', 'Laundry detergent', 'Dash'],
     'laundry:softener': ['Ammorbidente', 'Lenor', 'Molto', 'Downy', 'Fabric softener'],
@@ -270,6 +270,7 @@ describe('round 6C: the new HOME categories and keywords', () => {
   // Every HOME category id live on 21/10/2026 (tmp-export/1_home.csv),
   // plus the 16 that supabase/024_categories.sql adds.
   const LIVE_IDS = '01386438-f2d4-418b-bcd6-082874075213 3d924169-d334-44ee-947a-3e3a498706fc appliances appliances:air appliances:cleaning appliances:electronics appliances:kitchen appliances:kitchenware bakery bakery:bread bakery:crispbread bakery:pastries beverages beverages:alcohol beverages:coffee-tea beverages:juice-soda beverages:milk beverages:water canned canned:fish-meat canned:jams canned:legumes canned:vegetables cleaning cleaning:dish cleaning:surface cleaning:tools dairy dairy:butter dairy:cheese dairy:eggs dairy:milk dairy:yogurt dd8d720d-b911-4f55-af65-661ac7685eeb deli deli:cold-cuts deli:fresh-pasta deli:ready e8e447c7-3b68-4eee-81e8-86915839565f frozen frozen:fish frozen:ice-cream frozen:meals frozen:vegetables health health:first-aid health:medicine health:vitamins household household:bags household:batteries household:paper laundry laundry:detergent laundry:softener laundry:stain meat meat:beef meat:poultry meat:seafood misc misc:gifts misc:seasonal pantry-staples pantry-staples:baking pantry-staples:cereal pantry-staples:grains pantry-staples:oils pantry-staples:pasta pantry-staples:sauces pantry-staples:spices pantry-staples:sweeteners personal-care personal-care:deodorant personal-care:makeup personal-care:skin pet pet:food pet:litter produce produce:fruit produce:herbs produce:potatoes produce:salad produce:vegetables snacks snacks:nuts snacks:savory snacks:sweet toiletries toiletries:hair toiletries:oral toiletries:paper toiletries:soap'.split(' ')
+  const IDS_026 = ['appliances:clothing', 'appliances:footwear', 'appliances:accessories', 'appliances:pet', 'appliances:glasses', 'appliances:furniture', 'health:contact-lenses', 'laundry:machine-care']
   const IDS_024 = ['baby', 'baby:diapers', 'baby:wipes', 'baby:food', 'baby:formula', 'baby:care', 'baby:feeding', 'personal-care:perfume', 'frozen:meat', 'toiletries:feminine', 'pantry-staples:world', 'household:stationery', 'household:car-care', 'household:air', 'household:pest', 'household:garden']
   const LAUNDRY_FRAGRANCE = 'e8e447c7-3b68-4eee-81e8-86915839565f'
   // The categories as they are after 024: a sub belongs to the main
@@ -297,7 +298,6 @@ describe('round 6C: the new HOME categories and keywords', () => {
     ['Hamburger di bovino surgelati', 'frozen:meat'],
     ['Penne a sfera', 'household:stationery'],
     ['Penne Barilla', 'pantry-staples:pasta'],
-    ['Washing Machine Cleaner', 'cleaning:surface'],
     ['Chicken Feet Snack', 'snacks:savory'],
     ['Basilico in vaso', 'produce:herbs'],
     ['Alpro plant milk', 'beverages:milk'],
@@ -329,10 +329,12 @@ describe('round 6C: the new HOME categories and keywords', () => {
     expect(guessCategory('Pannolini Pampers', before)).toBeNull()
   })
 
-  it('every rule points at a category that exists (live, or added by 024)', () => {
+  it('every rule points at a category that exists (live, or added by 024, 025, 026, or Hair Care made in the app)', () => {
+    const later = ['appliances:textiles', 'appliances:decor', '3ff635c0-7fd1-46ff-ac49-8e408c032398', ...IDS_026]
     for (const [categoryId, subcategoryId] of CATEGORY_RULES) {
-      expect(ids, categoryId).toContain(categoryId)
-      if (subcategoryId) expect(ids, subcategoryId).toContain(subcategoryId)
+      if (!categoryId) continue
+      expect([...ids, ...later], categoryId).toContain(categoryId)
+      if (subcategoryId) expect([...ids, ...later], subcategoryId).toContain(subcategoryId)
     }
   })
 

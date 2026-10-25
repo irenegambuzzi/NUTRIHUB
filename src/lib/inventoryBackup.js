@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient'
 import { must } from './db'
-import { normalizeUnit, stockStatus } from './inventory'
+import { isDurable, normalizeUnit, stockStatus } from './inventory'
 
 const CSV_COLUMNS = [
   'id',
@@ -126,6 +126,15 @@ export function csvRowsToItems(rows, categories) {
       }
       return item
     })
+}
+
+// An imported file may hold durables (a towel, a laptop): HOME stock is
+// only for consumables (plan 9F), so rows whose category is in the
+// Durables tree are left out. → { items, skipped } (how many were left
+// out). A backup restore never goes through this: it is exact.
+export function withoutDurables(items) {
+  const kept = items.filter((item) => !isDurable(item))
+  return { items: kept, skipped: items.length - kept.length }
 }
 
 // SheetJS is loaded only when an Excel file is actually exported or

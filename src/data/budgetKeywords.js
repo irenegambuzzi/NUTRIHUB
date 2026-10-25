@@ -1,4 +1,4 @@
-import { TRIPS_CATEGORY_ID } from './constants'
+import { TRIPS_CATEGORY_ID, WORK_CATEGORY_ID } from './constants'
 
 // Keywords for guessing a MONEY (budget) category from an expense name,
 // for a MONEY row that isn't added to HOME ("Benzina Eni" → Car / Vehicle ›
@@ -17,6 +17,9 @@ import { TRIPS_CATEGORY_ID } from './constants'
 // below as people type them ("booking.com", "b&b") and match either way.
 //
 // Each rule: [main category id, sub-category id (or null), keywords, options].
+// options.priority: a purpose word (what the money was for) that beats
+// every other word, 1 first. A rule with no category only hides the words
+// inside its phrases (see lib/categoryGuess.js).
 
 // ── Existing MONEY categories (ids from the live database, 21/10/2026) ──
 const TRIPS = TRIPS_CATEGORY_ID // Trips & Holidays (was "Holiday"; may be renamed again)
@@ -48,9 +51,13 @@ const WASTE = '517a69ad-bb5c-4f24-93fd-5f71eb008062' // Housing & Utilities › 
 const INTERNET = '2abfd336-3daa-4722-8280-4ccd9a572f42' // Housing & Utilities › Internet & Phone
 const SHOPPING = '654a80a3-2e6f-4ada-b214-0486d91d869c' // Shopping
 const CLOTHING = '732af8e0-924c-471c-b0e8-ac9286ce074e' // Shopping › Clothing
-const SHOES = '0f7f387b-0c4a-4095-8865-59cfac4c586a' // Shopping › Shoes & Accessories
-const ELECTRONICS = '1697124e-22a7-4417-b5b9-0439ccc67e17' // Shopping › Electronics
+const FOOTWEAR = '0f7f387b-0c4a-4095-8865-59cfac4c586a' // Shopping › Footwear (was Shoes & Accessories, 025)
 const GIFTS = '3cdeb3d8-6603-4ac8-a56b-73fd3690fd1c' // Shopping › Gifts
+const HOME_APPLIANCES = '199ec782-505a-4292-984e-08ae1d76469f' // Home & Appliances
+const ELECTRONICS = '2a05cb39-e90c-4349-9f77-4b1e679d42b4' // Home & Appliances › Electronics (was Electronics & Work Equipment; renamed by 026)
+// (Shopping › Electronics is deleted by 026 when unused: one electronics
+// category, so SHOP and MONEY give the same answer.)
+const WORK = WORK_CATEGORY_ID // Work (main, no sub; new in 026)
 
 // ── New in supabase/024_categories.sql, with the same fixed ids there ──
 // (a test checks that the two lists are identical)
@@ -81,7 +88,36 @@ export const NEW_MONEY_CATEGORY_IDS = {
 }
 const N = NEW_MONEY_CATEGORY_IDS
 
+// ── New in supabase/025 and 026, with the same fixed ids there ──
+export const MONEY_CATEGORY_IDS_025 = {
+  accessories: 'b13b4e6b-a8d6-4e03-8ca1-0d775c8c2d7e', // Shopping › Accessories
+  homeTextiles: 'f924edef-bf90-477d-8303-ddc4a2b27391', // Home & Appliances › Home Textiles
+  homeDecor: '3472a299-73f6-4249-bee4-a5469d1c807a', // Home & Appliances › Home Decor
+  petAccessories: 'd0c05f29-1418-485f-9433-b4b0e97c2423', // Pets › Pet Accessories & Toys
+}
+export const MONEY_CATEGORY_IDS_026 = {
+  work: WORK_CATEGORY_ID, // Work (main)
+  furniture: 'f840ec58-7bd7-4ad7-b2d5-b08678ba7439', // Home & Appliances › Furniture
+}
+const ACCESSORIES = MONEY_CATEGORY_IDS_025.accessories
+
 export const BUDGET_RULES = [
+  // ── Purpose words: what the money was FOR (plan 9F) ─────────────
+  // They beat every other word, family first, then work, then a gift:
+  // "Regalo mamma cioccolato" and "Laptop kerja untuk adik" are Family
+  // Support, "Work Printer Ink" is Work, "Regalo Luca" is a gift. After a
+  // linking word they don't count ("Torta della nonna" is a cake). Family
+  // means relatives outside the household only: never anak, figlio, bayi,
+  // baby, suami, istri, marito, moglie. Never a real person's name here.
+  [N.familySupport, null, 'mamma|madre|papa|padre|ibu|bapak|ayah|sorella|fratello|adik|kakak|nipote|nipoti|keponakan|suocera|suocero|mertua|nonno|nonna|nenek|kakek|zio|zia|om|tante|cugino|cugina|sepupu', { priority: 1 }],
+  // "workout" is another word and doesn't match; "Microsoft Office" is
+  // Software & Apps (its longer phrase hides "office").
+  [WORK, null, 'work|working|kerja|lavoro|ufficio|office', { priority: 2 }],
+  [SHOPPING, GIFTS, 'gift|regalo|regali|kado|hadiah', { priority: 3 }],
+  // Names with a purpose word that mean something else: these phrases
+  // only hide the word inside them (no suggestion of their own).
+  [null, null, 'mamma emma|nonno nanni|ufficio postale|post office'],
+
   // ── Car / Vehicle ───────────────────────────────────────────────
   [CAR, N.fuel, 'fuel|benzina|diesel|gasolio|carburante|rifornimento|gpl|bensin|pertamax|petrol|distributore|enilive|tamoil|agip|totalerg', { weak: 'eni|ip|api|shell|esso|q8|metano' }],
   [CAR, N.maintenance, 'tagliando|meccanico|officina|car service|oil change|cambio olio|pneumatici|tyres|tires|cambio gomme|gommista|revisione|carrozzeria|carrozziere|car repair|riparazione auto|batteria auto|bengkel|ganti oli|norauto|euromaster|lavaggio auto|car wash|autolavaggio', { weak: 'gomme' }],
@@ -118,7 +154,7 @@ export const BUDGET_RULES = [
   [HEALTH, N.pharmacy, 'farmacia|pharmacy|parafarmacia|apotek|ticket farmacia'],
   [HEALTH, N.doctorTests, 'doctor|medico|visita medica|specialist|specialista|analisi|esami del sangue|blood test|ecografia|ultrasound|radiografia|ticket sanitario|ospedale|hospital|poliambulatorio|dokter|rumah sakit|laboratorio analisi|fisioterapia|physiotherapy|ginecologo|dermatologo|oculista', { weak: 'visita' }],
   [HEALTH, N.dentist, 'dentista|dentist|igiene dentale|pulizia denti|dental cleaning|otturazione|ortodonzia|dokter gigi'],
-  [HEALTH, N.glassesLenses, 'occhiali|lenti a contatto|contact lenses|ottico|optician|salmoiraghi|grandvision|lensa kontak|kacamata', { weak: 'lenti|glasses' }],
+  [HEALTH, N.glassesLenses, 'occhiali|lenti a contatto|contact lenses|ottico|optician|salmoiraghi|grandvision|lensa kontak|kacamata|lens solution|soluzione lenti|soluzione per lenti|cairan lensa|soft lens', { weak: 'lenti|glasses' }],
 
   // ── Pets ────────────────────────────────────────────────────────
   [PETS, N.veterinary, 'veterinario|veterinary|clinica veterinaria|visita veterinaria|vaccino gatto|sterilizzazione gatto|microchip|dokter hewan', { weak: 'vet' }],
@@ -156,7 +192,12 @@ export const BUDGET_RULES = [
 
   // ── Shopping ────────────────────────────────────────────────────
   [SHOPPING, CLOTHING, 'clothes|vestiti|maglia|maglietta|pantaloni|jeans|giacca|cappotto|zara|ovs|uniqlo|primark|shein|bershka|pull bear|baju', { weak: 'h m' }],
-  [SHOPPING, SHOES, 'shoes|scarpe|sneakers|stivali|borsa|zaino|cintura|orologio|sepatu', { weak: 'tas' }],
-  [SHOPPING, ELECTRONICS, 'mediaworld|unieuro|euronics|apple store|cuffie|charger|caricatore'],
-  [SHOPPING, GIFTS, 'gift|regalo|regali|kado|hadiah'],
+  [SHOPPING, FOOTWEAR, 'shoes|scarpe|sneakers|stivali|sepatu'],
+  // Sunglasses are an accessory: "occhiali da sole" beats the "occhiali"
+  // of Glasses & Lenses (more words).
+  [SHOPPING, ACCESSORIES, 'borsa|zaino|cintura|orologio|occhiali da sole|sunglasses|kacamata hitam', { weak: 'tas' }],
+
+  // ── Home & Appliances ───────────────────────────────────────────
+  // The one electronics category (the HOME keywords book there too).
+  [HOME_APPLIANCES, ELECTRONICS, 'mediaworld|unieuro|euronics|apple store|cuffie|charger|caricatore'],
 ]

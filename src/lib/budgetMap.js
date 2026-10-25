@@ -1,5 +1,6 @@
 import { DURABLE_EXPENSE_CATEGORY } from '../data/constants'
 import { isDurable, pickDurableCategory } from './inventory'
+import { isChosenOnPurpose } from './durable'
 
 // Item category (what kind of product, in HOME and SHOP) → budget category
 // (what the money was for, in MONEY). Pure, so it can be tested.
@@ -70,13 +71,19 @@ export function effectiveBudget(category, ctx) {
 // category would change. `expenses` [{ id, category_id, amount }];
 // `itemOf(expenseId)` → the { category_id, subcategory_id } of what was
 // bought, or null when the expense isn't from a purchase (left alone).
+// Also left alone (plan 9F): what was bought without a HOME category (it
+// says nothing about where it belongs — a durable bought from SHOP before
+// it had one would go to Groceries), and an expense whose budget category
+// was chosen on purpose (Work, Family Support, Trips & Holidays and their
+// subs, e.g. a SHOP purchase changed to Work by hand in MONEY).
 // Returns { changes: [{ expense, from, to }], summary: [{ from, to,
 // count, total }] } (biggest moves first).
 export function pastPurchaseChanges(expenses, itemOf, ctx) {
   const changes = []
   for (const expense of expenses) {
     const item = itemOf(expense.id)
-    if (!item) continue
+    if (!item?.category_id) continue
+    if (isChosenOnPurpose(expense.category_id, ctx.expenseCategories)) continue
     let to = null
     try {
       to = budgetCategoryFor(item, ctx)

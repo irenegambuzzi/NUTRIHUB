@@ -1,5 +1,7 @@
 # Durable lock — analysis and proposal (read-only round, 25/10/2026)
 
+> **Decisions changed on 25/10 — see plan 9F** (`docs/plan-oct-2026.md`).
+
 Written for Zidane and Irene (decisions) and for the next build round
 (Claude). Nothing in the app changed in this round: this file and the
 query files in `tmp-export/` (not committed) are the only output.

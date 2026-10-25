@@ -17,6 +17,7 @@ import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { OneTimeToggle } from './OneTimeToggle'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
+import { durableLookalike } from '../../lib/durable'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
 
@@ -53,7 +54,9 @@ function initialState(item, group, prefill) {
 // moved into; `group`: the group a new variant is made in; `variantCount`:
 // how many variants the edited group has. `prefill` ({ name }): a new item
 // that starts with this name and the category suggested for it.
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null }) {
+// `allParents`: every HOME main, the Durables tree too (HOME itself offers
+// only `parents`), so a name that looks durable can be pointed out.
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
@@ -74,6 +77,9 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // (their group's store counts).
   const flow = useFlow()
   const showUsualShop = flow.ready && !(form.group_id && !isGroup)
+  // A name the keywords call durable (plan 9F): HOME stock is only for
+  // consumables. Only a warning — saving stays possible.
+  const durablePath = durableLookalike(form.name, { parents: allParents ?? parents, subsByParent })
 
   // Until a category is picked, it follows the name's suggestion.
   const changeName = (name) => {
@@ -242,6 +248,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         <div>
           <Label>Name</Label>
           <Input autoFocus placeholder={isGroup ? 'e.g. Chips & Snacks' : group ? 'Name or brand, e.g. Lays paprika' : 'e.g. Rice, Dish soap, Paracetamol'} value={form.name} onChange={(e) => changeName(e.target.value)} />
+          {durablePath && (
+            <p className="text-[11px] text-yellow-300 flex items-start gap-1.5 mt-1">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> “{form.name.trim()}” looks like a durable item ({durablePath}). Durable items don't go into HOME stock — record it in MONEY instead.
+            </p>
+          )}
         </div>
 
         <CategoryFields

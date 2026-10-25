@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { budgetCategoryFor, defaultBudgetCategory, effectiveBudget, pastPurchaseChanges, purchasedItemsByExpense } from './budgetMap'
 import { pickDurableCategory } from './inventory'
+import { FAMILY_SUPPORT_CATEGORY_ID, TRIPS_CATEGORY_ID, WORK_CATEGORY_ID } from '../data/constants'
 
 const expenseCategories = [
   { id: 'groc', name: 'Groceries', parent_id: null },
@@ -106,5 +107,35 @@ describe('Apply the mapping to past purchases: what was bought', () => {
     expect([...byExpense.keys()].sort()).toEqual(['e-old', 'e-order', 'e-shop'])
     expect(byExpense.get('e-shop')).toEqual({ category_id: 'dairy', subcategory_id: 'dairy:milk' })
     expect(byExpense.get('e-old')).toEqual({ category_id: 'bakery', subcategory_id: null })
+  })
+})
+
+describe('round 9F: what "Apply the mapping to past purchases" leaves alone', () => {
+  const money = [
+    ...expenseCategories,
+    { id: WORK_CATEGORY_ID, name: 'Work', parent_id: null },
+    { id: FAMILY_SUPPORT_CATEGORY_ID, name: 'Family Support', parent_id: null },
+    { id: TRIPS_CATEGORY_ID, name: 'Trips & Holidays', parent_id: null },
+    { id: 'flights', name: 'Flights', parent_id: TRIPS_CATEGORY_ID },
+  ]
+  const c = { ...ctx, expenseCategories: money }
+
+  it('a SHOP line without a HOME category is never moved (it says nothing about where it belongs)', () => {
+    const expenses = [{ id: 'bra', category_id: 'house', amount: 1.74 }, { id: 'milk', category_id: 'house', amount: 1 }]
+    const items = { bra: { category_id: null, subcategory_id: null }, milk: { category_id: 'dairy', subcategory_id: null } }
+    expect(pastPurchaseChanges(expenses, (id) => items[id], c).changes.map((x) => x.expense.id)).toEqual(['milk'])
+  })
+
+  it('an expense in Work, Family Support or Trips & Holidays (or one of its subs) was put there on purpose: never moved', () => {
+    const expenses = [WORK_CATEGORY_ID, FAMILY_SUPPORT_CATEGORY_ID, TRIPS_CATEGORY_ID, 'flights', 'house'].map((category_id) => ({ id: category_id, category_id, amount: 1 }))
+    expect(pastPurchaseChanges(expenses, () => ({ category_id: 'dairy' }), c).changes.map((x) => x.expense.id)).toEqual(['house'])
+  })
+
+  it('a mapping row by id survives a MONEY rename; without one, an appliance follows the name (the old fallback)', () => {
+    const renamed = money.map((x) => (x.id === 'kitchen' ? { ...x, name: 'Cucina' } : x))
+    const kettle = { category_id: 'appliances', subcategory_id: 'appliances:kitchen' }
+    expect(budgetCategoryFor(kettle, { ...c, expenseCategories: renamed, mapRows: [{ id: 'appliances:kitchen', expense_category_id: 'kitchen' }] })).toBe('kitchen')
+    expect(budgetCategoryFor(kettle, { ...c, expenseCategories: renamed })).toBe('home')
+    expect(budgetCategoryFor(kettle, c)).toBe('kitchen')
   })
 })

@@ -43,7 +43,10 @@ import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 // price (the grocery entry and HOME keep it as the last price); each line
 // may have its own discount in % or €, and with two items or more the
 // "Purchase discount" is spread over them. The expense is what was paid.
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false }) {
+// `durableBudgetOf(item)`: the entry's budget category (from its HOME
+// category's mapping) is a durable one — then, like a Durables entry, it
+// is an expense only (plan 9F).
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false }) {
   const { confirmPurchase } = usePurchase()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
   // One id per purchase: pressing Confirm again after a dropped connection
@@ -108,7 +111,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
-  const allLines = itemsFor(edits).map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+  const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item) })
+  const allLines = itemsFor(edits).map(lineFor)
   // A group's lines together in one card, one line per variant (each its
   // own stock and its own expense), variants at 0 first.
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
@@ -150,7 +154,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const confirm = async () => {
     const latest = editsRef.current
     const confirmed = itemsFor(latest).filter(inTrip)
-    const confirmedLines = confirmed.map((item) => purchaseLine(item, pantryItems, answers[item.id]))
+    const confirmedLines = confirmed.map(lineFor)
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
@@ -440,6 +444,7 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
         </button>
       </div>
 
+      {!item.category_id && !pantry && !line.durable && <p className="text-[11px] text-[var(--color-text-muted)]">Is this a consumable? Durable items don't go into HOME stock.</p>}
       {fixing && !item.category_id && <FixCategory item={item} onUpdateCategory={onUpdateCategory} onDone={() => setFixing(false)} />}
 
       <div className="flex items-center gap-2 flex-wrap">

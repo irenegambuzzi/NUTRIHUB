@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { BUDGET_RULES, NEW_MONEY_CATEGORY_IDS } from './budgetKeywords'
+import { BUDGET_RULES, MONEY_CATEGORY_IDS_025, MONEY_CATEGORY_IDS_026, NEW_MONEY_CATEGORY_IDS } from './budgetKeywords'
 import { LIVE_MONEY_CATEGORIES } from './moneyCategories.fixture'
 import { normalizeName, singular } from '../lib/categoryGuess'
 
@@ -18,9 +18,9 @@ function liveIds() {
 }
 
 describe('MONEY keywords (data/budgetKeywords.js)', () => {
-  it('point only at MONEY ids that exist live or are added by 024', () => {
-    const known = new Set([...liveIds(), ...newIds])
-    for (const [mainId, subId] of BUDGET_RULES) {
+  it('point only at MONEY ids that exist live or are added by 024, 025 or 026', () => {
+    const known = new Set([...liveIds(), ...newIds, ...Object.values(MONEY_CATEGORY_IDS_025), ...Object.values(MONEY_CATEGORY_IDS_026)])
+    for (const [mainId, subId] of BUDGET_RULES.filter((r) => r[0])) {
       expect(known.has(mainId), mainId).toBe(true)
       if (subId) expect(known.has(subId), subId).toBe(true)
     }

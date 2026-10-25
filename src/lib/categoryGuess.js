@@ -24,10 +24,16 @@ export function normalizeName(name) {
     .join(' ')
 }
 
+// Words that look like a plural but are a thing of their own: "glasses"
+// (to see with) is not two drinking "glass"es, so "Glasses" and "Wine
+// Glasses" can mean different things.
+const NOT_PLURAL = new Set(['glasses'])
+
 // English plurals → singular (berries → berry, tomatoes → tomato,
 // apples → apple). Applied to names and keywords alike, so other
 // languages' words still line up with themselves.
 export function singular(word) {
+  if (NOT_PLURAL.has(word)) return word
   if (word.length > 4 && word.endsWith('ies')) return word.slice(0, -3) + 'y'
   if (word.length > 4 && /(?:o|ch|sh|x|ss)es$/.test(word)) return word.slice(0, -2)
   if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') && !word.endsWith('us')) return word.slice(0, -1)
@@ -47,8 +53,8 @@ const split = (list) => (list ? list.split('|').map((k) => k.trim()).filter(Bool
 function buildIndex(rules) {
   const phrases = new Map() // key → [{ rule, words, kind, weak }]
   const stems = [] // { stem, rule, kind, weak }
-  rules.forEach(([categoryId, subcategoryId, keywords, { weak, kind } = {}], order) => {
-    const rule = { categoryId, subcategoryId, order }
+  rules.forEach(([categoryId, subcategoryId, keywords, { weak, kind, priority = null } = {}], order) => {
+    const rule = { categoryId, subcategoryId, order, priority }
     const kinds = new Set(split(kind).map((k) => tokensOf(k).join(' ')))
     const add = (keyword, isWeak) => {
       if (keyword.endsWith('*')) {
@@ -84,7 +90,9 @@ const LINKS = new Set(['di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', '
 const DESCRIBING = 0.75
 
 // Every keyword of the index found in the name, as spans of its words.
-// Weak keywords count only when they are the whole name.
+// Weak keywords count only when they are the whole name. A purpose word
+// (a rule with a `priority`) after a linking word doesn't count at all:
+// "Torta della nonna" is a cake, not money for grandma.
 function findMatches(index, tokens) {
   const link = tokens.findIndex((t, i) => i > 0 && LINKS.has(t))
   const describes = (start) => link > 0 && start > link
@@ -95,6 +103,7 @@ function findMatches(index, tokens) {
       for (const key of new Set([part.join(' '), part.join('')])) {
         for (const e of index.phrases.get(key) || []) {
           if (e.weak && len !== tokens.length) continue
+          if (e.rule.priority && describes(start)) continue
           // "pop corn" matching "popcorn" counts as two words.
           const full = Math.max(e.words, len) + (e.kind ? 0.5 : 0) - (e.weak ? 0.5 : 0)
           const score = describes(start) ? Math.min(full, DESCRIBING) : full
@@ -103,15 +112,35 @@ function findMatches(index, tokens) {
       }
     }
     for (const s of index.stems) {
+      if (s.rule.priority && describes(start)) continue
       if (tokens[start].startsWith(s.stem) && (!s.weak || tokens.length === 1)) {
         matches.push({ rule: s.rule, start, end: start + 1, score: describes(start) ? DESCRIBING : 1 })
       }
     }
   }
   // A keyword inside a longer match ("cream" in "ice cream") doesn't count
-  // on its own.
-  return matches.filter((m) => !matches.some((o) => o.start <= m.start && o.end >= m.end && o.end - o.start > m.end - m.start))
+  // on its own. A rule without a category (a "not this" phrase, e.g.
+  // "Mamma Emma" is a brand of gnocchi) only does that: it hides the
+  // shorter words inside it and suggests nothing itself.
+  return matches
+    .filter((m) => !matches.some((o) => o.start <= m.start && o.end >= m.end && o.end - o.start > m.end - m.start))
+    .filter((m) => m.rule.categoryId)
 }
+
+// The matches that decide: those of the most important purpose rules when
+// there are any (a rule's `priority`, 1 first — "Regalo mamma" is money
+// for the family whatever else the name says), else the best scores.
+function deciding(matches) {
+  const priorities = matches.map((m) => m.rule.priority).filter(Boolean)
+  if (priorities.length) {
+    const first = Math.min(...priorities)
+    return matches.filter((m) => m.rule.priority === first)
+  }
+  const best = Math.max(...matches.map((m) => m.score))
+  return matches.filter((m) => m.score === best)
+}
+
+const rank = (m) => m.rule.priority ?? Infinity
 
 // A rule as it applies to the categories that exist now. `available` is
 // { parents, subsByParent } (the categories on offer). A rule whose main
@@ -137,7 +166,8 @@ export function createGuesser(rules) {
   // flavour or ingredient. If the best matches point to different main
   // categories, it's unclear and nothing is guessed. With `available`, rules
   // for categories that don't exist are ignored *before* this is decided, so
-  // a missing category can never make a clear answer "unclear".
+  // a missing category can never make a clear answer "unclear". A purpose
+  // rule (`priority`) beats every score.
   function guessCategory(name, available = null) {
     const tokens = tokensOf(name)
     if (!tokens.length || tokens.join('').length < 2) return null
@@ -145,8 +175,7 @@ export function createGuesser(rules) {
       .map((m) => ({ ...m, rule: ruleFor(m.rule, available) }))
       .filter((m) => m.rule)
     if (!matches.length) return null
-    const best = Math.max(...matches.map((m) => m.score))
-    const top = matches.filter((m) => m.score === best).map((m) => m.rule)
+    const top = deciding(matches).map((m) => m.rule)
     if (new Set(top.map((r) => r.categoryId)).size > 1) return null
     const rule = top.reduce((a, b) => (b.order < a.order ? b : a))
     return { categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }
@@ -169,7 +198,7 @@ export function createGuesser(rules) {
       if (!known || m.score > known.score || (m.score === known.score && rule.order < known.rule.order)) best.set(key, { rule, score: m.score })
     }
     return [...best.values()]
-      .sort((a, b) => b.score - a.score || a.rule.order - b.rule.order)
+      .sort((a, b) => rank(a) - rank(b) || b.score - a.score || a.rule.order - b.rule.order)
       .slice(0, limit)
       .map(({ rule }) => ({ categoryId: rule.categoryId, subcategoryId: rule.subcategoryId }))
   }

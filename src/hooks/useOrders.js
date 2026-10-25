@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
+import { showToast } from '../lib/feedback'
 import { normalizeItem, syncShoppingForItem } from '../lib/inventory'
 import { allExpenseStores, groceryStore, orderStore, pantryStore, shopStore } from '../lib/stores'
 import { expensePatchForOrder, expenseRowForOrder, normalizeUrl } from '../lib/orders'
@@ -126,6 +127,15 @@ export function markArrived(order, date) {
     },
     { onFail: () => Promise.all([orderStore.refresh(), groceryStore.refresh()]) }
   )
+}
+
+// A durable order arrived (lib/durable.js isDurableOrder): marked arrived
+// like any other, but nothing goes into HOME, so neither "Arrived" dialog
+// opens (plan 9F).
+export async function markDurableArrived(order, date) {
+  const result = await markArrived(order, date)
+  if (!result.error) showToast({ message: `“${order.item_name}” arrived — durable, nothing added to HOME.` })
+  return result
 }
 
 // The HOME item (or group) an order is linked to, if it is still there.

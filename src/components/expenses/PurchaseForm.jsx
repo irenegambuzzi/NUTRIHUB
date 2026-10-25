@@ -22,13 +22,12 @@ import { splitCategory } from '../../lib/moneyList'
 import { normName } from '../../lib/grocery'
 import { withGroupTotals } from '../../lib/groups'
 import { money } from '../../lib/pricing'
+import { isPurposeBudget } from '../../lib/durable'
 import {
-  addsToHome,
   budgetOf,
   defaultBudget,
   emptyRow,
   homeItemFor,
-  homeLocked,
   homeNote,
   listEntryFor,
   listEntryNote,
@@ -88,7 +87,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const budgetFor = useCallback((pick) => defaultBudget(pick, budgetCtx) || null, [budgetCtx])
   const { suggest, suggestions, budgetSuggestions, remember, rememberBudget } = useCategorySuggestions({ parents, subsByParent, expenseCategories, budgetFor })
 
-  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems)), coupon), [rows, pantryItems, coupon])
+  // A row is locked out of HOME when its HOME category or its budget
+  // category is a durable one (lib/durable.js), so it needs both lists.
+  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx)), coupon), [rows, pantryItems, budgetCtx, coupon])
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
   const problems = lines.map((line) => rowProblem(line, { plain }))
@@ -226,6 +227,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               problem={tried ? problems[index] : ''}
               single={rows.length === 1}
               budgetId={budgetOf(line.row, budgetCtx)}
+              purposeBudget={isPurposeBudget(line.row.autoBudgetId, expenseCategories)}
               mainCategories={mainCategories}
               subsOf={subsOf}
               parents={parents}
@@ -283,16 +285,19 @@ function pickPatch(pick, home) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, problem, single, budgetId, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, problem, single, budgetId, purposeBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
-  const locked = homeLocked(row)
-  const home = addsToHome(row)
+  // Durable (by its HOME or its budget category): never HOME stock, so
+  // "Add to HOME" is off and can't be turned on, and there is no 1×.
+  const locked = Boolean(line.lock)
+  const home = line.home
   const entryNote = listEntryNote(line, listEntry)
   const label = (what) => (single ? what : `${what} of item ${index + 1}`)
   const badNumber = [row.priceText, row.quantityText, row.minText, row.packSizeText].find((t) => decimalProblem(t)) ?? ''
   const chips = chipsFor(row.name, home)
-  // The budget category came from the first chip, not from a pick by hand.
-  const budgetSuggested = !home && !row.budgetTouched && Boolean(row.autoBudgetId) && budgetId === row.autoBudgetId
+  // The budget category came from the first chip, not from a pick by hand
+  // (with Add to HOME on only a purpose category does: family, work, gift).
+  const budgetSuggested = (!home || purposeBudget) && !row.budgetTouched && Boolean(row.autoBudgetId) && budgetId === row.autoBudgetId
 
   // Bought before: the last normal price and the unit it was bought in fill
   // in (until the price, quantity or unit is edited by hand). The store is

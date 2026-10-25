@@ -10,6 +10,8 @@ import { categoryTree } from '../../lib/moneyList'
 import { budgetMapStore, expenseCategoryStore, inventoryCategoryStore } from '../../lib/stores'
 import { showToast } from '../../lib/feedback'
 import { orderUnits } from '../../lib/orders'
+import { isDurableBudget } from '../../lib/durable'
+import { isDurable } from '../../lib/inventory'
 
 // "Order online" for a SHOP list entry: the order form, filled in from the
 // entry and its HOME item (or group) — store (its usual one), quantity,
@@ -45,7 +47,12 @@ export function OrderOnlineDialog({ entry, pantry, total, onClose }) {
     quantity: entry.quantity,
     unit: entry.unit,
   }
-  const linkNote = pantry
+  // A durable entry (Durables tree, or a durable budget category) never
+  // goes into HOME, not even when it arrives (plan 9F).
+  const durable = isDurable(entry) || isDurableBudget(categoryId, categories)
+  const linkNote = durable
+    ? 'Durable item — saving adds the expense; it never goes into HOME.'
+    : pantry
     ? `For "${pantry.name}" in HOME${pantry.is_group ? ' (group: you pick the variant when it arrives)' : ''}. Saving adds the expense now; "Arrived" adds the stock. Until then it waits under "On the way" and isn't bought twice.`
     : 'Not in HOME yet. Saving adds the expense now; when it arrives you can add it to HOME.'
 

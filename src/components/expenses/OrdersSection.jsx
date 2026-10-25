@@ -9,10 +9,11 @@ import { ArrivedDialog } from './ArrivedDialog'
 import { PersonSelector } from './PersonSelector'
 import { LinkedArrivedDialog } from './LinkedArrivedDialog'
 import { WhereToRecord } from '../ui/WhereToRecord'
-import { useOrders, createOrder, editOrder, linkedItemOf, markArrived } from '../../hooks/useOrders'
+import { useOrders, createOrder, editOrder, linkedItemOf, markArrived, markDurableArrived } from '../../hooks/useOrders'
 import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/orderActions'
 import { useFlow } from '../../hooks/useFlow'
-import { pantryStore } from '../../lib/stores'
+import { groceryStore, pantryStore } from '../../lib/stores'
+import { isDurableOrder } from '../../lib/durable'
 import { localDateString } from '../../lib/expensePeriods'
 import { linkedOrderUnits, splitOrders } from '../../lib/orders'
 import { cn } from '../../lib/cn'
@@ -34,6 +35,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
   const [arrivedLinked, setArrivedLinked] = useState(null) // { order, item }
   const flow = useFlow()
   const { rows: pantryRows } = pantryStore.useRows()
+  const { rows: groceryItems } = groceryStore.useRows()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [openIds, setOpenIds] = useState(() => new Set())
   const [highlight, setHighlight] = useState(null)
@@ -78,8 +80,11 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
     })
 
   // An order linked to a HOME item asks how much arrived and adds it in
-  // one step; any other order is marked arrived, then HOME is offered.
+  // one step; any other order is marked arrived, then HOME is offered. A
+  // durable order (its budget category, or the SHOP entry it came from)
+  // is only marked arrived: nothing goes into HOME, nothing is asked.
   const arrive = async (order) => {
+    if (isDurableOrder(order, { expenseCategories: categories, groceryItems })) return markDurableArrived(order, localDateString())
     const item = flow.ready ? linkedItemOf(order, pantryRows) : null
     if (item) return setArrivedLinked({ order, item })
     const { error } = await markArrived(order, localDateString())

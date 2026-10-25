@@ -30,11 +30,14 @@ import { ArrivedDialog } from '../components/expenses/ArrivedDialog'
 import { WhereToRecord } from '../components/ui/WhereToRecord'
 import { FLOW_NOTICE, useFlow } from '../hooks/useFlow'
 import { useShops } from '../hooks/useShops'
-import { markArrived } from '../hooks/useOrders'
+import { markArrived, markDurableArrived } from '../hooks/useOrders'
 import { askCancelOrder } from '../hooks/orderActions'
 import { askDialog, showToast } from '../lib/feedback'
 import { expectedLabel } from '../lib/orders'
-import { orderStore } from '../lib/stores'
+import { budgetMapStore, expenseCategoryStore, inventoryCategoryStore, orderStore } from '../lib/stores'
+import { budgetCategoryFor } from '../lib/budgetMap'
+import { isDurableBudget, isDurableOrder } from '../lib/durable'
+import { DURABLE_CATEGORY_IDS } from '../data/constants'
 import { localDateString, parseLocalDate } from '../lib/week'
 
 // List or shopping mode, remembered on this phone (Receipts isn't).
@@ -101,6 +104,9 @@ export function GroceryPage() {
   const flow = useFlow()
   const { byId: shopById } = useShops()
   const { rows: orders } = orderStore.useRows()
+  const { rows: expenseCategories } = expenseCategoryStore.useRows()
+  const { rows: mapRows } = budgetMapStore.useRows()
+  const { rows: inventoryCategories } = inventoryCategoryStore.useRows()
   const [ordering, setOrdering] = useState(null) // a list entry
   const [arriving, setArriving] = useState(null) // { order, item } | { order }
   const today = localDateString()
@@ -152,7 +158,10 @@ export function GroceryPage() {
   // way): "+ Add another variant" offers only the others.
   const listedIds = new Set([...items, ...onTheWay].map((e) => pantryFor(e)?.id).filter(Boolean))
 
+  // A durable order (its budget category, or the SHOP entry it came from)
+  // is only marked arrived: nothing goes into HOME, nothing is asked.
   const arrive = async (order, pantry) => {
+    if (isDurableOrder(order, { expenseCategories, groceryItems: onTheWay })) return markDurableArrived(order, today)
     if (pantry) return setArriving({ order, item: pantry })
     const { error } = await markArrived(order, today)
     if (!error) setArriving({ order })
@@ -194,6 +203,17 @@ export function GroceryPage() {
   // Also a group with a variant at 0 ("Not urgent").
   const needsBuying = pantryItems.filter((p) => shopReason(p))
   const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + costOf(item), 0)
+  // The Durables tree's name as it is stored now (renamed by 026).
+  const durablesName = categoryName(DURABLE_CATEGORY_IDS[0])
+  // An entry whose budget category (its HOME category's mapping) is a
+  // durable one is bought as an expense only, like a Durables entry.
+  const durableBudgetOf = (item) => {
+    try {
+      return isDurableBudget(budgetCategoryFor(item, { mapRows, expenseCategories, inventoryCategories }), expenseCategories)
+    } catch {
+      return false
+    }
+  }
   const cartCount = cartItems.length
 
   // Targets for "Paid by for all …".
@@ -468,10 +488,10 @@ export function GroceryPage() {
             <div className="space-y-2 pt-2">
               <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-[var(--color-border)] pt-3">
                 <p className="text-xs font-bold text-[var(--color-primary)] uppercase flex items-center gap-1.5">
-                  <Microwave size={13} /> Home & Appliances
+                  <Microwave size={13} /> {durablesName}
                 </p>
                 <p className="text-[11px] text-[var(--color-text-muted)]">
-                  {money(durableTotal)} to buy · not in the grocery budget · logged under Home & Appliances, not added to the pantry
+                  {money(durableTotal)} to buy · not in the grocery budget · expense only, never in HOME stock
                 </p>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -516,6 +536,7 @@ export function GroceryPage() {
           openOrderOf={flow.ready ? openOrderOf : () => null}
           onCancelOrder={(order) => askCancelOrder(order, { orders, today })}
           splitTrips={flow.ready}
+          durableBudgetOf={durableBudgetOf}
           onClose={() => setConfirming(false)}
         />
       )}

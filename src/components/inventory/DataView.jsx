@@ -15,6 +15,7 @@ import {
   parseXlsx,
   restoreCategories,
   restoreLogs,
+  withoutDurables,
 } from '../../lib/inventoryBackup'
 
 // Export (CSV, Excel, JSON backup) and import/restore.
@@ -54,17 +55,18 @@ export function DataView({ items, categories, categoryName, importItems }) {
     } catch {
       return setMessage('Could not read that file.')
     }
-    const rows = csvRowsToItems(parsed, categories)
-    if (rows.length === 0) return setMessage('No items found in that file. The first row must be a header with at least a "name" column.')
+    const { items: rows, skipped } = withoutDurables(csvRowsToItems(parsed, categories))
+    const skippedNote = skipped > 0 ? ` ${skipped} durable row${skipped === 1 ? '' : 's'} skipped (durable items don't go into HOME stock).` : ''
+    if (rows.length === 0) return setMessage(skipped > 0 ? skippedNote.trim() : 'No items found in that file. The first row must be a header with at least a "name" column.')
     const confirmed = await confirmDialog({
       title: `Import ${rows.length} item${rows.length === 1 ? '' : 's'}?`,
-      message: 'Rows with an existing id overwrite that item; the others are added as new items.',
+      message: `Rows with an existing id overwrite that item; the others are added as new items.${skippedNote}`,
       confirmLabel: 'Import',
     })
     if (!confirmed) return
     const { error } = await importItems(rows)
     // A failure shows a toast.
-    setMessage(error ? '' : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.`)
+    setMessage(error ? '' : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.${skippedNote}`)
   }
 
   const handleJson = async (e) => {

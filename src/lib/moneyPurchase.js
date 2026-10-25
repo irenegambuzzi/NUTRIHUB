@@ -5,6 +5,7 @@ import { firstOutVariant, variantOrder } from './groups'
 import { expiryState, isDurable } from './inventory'
 import { isFinished } from './oneTime'
 import { budgetCategoryFor } from './budgetMap'
+import { durableLock, isPurposeBudget, lockNote } from './durable'
 import { packSizePatch, purchasedQuantity } from './purchase'
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
 
@@ -58,13 +59,20 @@ export function homeItemFor(name, pantryItems) {
   return pantryItems.find((p) => !p.is_group && normName(p.name) === key) ?? pantryItems.find((p) => p.is_group && normName(p.name) === key) ?? null
 }
 
-// Home & Appliances never goes into HOME (no stock): its rows are always
-// an expense only.
-export const homeLocked = (row) => isDurable({ category_id: row.categoryId })
+// "Add to HOME" as chosen: on by default when the row has a HOME item
+// category, off otherwise; the user can switch it (unless it is locked).
+const wantsHome = (row) => row.addToHome ?? Boolean(row.categoryId)
 
-// "Add to HOME": on by default when the row has a HOME item category that
-// isn't Home & Appliances, off otherwise; the user can switch it.
-export const addsToHome = (row) => !homeLocked(row) && (row.addToHome ?? Boolean(row.categoryId))
+// Why a row can't go into HOME (lib/durable.js), or null: its HOME
+// category is a durable one, or its budget category is. Changing either
+// to a consumable one releases it. `ctx`: { expenseCategories,
+// inventoryCategories, mapRows }; without it only the HOME category counts.
+export const lockOf = (row, ctx) => durableLock({ categoryId: row.categoryId, subcategoryId: row.subcategoryId, budgetId: budgetOf(row, ctx) }, ctx)
+
+// A locked row is always an expense only: "Add to HOME" off and disabled.
+export const homeLocked = (row, ctx) => Boolean(lockOf(row, ctx))
+
+export const addsToHome = (row, ctx) => !homeLocked(row, ctx) && wantsHome(row)
 
 // The budget category a row starts with: the one its HOME category is
 // mapped to (lib/budgetMap.js), or none without a HOME category (the user
@@ -78,12 +86,16 @@ export function defaultBudget(row, ctx) {
   }
 }
 
-// The budget category shown for a row: the one picked by hand; else, for
-// a row not added to HOME, the one its name filled in (the first budget
-// chip, `autoBudgetId`); else the mapped one.
+// The budget category shown for a row: the one picked by hand; else the
+// one its name filled in (the first budget chip, `autoBudgetId`) when the
+// row isn't added to HOME (its HOME category is durable, or Add to HOME
+// is off) or when that is a purpose category (family, work, a gift: "Work
+// Printer Ink" is Work even with Add to HOME on); else the mapped one.
+// The lock is worked out from the result (lockOf), never the other way
+// round.
 export const budgetOf = (row, ctx) => {
   if (row.budgetTouched) return row.budgetId
-  if (row.autoBudgetId && !addsToHome(row)) return row.autoBudgetId
+  if (row.autoBudgetId && (isPurposeBudget(row.autoBudgetId, ctx?.expenseCategories) || isDurable({ category_id: row.categoryId }) || !wantsHome(row))) return row.autoBudgetId
   return defaultBudget(row, ctx)
 }
 
@@ -92,6 +104,7 @@ export const budgetOf = (row, ctx) => {
 //               price: it becomes the HOME item's last price); what is paid
 //               comes from pricedLines()
 //   home        it goes into HOME ("Add to HOME" on)
+//   lock        why it can't (lockOf), or null
 //   known       the HOME item with that name (also with Add to HOME off,
 //               to say what happens to its SHOP entry)
 //   group       that item is a group: `variants` to pick from, `target`
@@ -101,10 +114,11 @@ export const budgetOf = (row, ctx) => {
 //               don't convert and the pack size is still missing)
 //   isNew       a new HOME item is made (with 1× and Min)
 //   revives     a finished 1× item comes back
-export function rowLine(row, pantryItems) {
+export function rowLine(row, pantryItems, ctx) {
   const quantity = parseDecimal(row.quantityText)
   const total = parseDecimal(row.priceText)
-  const home = addsToHome(row)
+  const lock = lockOf(row, ctx)
+  const home = !lock && wantsHome(row)
   const known = homeItemFor(row.name, pantryItems)
   const match = home ? known : null
   const group = match?.is_group ? match : null
@@ -120,6 +134,7 @@ export function rowLine(row, pantryItems) {
     total: Number.isFinite(total) ? round2(total) : NaN,
     discount: { kind: row.discountKind, text: row.discountText },
     home,
+    lock,
     known,
     group,
     variants,
@@ -274,7 +289,7 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
 
 // What the row says it will do in HOME.
 export function homeNote(line) {
-  if (!line.home) return homeLocked(line.row) ? 'Home & Appliances never go into HOME — expense only.' : 'Expense only — nothing changes in HOME.'
+  if (!line.home) return line.lock ? lockNote(line.lock) : 'Expense only — nothing changes in HOME.'
   if (line.group && !line.target) return `"${line.group.name}" is a group — choose the variant that gets the stock.`
   if (line.target) {
     const amount = line.add === null ? '' : ` (+${line.add} ${line.target.unit})`

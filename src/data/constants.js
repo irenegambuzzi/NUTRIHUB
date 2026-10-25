@@ -105,10 +105,13 @@ export const SUGGESTED_UNITS = {
   frozen: ['pack', 'box', 'pcs', 'gr', 'kg'],
 }
 
-// Durable one-off purchases (oven, vacuum, laptop…): they can go on the
-// grocery list, but never into the pantry, don't count towards the
-// grocery budget, and are logged under this expense category (or its
-// sub-category of the same name) instead of Groceries.
+// Durables — things bought once and kept (oven, laptop, towel, sandals,
+// cat toys…): the HOME main `appliances` ("Durables" since 026) and every
+// sub-category under it. They can go on the grocery list, but never into
+// HOME stock, don't count towards the grocery budget, and are booked by
+// their sub-category's mapping row, else under this expense category (or
+// its sub-category of the same name) instead of Groceries. A durable
+// budget category locks too (DURABLE_MONEY_CATEGORY_IDS below).
 export const DURABLE_CATEGORY_IDS = ['appliances']
 export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 
@@ -116,6 +119,35 @@ export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 // never by name, so it can be renamed freely; it can't be moved under
 // another main or deleted. Round 7 may move this id to household_settings.
 export const TRIPS_CATEGORY_ID = 'dc79f604-19fd-4bdd-817e-335816c4afe7'
+
+// MONEY categories the durable lock and the purpose words use, by id
+// (any name; plan 9F, supabase/026_durable_lock.sql). A main covers all
+// its sub-categories, also ones made later.
+export const WORK_CATEGORY_ID = '6faa75ea-ece5-40c9-9e44-75785f59568e' // Work (main, new in 026)
+export const FAMILY_SUPPORT_CATEGORY_ID = '54c1355d-5ebb-4237-ae67-1be0ca593443' // Family Support (main, 024)
+export const GIFTS_CATEGORY_ID = '3cdeb3d8-6603-4ac8-a56b-73fd3690fd1c' // Shopping › Gifts
+
+// Bought with one of these budget categories, a thing is durable: "Add to
+// HOME" is off and locked, whatever its HOME category. Not Work (a work
+// laptop is locked because a laptop is durable; printer ink for work may
+// go into HOME) and not Health › Glasses & Lenses (contact lenses are
+// bought again; glasses are locked by HOME Durables › Glasses).
+export const DURABLE_MONEY_CATEGORY_IDS = [
+  '199ec782-505a-4292-984e-08ae1d76469f', // Home & Appliances (main)
+  '654a80a3-2e6f-4ada-b214-0486d91d869c', // Shopping (main)
+  'd0c05f29-1418-485f-9433-b4b0e97c2423', // Pets › Pet Accessories & Toys
+  'a972798e-d08c-4b09-b8cf-cfe5c1724128', // Trips & Holidays › Souvenirs
+  FAMILY_SUPPORT_CATEGORY_ID, // Family Support (main)
+]
+
+// Budget categories chosen for what the money was FOR (family, work, a
+// gift): a name with such a word fills them in even when "Add to HOME" is
+// on (lib/moneyPurchase.js budgetOf).
+export const PURPOSE_BUDGET_IDS = [FAMILY_SUPPORT_CATEGORY_ID, WORK_CATEGORY_ID, GIFTS_CATEGORY_ID]
+
+// Expenses in these were put there on purpose: "Apply the mapping to past
+// purchases" never moves them (lib/budgetMap.js).
+export const CHOSEN_ON_PURPOSE_IDS = [WORK_CATEGORY_ID, FAMILY_SUPPORT_CATEGORY_ID, TRIPS_CATEGORY_ID]
 
 // Removed categories that must never be offered again, even if a stale
 // row is still in the database. "+ New category" never gives a new

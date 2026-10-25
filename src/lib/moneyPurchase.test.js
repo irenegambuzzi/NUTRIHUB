@@ -49,7 +49,48 @@ describe('Add to HOME', () => {
   it('is always off for Home & Appliances (no stock), whatever is chosen', () => {
     expect(addsToHome(row({ categoryId: 'appliances' }))).toBe(false)
     expect(addsToHome(row({ categoryId: 'appliances', addToHome: true }))).toBe(false)
-    expect(homeNote(rowLine(row({ name: 'Laptop', priceText: '900', categoryId: 'appliances' }), pantry))).toMatch(/never go into HOME/)
+    expect(homeNote(rowLine(row({ name: 'Laptop', priceText: '900', categoryId: 'appliances' }), pantry, ctx))).toBe('Durable item (Home & Appliances) — expense only, never in HOME stock.')
+  })
+})
+
+describe('round 9F: the durable lock', () => {
+  // `shoes` is a durable MONEY category only by its id (Shopping main).
+  const SHOPPING = '654a80a3-2e6f-4ada-b214-0486d91d869c'
+  const WORK = '6faa75ea-ece5-40c9-9e44-75785f59568e'
+  const c = {
+    ...ctx,
+    expenseCategories: [...ctx.expenseCategories, { id: SHOPPING, name: 'Shopping', parent_id: null }, { id: 'shoes', name: 'Footwear', parent_id: SHOPPING }, { id: WORK, name: 'Work', parent_id: null }],
+    inventoryCategories: [...ctx.inventoryCategories, { id: 'appliances:footwear', name: 'Footwear', parent_id: 'appliances' }],
+  }
+
+  it('locks by the HOME category or by the budget category; changing the durable one to a consumable releases it', () => {
+    const sandals = row({ name: 'Sandali', priceText: '20', categoryId: 'appliances', subcategoryId: 'appliances:footwear' })
+    expect(rowLine(sandals, pantry, c)).toMatchObject({ home: false, lock: { source: 'home', name: 'Footwear' } })
+    const byBudget = row({ name: 'Sandali', priceText: '20', categoryId: 'dairy', budgetId: 'shoes', budgetTouched: true })
+    expect(rowLine(byBudget, pantry, c)).toMatchObject({ home: false, lock: { source: 'money', name: 'Footwear' } })
+    expect(homeNote(rowLine(byBudget, pantry, c))).toBe('Durable item (Footwear) — expense only, never in HOME stock.')
+    // Both consumable: unlocked, and Add to HOME is back to its default (on).
+    expect(rowLine({ ...byBudget, budgetId: 'groceries' }, pantry, c)).toMatchObject({ home: true, lock: null })
+    expect(rowLine({ ...sandals, categoryId: 'dairy', subcategoryId: '' }, pantry, c)).toMatchObject({ home: true, lock: null })
+    // An auto-filled durable budget locks too, while Add to HOME is off.
+    expect(rowLine(row({ name: 'Zara', priceText: '30', autoBudgetId: 'shoes' }), pantry, c).lock).toEqual({ source: 'money', name: 'Footwear' })
+  })
+
+  it('a locked row is never 1× and adds nothing to HOME, whatever was ticked before', () => {
+    const line = rowLine(row({ name: 'Sandali', priceText: '20', categoryId: 'appliances', subcategoryId: 'appliances:footwear', addToHome: true, oneTime: true }), pantry, c)
+    const payload = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'irene', lines: [line, line], budgetFor: () => 'shoes' })
+    expect(payload.items[0]).toMatchObject({ durable: true })
+    expect(payload.items[0]).not.toHaveProperty('one_time')
+    expect(payload.items[0]).not.toHaveProperty('add')
+  })
+
+  it('a purpose budget (Work) is filled in even with Add to HOME on, and does not lock; a pick by hand still wins', () => {
+    const ink = row({ name: 'Work Printer Ink', priceText: '9', categoryId: 'dairy', autoBudgetId: WORK })
+    expect(budgetOf(ink, c)).toBe(WORK)
+    expect(rowLine(ink, pantry, c)).toMatchObject({ home: true, lock: null })
+    expect(budgetOf({ ...ink, budgetId: 'groceries', budgetTouched: true }, c)).toBe('groceries')
+    // Not a purpose: with Add to HOME on the mapping decides, as before.
+    expect(budgetOf(row({ name: 'Cat food', categoryId: 'pet', autoBudgetId: 'groceries' }), c)).toBe('pets')
   })
 })
 

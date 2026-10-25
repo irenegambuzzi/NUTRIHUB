@@ -14,7 +14,7 @@ import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { useLastPrice } from '../../hooks/useLastPrice'
-import { roundQuantity } from '../../lib/inventory'
+import { isDurable, roundQuantity } from '../../lib/inventory'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { isOneTime } from '../../lib/oneTime'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
@@ -114,7 +114,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
       unit,
       payer,
       pantryItemId: known?.id ?? null,
-      oneTime: !known && oneTime,
+      oneTime: !known && oneTime && !isDurable({ category_id: categoryId }),
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
@@ -202,10 +202,13 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
             <AlertTriangle size={12} /> "{unit}" is unusual for {categoryName(categoryId)} (usually {suggestedUnits.join(', ')}).
           </p>
         )}
+        {/* A durable is never HOME stock, so never 1× either (plan 9F).
+            Without a category, Confirm purchase would put it into HOME. */}
+        {!categoryId && <p className="text-[11px] text-[var(--color-text-muted)] -mt-1">Is this a consumable? Durable items don't go into HOME stock.</p>}
         {formPack ? (
           isOneTime(formPack) && <p className="text-[11px] text-[var(--color-text-muted)]">"{formPack.name}" is a one-time purchase (1×) in HOME — change it there.</p>
         ) : (
-          <OneTimeToggle checked={oneTime} onChange={setOneTime} />
+          !isDurable({ category_id: categoryId }) && <OneTimeToggle checked={oneTime} onChange={setOneTime} />
         )}
         <div className="flex items-center gap-2">
           <span className="text-xs text-[var(--color-text-muted)]">Paid by</span>

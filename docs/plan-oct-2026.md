@@ -22,6 +22,8 @@ Contents
 9. Round 8 — AI structure (NOTE 7)
    - 9C. Round 6C — categories, keywords, A–Z order, SQL 024 (as built)
    - 9D. Decided 21–22/10 for later rounds (Trips, round 7, round 6D)
+   - 9E. Data fix 025 (Action 17/10/2026)
+   - 9F. Durable lock (decided 25/10, as built)
 10. Risks and decisions
 
 ---
@@ -1955,6 +1957,222 @@ row, stock and 1× never change.
 
 Tests: `supabase/migrations.test.js` block "025" (own PGlite database with
 the live MONEY ids and a fixture of the 31 lines).
+
+
+### 9F. Durable lock (decided 25/10, as built)
+
+Analysis: `docs/durable-lock.md` (commit dc7eaf2). Zidane's and Irene's
+decisions of 25/10 win where they differ from it. SQL:
+`supabase/026_durable_lock.sql` (not run yet; Irene runs it after review,
+after 024 and 025). The app is deployed before 026 is run and works both
+before and after it.
+
+**The rule.** HOME stock is only for consumables (bought again). A durable
+(bought once and kept) is a MONEY expense only: never HOME stock, never 1×.
+
+**1. One durable tree: the HOME main `appliances`.** 026 renames it
+"Durables" (by id, only while it is still "Home & Appliances"); the MONEY
+main "Home & Appliances" keeps its name (the app finds it by name). Every
+sub of `appliances` is durable (`isDurable`, unchanged): SHOP's durable
+section, Confirm "expense only", the MONEY lock and the SQL guards of
+`merge_inventory_category` / `move_inventory_subcategory` all cover it. New
+HOME subs (026), each with a mapping row by id:
+
+| HOME id | Name | MONEY target |
+|---|---|---|
+| `appliances:clothing` | Clothing | Shopping › Clothing `732af8e0-924c-471c-b0e8-ac9286ce074e` |
+| `appliances:footwear` | Footwear | Shopping › Footwear `0f7f387b-0c4a-4095-8865-59cfac4c586a` |
+| `appliances:accessories` | Accessories | Shopping › Accessories `b13b4e6b-a8d6-4e03-8ca1-0d775c8c2d7e` |
+| `appliances:pet` | Pet Accessories & Toys | Pets › Pet Accessories & Toys `d0c05f29-1418-485f-9433-b4b0e97c2423` |
+| `appliances:glasses` | Glasses | Health › Glasses & Lenses `f81fa3cb-8dfc-45f5-b351-f22d877761cd` |
+| `appliances:furniture` | Furniture | Home & Appliances › Furniture `f840ec58-7bd7-4ad7-b2d5-b08678ba7439` (new) |
+| `misc:gifts` | Gifts & Party (moved, same id) | Shopping › Gifts `3cdeb3d8-6603-4ac8-a56b-73fd3690fd1c` |
+| `health:contact-lenses` | Contact Lenses (consumable, under Health & Medicine) | Health › Glasses & Lenses `f81fa3cb-…` |
+| `laundry:machine-care` | Washing Machine Care (consumable, under Laundry Supplies) | no row (follows Laundry → Groceries) |
+
+Mapping rows by id also for the existing subs: `appliances:kitchen` →
+`4125ed9e-da65-4b76-8e35-cb1239d8093b`, `appliances:kitchenware` →
+`a364fa44-7513-47ca-aabc-7c5254c0a961`, `appliances:cleaning` →
+`83c6b924-e7cd-4ba6-881d-a1ff1e6385d1`, `appliances:air` →
+`7d226f51-f809-494d-92c0-50d9c12f7812`, `appliances:electronics` →
+`2a05cb39-e90c-4349-9f77-4b1e679d42b4`, `appliances:textiles` →
+`f924edef-bf90-477d-8303-ddc4a2b27391`, `appliances:decor` →
+`3472a299-73f6-4249-bee4-a5469d1c807a`. Inserted only when missing and
+both ends exist; a row chosen by hand is never changed. A sub without a
+row still books to the Home & Appliances sub with the same name (the old
+fallback, `budgetMap.defaultBudgetCategory`).
+
+`appliances:electronics` "Electronics & Work Equipment" → "Electronics"
+(only while it has the old name).
+
+**Gifts & Party: moved by id, not re-created.** `misc:gifts` gets
+`parent_id = 'appliances'` (what the app's own Move does), only while it
+is under `misc` and no item, SHOP entry, remembered name or sub uses it.
+Why: nothing is deleted (no cascade of a hand-made mapping row or
+remembered names), copies kept on old purchase lines keep pointing at an
+existing category, and one guarded UPDATE is easy to check. Checked: no
+code reads a parent from the part of an id before ":" (searched `src/` and
+the SQL; only a helper inside the round-6C keyword test does, for its own
+fixture).
+
+**2. MONEY (026, by id, guarded).** New main **Work**
+`6faa75ea-ece5-40c9-9e44-75785f59568e` (no subs): a PURPOSE category —
+anything bought for work. New sub Home & Appliances › **Furniture**
+`f840ec58-7bd7-4ad7-b2d5-b08678ba7439` (main `199ec782-505a-4292-984e-08ae1d76469f`).
+Shopping › Electronics `1697124e-22a7-4417-b5b9-0439ccc67e17` is deleted
+only while no expense, order, mapping row, remembered name or sub uses it;
+then Home & Appliances › "Electronics & Work Equipment" `2a05cb39-…` →
+"Electronics" (after the delete: MONEY names are unique), the ONE
+electronics category. Its MONEY keywords (mediaworld, unieuro, euronics,
+apple store, cuffie, charger, caricatore) moved there. Family Support
+`54c1355d-5ebb-4237-ae67-1be0ca593443` gets no subs. New names are skipped
+when the name exists (HOME among HOME, MONEY among MONEY, any capitals).
+
+**3. The lock** (`src/lib/durable.js`). A row or line is locked when its
+HOME category is durable (the `appliances` tree) OR its budget category is
+in `DURABLE_MONEY_CATEGORY_IDS` (`src/data/constants.js`, by id; a main
+covers all its subs, also subs made later):
+
+- Home & Appliances main `199ec782-505a-4292-984e-08ae1d76469f`
+- Shopping main `654a80a3-2e6f-4ada-b214-0486d91d869c`
+- Pets › Pet Accessories & Toys `d0c05f29-1418-485f-9433-b4b0e97c2423`
+- Trips & Holidays › Souvenirs `a972798e-d08c-4b09-b8cf-cfe5c1724128`
+- Family Support main `54c1355d-5ebb-4237-ae67-1be0ca593443`
+
+Not locked: Work (the lock follows the item: a work laptop is locked
+because a laptop is durable; work printer ink may go into HOME) and Health
+› Glasses & Lenses (contact lenses are bought again; glasses are locked by
+HOME Durables › Glasses). Released only when neither is durable. Changing a
+category never moves old purchases into HOME. Where:
+
+- MONEY "Add expense" (`moneyPurchase.lockOf` / `homeLocked(row, ctx)` /
+  `rowLine(row, pantry, ctx)`, `PurchaseForm`): "Add to HOME" off and
+  disabled; the budget is worked out first (`budgetOf`), the lock from it,
+  never the other way round. No 1× (it only shows with Add to HOME on).
+- SHOP Confirm purchase: a line is expense only when its HOME category is
+  durable, or its budget category (its HOME category's mapping) is durable
+  (`purchaseLine(…, { durableBudget })`, `ConfirmPurchase durableBudgetOf`
+  from `GroceryPage`).
+- Order online (`OrderOnlineDialog`): the durable note.
+- "Arrived" (`GroceryPage.arrive`, `OrdersSection.arrive`): a durable order
+  (`isDurableOrder`: its MONEY category durable, or its SHOP entry in the
+  Durables tree) is marked arrived (`useOrders.markDurableArrived`) without
+  `LinkedArrivedDialog` / `ArrivedDialog`, toast "“{name}” arrived —
+  durable, nothing added to HOME."
+- SHOP More options (`AddItemForm`): no 1× toggle for a durable category.
+
+**4. Texts.** MONEY locked row: "Durable item ({category}) — expense only,
+never in HOME stock." ({category} = the HOME sub, or the main when there is
+no sub, or the MONEY category when the lock comes from MONEY; current
+names). SHOP durable section: title = the stored name of `appliances`
+("Home & Appliances" before 026, "Durables" after), text "… to buy · not in
+the grocery budget · expense only, never in HOME stock". Confirm purchase
+"new in the pantry" line without a category, and More options while no
+category is chosen: "Is this a consumable? Durable items don't go into
+HOME stock." OrderOnlineDialog: "Durable item — saving adds the expense; it
+never goes into HOME." HOME ItemEditor (keyword guess on ALL categories is
+durable; saving stays possible): "“{name}” looks like a durable item
+({path}). Durable items don't go into HOME stock — record it in MONEY
+instead." Import (DataView, `inventoryBackup.withoutDurables`): "{n}
+durable rows skipped (durable items don't go into HOME stock)." Restore of
+a backup stays exact.
+
+**5. Keywords.** Engine (`lib/categoryGuess.js`): "glasses" is not
+singularised (`NOT_PLURAL`: "Glasses" ≠ "Glass"); a rule may have
+`priority` (purpose words: they beat every score; after a linking word
+they don't count — "Torta della nonna"); a rule without a category only
+hides the words inside its phrases ("Mamma Emma" is gnocchi). HOME
+(`data/categoryKeywords.js`): docs/durable-lock.md section 5 with the 25/10
+changes — consumable phrases first (carta asciugatutto, sacchetti /
+filtro aspirapolvere, filtro fontanella, wet/dry food, dishwasher / oven
+detergent, wood cleaner, guanti nitrile, washing machine powder, Washing
+Machine Care words, ravviva colore, eye mask, Hair Care words, contact
+lenses, electrolytes powder, coffee syrup, macinato moka, poke bowl, fiori
+di zucca, table salt, tea bags), then the Durables tree: Gifts & Party
+(gift words only), Pet Accessories & Toys (+ generic toys), Home Decor (+
+lamp, lampada, lampu, flower pots, watering cans, decorations, "holder" as
+a kind word), Home Textiles (+ placemat, table mat, tovaglietta, "mat"),
+Footwear, Clothing (+ socks, calze, calzini, kaus kaki, collant, tights),
+Accessories (+ hats, sunglasses, fashion glasses), Glasses, Furniture,
+Kitchen Appliances, Kitchenware (+ glass, wine/drinking glasses,
+containers as kind words, bowl), Cleaning Appliances (+ mop, broom,
+bucket, scopa, mocio, secchio, scopino, paletta), Air & Climate,
+Electronics (everything electronic; + extension cords and power strips;
+no work/office words), and the Durables main for tools (scissors, stapler,
+silicone gun, screwdriver, hammer, drill, phone case). Moved out of
+consumable rules: brooms/mops/buckets (Sponges & Cloths), extension cords
+(Batteries & Bulbs), scissors/staplers (Stationery), pots/watering cans
+(Plants & Garden), Christmas trees/decorations (Seasonal), cat toys (Pet
+Treats & Care), hair treatments (Shampoo & Conditioner → Beauty Care ›
+Hair Care `3ff635c0-7fd1-46ff-ac49-8e408c032398`). "Lampada LED" / "Lampu
+LED" get no guess (bulb or lamp). MONEY (`data/budgetKeywords.js`):
+purpose words first — family (mamma, madre, papà, padre, ibu, bapak,
+ayah, sorella, fratello, adik, kakak, nipote, nipoti, keponakan, suocera,
+suocero, mertua, nonno, nonna, nenek, kakek, zio, zia, om, tante, cugino,
+cugina, sepupu; never the household's own words, never a real name) →
+Family Support, then work (work, working, kerja, lavoro, ufficio, office;
+"Microsoft Office" stays Software & Apps, "workout" doesn't match) →
+Work, then gift words → Shopping › Gifts. Accessories words (borsa, zaino,
+cintura, orologio, sunglasses) left Footwear. The purpose words also
+override the budget auto-fill with Add to HOME on (`moneyPurchase.budgetOf`,
+`isPurposeBudget`), unless the budget was picked by hand; remembered names
+stay the first layer.
+
+**6. "Apply the mapping to past purchases…"** (`budgetMap.pastPurchaseChanges`)
+never moves a purchase line without a HOME category, nor an expense whose
+current category is Work, Family Support or Trips & Holidays (main or any
+sub) — `CHOSEN_ON_PURPOSE_IDS`.
+
+**7. 026 data fixes** (by id, only while the value is still the expected
+one): the Action purchase of 17/10 (trip
+`1d47dd08-f03a-4df8-a214-ac00f671d54f`) — bra (expense
+`54dda4c1-dfdc-424a-9578-0e55c2f7d4c5`) → `appliances:clothing`; Satin
+Bonnet (`d7575954-3c5e-45d7-aea7-c70189ea18bc`), hair clip
+(`df31b3d4-b0ff-4e9b-afbc-dcc871139cb0`), Headband
+(`b3154fe2-b92f-4172-be9f-c01db9176963`) → `appliances:accessories`; Cat
+House Christmas Tree (`ecb05397-a0a5-4fe3-9545-383e8a5ab49d`), cat toy
+(`f5577c71-1527-4f8f-bf9a-f877225b4416`) → `appliances:pet`: the category
+kept on the line, its SHOP entry and the HOME side of the remembered name
+(its budget category kept); expenses unchanged. HOME item "Washing Machine
+Cleaner" `fb053da7-b1e3-49e6-9e15-dab6d5abd6a4`, its open SHOP entry
+`d84c6427-edf1-41bf-a588-ab26bef0869a` and its remembered name →
+`laundry:machine-care`. HOME item "Hair Gel"
+`7f586552-9cbb-449a-a059-a546dabf6f28` (+ remembered name) → Beauty Care ›
+Hair Care. Expense "Working Ear Plug" `62babc6c-234a-4549-9136-e8a82d8f1d16`
+→ Work. One transaction, safe to run twice, no table / function / policy /
+grant; one check SELECT (43 rows: ok / skipped / CHECK).
+
+**Tests.** `src/lib/durableLock.test.js` (the 253 HOME item names of
+25/10 — `src/data/liveItemNames.fixture.js` — none durable; every expected
+HOME / MONEY / lock result; engine; `lib/durable.js`; import),
+`src/data/homeCategories.fixture.js` (HOME categories live + 024 + 025 +
+026), `src/components/durableLock.render.test.jsx` (locked row and note,
+Confirm note, More options, SHOP section title, Arrived without a dialog,
+the HOME editor warning), additions in `moneyPurchase`, `purchase`,
+`budgetMap`, `budgetKeywords`, `categoryGuess` tests, and
+`supabase/migrations.test.js` block "026" (on the 025 fixture: run twice,
+MONEY renames before / after, a mapping row chosen by hand kept, Shopping ›
+Electronics kept with an expense, Reopen + Confirm again with the app's
+own code puts nothing durable into HOME, "Apply the mapping…" moves none of
+the 31 Action expenses nor Working Ear Plug, every check ok). The 025
+block's fixture is now shared (`actionDatabase()`), and its "Apply the
+mapping" test says the app moves none of the 31 (the six were the known
+case this round fixes).
+
+**For round 7 (Trips).** Family Support and Work are never put into a trip
+automatically (like Housing & Utilities, Subscription, Savings &
+Investments). A durable bought on a trip stays locked (Add to HOME off, no
+1×), whatever budget the trip gives it.
+
+**Next rounds, in this order.**
+
+1. A small "similar name safety net" round: when adding in SHOP or in
+   MONEY (Add to HOME on), warn "Similar item in HOME: …" / "Already on
+   your SHOP list" and offer to use the existing item, even when its stock
+   is high.
+2. Round 6D (section 9D).
+3. Later: a "Kids" durable sub under Durables when the household has a
+   child (baby bottles, pacifiers… today Baby › Feeding).
 
 ---
 

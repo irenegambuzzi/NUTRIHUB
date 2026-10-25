@@ -11,7 +11,11 @@
 //     weak counts as a normal keyword (the older rules below still do this
 //     on purpose for brands like "Fairy" and "Dash"; new rules must not)
 //   - kind: words that say what the product is, so they beat the flavour
-//     or ingredient ("strawberry yogurt" is a yogurt, not fruit)
+//     or ingredient ("strawberry yogurt" is a yogurt, not fruit; "Butter
+//     Glass Container" is a container)
+//   - a rule with no category only hides the words inside its phrases
+//     (no guess of its own): when in doubt, no guess is better than a
+//     wrong one
 // Each rule: [categoryId, subcategoryId (or null), keywords, options].
 
 export const CATEGORY_RULES = [
@@ -266,7 +270,7 @@ export const CATEGORY_RULES = [
   [
     'cleaning',
     'cleaning:tools',
-    'sponge|spugna|spugne|spons|cloth|panno|panni|panno microfibra|microfiber cloth|lap|kain lap|mop|scopa|broom|sapu|mocio|pel lantai|kain pel|bucket|secchio|ember|rubber gloves|guanti in gomma|sarung tangan karet|scrubber|paglietta|spazzolone|brush|toilet brush|scopino|swiffer|vileda|scotch brite',
+    'sponge|spugna|spugne|spons|cloth|panno|panni|panno microfibra|microfiber cloth|lap|kain lap|pel lantai|kain pel|rubber gloves|guanti in gomma|sarung tangan karet|scrubber|paglietta|spazzolone|brush|swiffer|vileda|scotch brite',
     { weak: 'pel' },
   ],
   [
@@ -308,7 +312,7 @@ export const CATEGORY_RULES = [
   [
     'toiletries',
     'toiletries:hair',
-    'shampoo|sampo|conditioner|balsamo|balsamo capelli|hair mask|maschera capelli|hair oil|minyak rambut|hair spray|lacca|gel capelli|hair gel|pomade|tinta capelli|hair dye|cat rambut|pantene|head shoulders|head and shoulders|garnier fructis|elvive|sunsilk|clear|dove shampoo|tresemme|schwarzkopf|syoss|gliss|herbal essences|emir',
+    'shampoo|sampo|conditioner|balsamo|balsamo capelli|tinta capelli|hair dye|cat rambut|pantene|head shoulders|head and shoulders|garnier fructis|elvive|sunsilk|clear|dove shampoo|tresemme|schwarzkopf|syoss|gliss|herbal essences|emir',
     { kind: 'shampoo|sampo|conditioner|balsamo' },
   ],
   [
@@ -379,7 +383,7 @@ export const CATEGORY_RULES = [
   [
     'household',
     'household:batteries',
-    'battery|batteries|batterie|batteria|pile|baterai|batre|light bulb|lampadina|lampadine|bohlam|lampu|led bulb|lampadina led|duracell|energizer|varta|alkaline|abc baterai|panasonic batteries|philips lampadina|osram|candle|candele|candela|lilin|matches|fiammiferi|korek api|lighter|accendino|accendini|extension cord|prolunga|ciabatta elettrica|kabel roll|power strip|adapter',
+    'battery|batteries|batterie|batteria|pile|baterai|batre|light bulb|lampadina|lampadine|bohlam|led bulb|lampadina led|duracell|energizer|varta|alkaline|abc baterai|panasonic batteries|philips lampadina|osram|candle|candele|candela|lilin|matches|fiammiferi|korek api|lighter|accendino|accendini|adapter',
     { weak: 'pile|alkaline|adapter' },
   ],
   [
@@ -390,8 +394,7 @@ export const CATEGORY_RULES = [
   ],
 
   // ── Miscellaneous / Seasonal ────────────────────────────────────
-  ['misc', 'misc:gifts', 'gift|regalo|regali|kado|hadiah|gift wrap|carta regalo|kertas kado|birthday card|biglietto di auguri|kartu ucapan|party|festa|balloons|palloncini|balon|party supplies|candeline|lilin ulang tahun|flowers|fiori|bunga|bouquet|mazzo di fiori'],
-  ['misc', 'misc:seasonal', 'christmas|natale|natal|easter|pasqua|paskah|halloween|lebaran|idul fitri|ketupat|parcel lebaran|uova di pasqua|easter egg|christmas tree|albero di natale|presepe|addobbi|decorations|decorazioni'],
+  ['misc', 'misc:seasonal', 'christmas|natale|natal|easter|pasqua|paskah|halloween|lebaran|idul fitri|ketupat|parcel lebaran|uova di pasqua|easter egg'],
 
   // ── Round 6C: new categories (supabase/024_categories.sql) and gaps ─
   // Before the durable block, so consumables still win ties. A rule for a
@@ -412,20 +415,20 @@ export const CATEGORY_RULES = [
   ['frozen', 'frozen:meat', 'frozen meat|frozen chicken breast|frozen chicken wings|petto di pollo surgelato|frozen beef|frozen burger|frozen sausage|frozen meatballs|carne surgelata|pollo surgelato|hamburger surgelati|hamburger di bovino surgelati|polpette surgelate|polpette di bovino surgelate|cotolette surgelate|daging beku|ayam beku', { kind: 'frozen meat|carne surgelata' }],
   ['toiletries', 'toiletries:feminine', 'sanitary pads|assorbenti|assorbente|assorbenti notte|assorbenti interni|tampons|panty liners|pantyliner|proteggislip|salvaslip|menstrual cup|coppetta mestruale|period pants|mutande mestruali|intimate wash|detergente intimo|pembalut|nuvenia|tampax|carefree|laurier|softex|saugella|lactacyd', { weak: 'lines|charm|always|chilly', kind: 'assorbenti|sanitary pads|tampons|panty liners|pembalut' }],
   ['pantry-staples', 'pantry-staples:world', 'nori|alga nori|nori sushi|sushi nori|sushi seaweed|alghe per sushi|seaweed|alghe|rumput laut|rice paper|carta di riso|kimchi|tteokbokki|tteok|tofu|tempeh|seitan|instant miso|miso soup|dashi|katsuobushi|furikake|pickled ginger|zenzero marinato|dried shiitake|shiitake secchi|black fungus|funghi neri|tapioca pearls|perle di tapioca|glutinous rice flour|farina di riso glutinoso|tepung ketan|tofu powder|cibo etnico|asian food|world food', { weak: 'tahu' }],
-  ['household', 'household:stationery', 'stationery|cancelleria|penna|penne a sfera|biro|pencil|matita|matite|evidenziatore|highlighter|quaderno|quaderni|post it|sticky notes|envelope|buste da lettera|printer paper|carta per stampante|carta a4|risma|scissors|forbici|stapler|spillatrice|graffette|paper clips|correction tape|bianchetto|cartellina|raccoglitore|etichette|stabilo|staedtler|pritt|uhu|colla|colla stick|glue stick|nastro adesivo|scotch tape|selotip|lakban|ink cartridge|cartuccia|cartucce|cartucce stampante|cartuccia stampante|cartucce per stampante|inchiostro stampante|printer ink|toner stampante|tinta printer|pulpen|buku tulis', { weak: 'pen|tape|glue|lem' }],
+  ['household', 'household:stationery', 'stationery|cancelleria|penna|penne a sfera|biro|pencil|matita|matite|evidenziatore|highlighter|quaderno|quaderni|post it|sticky notes|envelope|buste da lettera|printer paper|carta per stampante|carta a4|risma|graffette|paper clips|correction tape|bianchetto|cartellina|raccoglitore|etichette|stabilo|staedtler|pritt|uhu|colla|colla stick|glue stick|nastro adesivo|scotch tape|selotip|lakban|ink cartridge|cartuccia|cartucce|cartucce stampante|cartuccia stampante|cartucce per stampante|inchiostro stampante|printer ink|toner stampante|tinta printer|pulpen|buku tulis', { weak: 'pen|tape|glue|lem' }],
   ['household', 'household:car-care', 'car care|engine oil|motor oil|olio motore|olio per motore|oli mesin|oli motor|antifreeze|antigelo|liquido tergicristalli|liquido lavavetri|wiper fluid|screen wash|car shampoo|shampoo auto|car wax|cera auto|air radiator|air aki|deodorante auto|car air freshener|profumatore auto|arbre magique|pengharum mobil|spugna auto|wiper blades|spazzole tergicristallo|adblue', { weak: 'lavavetri' }],
   ['household', 'household:air', 'air freshener|room spray|deodorante per ambienti|deodorante ambienti|profumatore per ambienti|profumo per ambienti|diffusore|diffusore per ambienti|bastoncini profumati|candela profumata|candele profumate|scented candle|incense|incenso|toilet deodorizer|deodorante wc|tavolette wc|pengharum ruangan|pewangi ruangan|deodoran ruangan|glade|air wick|ambi pur|stella pengharum|bayfresh|febreze'],
   // "vape" alone is the e-cigarette (MONEY Cigarettes & Vape), so only
   // "vape zanzare" and "vape magic" are here.
   ['household', 'household:pest', 'insect spray|insetticida|insetticidi|zanzare|anti zanzare|anti zanzara|antizanzare|zampirone|zampironi|mosquito|mosquito repellent|repellente|autan|vape zanzare|vape magic|piastrine antizanzare|baygon|hit spray|obat nyamuk|trappola topi|mouse trap|esca formiche|ant bait|antitarme|naftalina|mothballs', { weak: 'raid' }],
   // "plant" is weak here, so "Alpro plant milk" stays a plant milk.
-  ['household', 'household:garden', 'pianta|piante|terriccio|potting soil|fertilizer|concime|fertilizzante|flower pot|vaso per piante|semi da piantare|bulbi|giardinaggio|annaffiatoio|watering can|pupuk|pot bunga|cactus|orchidea|substral', { weak: 'cifo|plant' }],
+  ['household', 'household:garden', 'pianta|piante|terriccio|potting soil|fertilizer|concime|fertilizzante|semi da piantare|bulbi|giardinaggio|pupuk|cactus|orchidea|substral', { weak: 'cifo|plant' }],
   // Laundry Fragrance (the old "Perfume" sub of Laundry Supplies). The
   // Coccolino phrases beat "Coccolino" alone (still Fabric Softener).
   ['laundry', 'e8e447c7-3b68-4eee-81e8-86915839565f', 'laundry perfume|laundry fragrance|laundry scent|scent booster|profumo bucato|profumo per bucato|profumatore bucato|profuma bucato|perle profumate|perle di profumo|essenza bucato|essenza lavatrice|cristalli profumati|unstoppables|air fresh essence|fragranza coccolino|coccolino fragranza|coccolino profumo|profumo coccolino|coccolino perfume|coccolino fragrance|fragranza bucato|fragranza per bucato|fragranza lavatrice'],
   ['laundry', '01386438-f2d4-418b-bcd6-082874075213', 'color catcher|colour catcher|acchiappacolore|catturacolore|salvacolore|foglietti salvacolore|ravviva nero|ravviva colori|black reviver|clothing reviver|color fade|dr beckmann'],
-  ['pet', '3d924169-d334-44ee-947a-3e3a498706fc', 'cat treats|dog treats|snack per cani|snack per gatti|catnip|erba gatta|erba per gatti|cat grass|hairball|anti hairball|antibolo|pasta al malto|malto per gatti|dreamies|cat toy|gioco per gatti', { kind: 'catnip|hairball|erba gatta' }],
-  ['cleaning', 'cleaning:surface', 'washing machine cleaner|pulizia lavatrice|anticalcare lavatrice|igienizzante lavatrice|calgon|dishwasher cleaner|pulizia lavastoviglie|curalavastoviglie'],
+  ['pet', '3d924169-d334-44ee-947a-3e3a498706fc', 'cat treats|dog treats|snack per cani|snack per gatti|catnip|erba gatta|erba per gatti|cat grass|hairball|anti hairball|antibolo|pasta al malto|malto per gatti|dreamies', { kind: 'catnip|hairball|erba gatta' }],
+  ['cleaning', 'cleaning:surface', 'dishwasher cleaner|pulizia lavastoviglie|curalavastoviglie'],
   ['snacks', 'snacks:savory', 'chicken feet snack|ceker snack|ceker pedas|beef jerky|jerky|dendeng|seaweed snack|nori snack|rice crackers|senbei'],
   ['snacks', 'snacks:sweet', 'pocky|mochi|yan yan|hello panda|koala march|choco pie|lotte'],
   ['pantry-staples', 'pantry-staples:pasta', 'glass noodles|vermicelli di riso|spaghetti di riso|noodles di riso|shirataki|somen|mi goreng|mie goreng|ramyeon|ramyun|samyang|nongshim|shin ramyun|nissin|cup noodles|soun|misoa|yakisoba|buldak'],
@@ -434,29 +437,120 @@ export const CATEGORY_RULES = [
   ['frozen', 'frozen:meals', 'frozen onion rings|anelli di cipolla'],
   ['produce', 'produce:herbs', 'basilico in vaso|basil plant|herb pot'],
 
-  // ── Home & Appliances (durable, last so consumables win) ────────
+  // ── Round 9F: consumables that must win (supabase/026_durable_lock.sql) ─
+  // Each phrase has more words than the durable word inside it, so the
+  // whole name decides: "sacchetti aspirapolvere" are bags, not a vacuum
+  // cleaner; "filtro fontanella" is a filter, not the fountain.
+  ['household', 'household:paper', 'carta asciugatutto|asciugatutto|rotolo asciugatutto'],
+  ['household', 'household:bags', 'filtro aspirapolvere|vacuum filter|hepa filter|kantong vacuum'],
+  ['pet', 'pet:litter', 'fountain filter|water fountain filter|fontana filter|fontana water filter|pump filter|filtro fontanella|filtro fontana|collare antipulci|flea collar'],
+  ['pet', 'pet:food', 'wet food|cat wet food|dry food|cat dry food|makanan basah kucing'],
+  ['cleaning', 'cleaning:dish', 'dishwasher detergent|detergente lavastoviglie|dishwasher pods|dishwasher powder|dishwasher tabs'],
+  ['cleaning', 'cleaning:surface', 'oven detergent|detergente forno|sgrassatore forno|oven spray|descaler|decalcificante|anticalcare bollitore|coffee machine descaler|wood cleaner|detergente legno|ravviva legno'],
+  ['cleaning', 'cleaning:tools', 'guanti nitrile|nitrile gloves|guanti monouso|latex gloves'],
+  ['laundry', 'laundry:detergent', 'washing machine powder|washing machine detergent|washing machine liquid'],
+  // Washing Machine Care (new in 026): cleaners and descalers for the machine.
+  ['laundry', 'laundry:machine-care', 'washing machine cleaner|washing machine cleaner tabs|pulisci lavatrice|pulizia lavatrice|anticalcare lavatrice|igienizzante lavatrice|pembersih mesin cuci|calgon'],
+  ['laundry', '01386438-f2d4-418b-bcd6-082874075213', 'ravviva colore'],
+  ['toiletries', 'toiletries:oral', 'testine spazzolino|brush heads|toothbrush heads|replacement heads'],
+  ['personal-care', 'personal-care:skin', 'eye mask|under eye mask|eye patch|eye patches|maschera occhi|face serum|serum milk|siero viso'],
+  // Beauty Care › Hair Care (made in the app, was "Hair Water"): treatments
+  // and styling. Washing the hair stays Toiletries › Shampoo & Conditioner.
+  ['personal-care', '3ff635c0-7fd1-46ff-ac49-8e408c032398', 'hair oil|olio capelli|olio per capelli|minyak rambut|hair mask|maschera capelli|hair serum|siero capelli|hair gel|gel capelli|hair spray|lacca|hair wax|cera capelli|pomade|hair water|acqua per capelli|hair mist|hair tonic'],
+  ['health', 'health:vitamins', 'electrolytes powder|electrolyte powder|eletrolytes powder|elettroliti|sali minerali|oralit'],
+  // Contact Lenses (new in 026): bought again, so HOME stock. Glasses are durables.
+  ['health', 'health:contact-lenses', 'contact lenses|contact lens|lenti a contatto|lensa kontak|soft lens|lens solution|soluzione lenti|soluzione per lenti|cairan lensa'],
+  ['beverages', 'beverages:coffee-tea', 'coffee syrup|sciroppo caffe|macinato moka|caffe moka|tea bag|tea bags'],
+  ['deli', 'deli:ready', 'poke|poke bowl|acai bowl|buddha bowl'],
+  ['produce', 'produce:vegetables', 'fiori di zucca|zucchini flowers'],
+  ['pantry-staples', 'pantry-staples:spices', 'table salt'],
+  // Bulbs and lamps share words: "Lampada LED" can be either, so it gets
+  // no guess (the same phrase in both rules makes it unclear).
+  ['household', 'household:batteries', 'lampada led|lampu led'],
+
+  // ── Durables (HOME main `appliances`, renamed by 026): last, so the
+  // consumables above win. Never HOME stock, never 1× (lib/inventory.js
+  // isDurable). All in one main, so two durable words never make a guess
+  // unclear: the earlier rule wins — gifts before toys, the pet's things
+  // before decor ("Cat House Christmas Tree"). "kind" words say what the
+  // product is ("Butter Glass Container" is a container). Rules for the
+  // subs 026 adds fall back to the main until it is run.
+  // Gifts & Party (`misc:gifts`, moved here by 026 with its id): first, so
+  // a gift word beats a toy word ("regalo giocattolo" is a gift). Only the
+  // gift words: party things that are used up (balloons, candles, flowers,
+  // cards, wrapping paper) get no guess until it is decided where they go.
+  ['appliances', 'misc:gifts', 'gift|regalo|regali|kado|hadiah'],
+  [null, null, 'gift wrap|carta regalo|kertas kado'],
+  [
+    'appliances',
+    'appliances:pet',
+    'cat toy|dog toy|gioco per gatti|giochi per gatti|giocattolo gatto|mainan kucing|scratching post|tiragraffi|cat tree|albero per gatti|cat house|cat bed|pet bed|cuccia|cucce|casetta gatto|lettino gatto|kasur kucing|rumah kucing|cat carrier|trasportino|kandang kucing|gabbia|leash|guinzaglio|collare|cat bowl|ciotola gatto|ciotola per gatti|mangkuk kucing|water fountain|cat water fountain|cat fountain|pet fountain|fontanella|fontanella gatto|fontanella per gatti|fontana per gatti|litter box|cat litter box|lettiera chiusa|cassetta lettiera|toilette per gatti|bak pasir kucing|toy|giocattolo|giocattoli|mainan|peluche|plush',
+    { weak: 'fontana' },
+  ],
+  [
+    'appliances',
+    'appliances:decor',
+    'decoration|decorazione|decorazioni|decorations|addobbi|ornament|dekorasi|hiasan|christmas tree|albero di natale|presepe|toy elf|statuetta|statue|soprammobile|vaso decorativo|cornice|photo frame|bingkai foto|poster|quadro|candle holder|portacandele|incense holder|portaincenso|porta incenso|incense burner|wreath|ghirlanda|fairy lights|luci di natale|string lights|lucine|wall clock|orologio da parete|jam dinding|flower pot|vaso per piante|pot bunga|annaffiatoio|watering can|lamp|lampada|lampu|desk lamp|lampada da scrivania|lampu meja|holder|lampada led|lampu led',
+    { kind: 'holder' },
+  ],
+  [
+    'appliances',
+    'appliances:textiles',
+    'towel|tea towel|asciugamano|asciugamani|telo mare|telo bagno|accappatoio|bathrobe|handuk|bed sheet|lenzuola|lenzuolo|copripiumino|duvet|piumone|piumino letto|pillow|cuscino|cuscini|pillowcase|federa|blanket|coperta|selimut|bantal|sprei|curtain|tenda|tende|gorden|tablecloth|tovaglia|tappeto|rug|carpet|karpet|bath mat|tappetino bagno|doormat|zerbino|keset|placemat|table mat|tovaglietta|tovagliette|mat',
+    { weak: 'plaid', kind: 'mat' },
+  ],
+  [
+    'appliances',
+    'appliances:footwear',
+    'shoe|shoes|scarpe|scarpa|sneakers|scarpe da ginnastica|stivali|boots|sandali|sandalo|sandal|ciabatte|slippers|pantofole|infradito|flip flops|sandal jepit|sepatu|sendal|crocs|birkenstock|havaianas|tacchi|heels|mocassini|loafers|solette|insoles|lacci scarpe|shoelaces|tali sepatu|shoe deodorizer|deodorante scarpe|shoe spray',
+  ],
+  [
+    'appliances',
+    'appliances:clothing',
+    'clothes|clothing|vestiti|abbigliamento|maglia|maglietta|t shirt|shirt|camicia|felpa|hoodie|sweater|maglione|cardigan|pantaloni|trousers|pants|jeans|leggings|gonna|skirt|dress|vestito|abito|giacca|jacket|cappotto|coat|piumino|giubbotto|underwear|intimo|mutande|boxer|bra|reggiseno|calze|calzini|socks|kaus kaki|kaos kaki|collant|tights|pigiama|pajamas|piyama|costume da bagno|swimsuit|bikini|baju|kaos|celana|kemeja|jaket',
+    { weak: 'slip|bh|costume' },
+  ],
+  [
+    'appliances',
+    'appliances:accessories',
+    'accessories|accessori|bonnet|satin bonnet|hair bonnet|cuffia per capelli|hair clip|clip capelli|pinza capelli|mollettine|mollette|fermaglio|fermacapelli|jepit rambut|headband|hairband|cerchietto|fascia capelli|bandana|scrunchie|elastico capelli|ikat rambut|hair tie|borsa|zaino|backpack|handbag|tote bag|wallet|portafoglio|dompet|belt|cintura|sunglasses|occhiali da sole|kacamata hitam|fashion glasses|umbrella|ombrello|payung|hat|cappello|berretto|beanie|knit cap|scarf|sciarpa|syal|watch|orologio|jam tangan|jewelry|gioielli|collana|necklace|kalung|bracciale|bracelet|gelang|orecchini|earrings|anting|anello|cincin|keychain|portachiavi',
+    { weak: 'bando|tas|cuffia' },
+  ],
+  // Glasses (new in 026): "Glasses" alone are to see with (see
+  // NOT_PLURAL in lib/categoryGuess.js); drinking glasses are kitchenware.
+  ['appliances', 'appliances:glasses', 'glasses|eyeglasses|reading glasses|occhiali|occhiali da vista|kacamata|kacamata baca'],
+  ['appliances', 'appliances:furniture', 'desk|scrivania|chair|sedia|sedie|tavolo|table|armadio|wardrobe|lemari|mensola|shelf|rak|sofa|divano|meja|kursi'],
   [
     'appliances',
     'appliances:kitchen',
-    'oven|forno|microwave|microonde|kettle|bollitore|teko listrik|toaster|tostapane|blender|frullatore|frullatore a immersione|mixer|planetaria|stand mixer|food processor|robot da cucina|coffee machine|macchina caffe|macchina del caffe|macchinetta del caffe|moka|caffettiera|french press|air fryer|friggitrice|friggitrice ad aria|fridge|refrigerator|frigorifero|frigo|kulkas|freezer|congelatore|dishwasher|lavastoviglie machine|rice cooker|magic com|magicom|slow cooker|pressure cooker|pentola a pressione|presto|induction hob|piano cottura|piano a induzione|kompor|kompor gas|hob|juicer|centrifuga|estrattore|spremiagrumi|citrus press|bread maker|macchina del pane|sandwich maker|piastra|waffle maker|grill|griglia elettrica|bilancia da cucina|kitchen scale|timbangan dapur|thermomix|bimby|kenwood|kitchenaid|de longhi|delonghi|nespresso machine|smeg|philips airfryer|cosori|ninja',
+    'oven|forno|microwave|microonde|kettle|bollitore|teko listrik|toaster|tostapane|blender|frullatore|frullatore a immersione|mixer|planetaria|stand mixer|food processor|robot da cucina|coffee machine|macchina caffe|macchina del caffe|macchinetta del caffe|moka|caffettiera|french press|air fryer|friggitrice|friggitrice ad aria|fridge|refrigerator|frigorifero|frigo|kulkas|lemari es|freezer|congelatore|dishwasher|lavastoviglie machine|rice cooker|magic com|magicom|slow cooker|pressure cooker|pentola a pressione|presto|induction hob|piano cottura|piano a induzione|kompor|kompor gas|hob|juicer|centrifuga|estrattore|spremiagrumi|citrus press|bread maker|macchina del pane|sandwich maker|piastra|waffle maker|grill|griglia elettrica|bilancia da cucina|kitchen scale|timbangan dapur|thermomix|bimby|kenwood|kitchenaid|de longhi|delonghi|nespresso machine|smeg|philips airfryer|cosori|ninja',
     { weak: 'presto|grill|frigo|ninja' },
   ],
   [
     'appliances',
     'appliances:kitchenware',
-    'frying pan|padella|padelle|saucepan|pentola|pentole|casseruola|wajan|panci|wok|knife|knives|coltello|coltelli|pisau|pisau dapur|cutting board|tagliere|talenan|spatula|spatola|sutil|mestolo|ladle|centong|colander|scolapasta|saringan|baking tray|teglia|loyang|baking dish|pirofila|food container|food containers|contenitore|contenitori|contenitori per alimenti|tupperware|lock lock|lock n lock|wadah makanan|cutlery|posate|sendok|garpu|fork|spoon|cucchiaio|cucchiai|forchetta|forchette|plates|piatti fondi|piatti piani|piring|bowl|ciotola|ciotole|mangkok|glasses|bicchieri|gelas|mug|tazza|tazze|cangkir|teapot|teiera|thermos|borraccia|water bottle|botol minum|lunch box|portapranzo|kotak makan|grater|grattugia|parutan|peeler|pelapatate|whisk|frusta|rolling pin|mattarello|measuring cup|misurino|apriscatole|can opener|cavatappi|corkscrew|oven gloves|presine|kitchen towel|strofinaccio|serbet dapur|ikea|tescoma|lagostina|ballarini|bialetti|alessi|pyrex',
-    { weak: 'ikea|mug|bowl|fork|spoon' },
+    'frying pan|padella|padelle|saucepan|pentola|pentole|casseruola|wajan|panci|wok|knife|knives|coltello|coltelli|pisau|pisau dapur|cutting board|tagliere|talenan|spatula|spatola|sutil|mestolo|ladle|centong|colander|scolapasta|saringan|baking tray|teglia|loyang|baking dish|pirofila|food container|food containers|butter container|glass container|container|contenitore|contenitori|contenitori per alimenti|wadah|wadah makanan|tupperware|lock lock|lock n lock|cutlery|posate|sendok|garpu|fork|spoon|forchetta|forchette|cucchiaio|cucchiai|plates|piatti fondi|piatti piani|piring|bowl|ciotola|ciotole|mangkok|mangkuk|glass|wine glass|wine glasses|drinking glass|drinking glasses|bicchiere|bicchieri|gelas|measuring glass|liquid measuring glass|bicchiere graduato|caraffa graduata|mug|tazza|tazze|cangkir|teapot|teiera|thermos|borraccia|water bottle|botol minum|lunch box|portapranzo|kotak makan|grater|grattugia|parutan|peeler|pelapatate|whisk|frusta|rolling pin|mattarello|measuring cup|misurino|apriscatole|can opener|cavatappi|corkscrew|oven gloves|presine|kitchen towel|strofinaccio|serbet dapur|paper towel holder|kitchen roll holder|portarotolo|ikea|tescoma|lagostina|ballarini|bialetti|alessi|pyrex',
+    { weak: 'ikea|mug|fork|spoon', kind: 'container|contenitore|contenitori|wadah' },
   ],
-  ['appliances', 'appliances:cleaning', 'vacuum|vacuum cleaner|aspirapolvere|aspirapolvere robot|robot vacuum|robot aspirapolvere|penyedot debu|steam mop|lavapavimenti|vaporetto|folletto|dyson|roomba|rowenta|hoover|washing machine|lavatrice|mesin cuci|dryer|asciugatrice|steam iron|ferro da stiro|setrika|ironing board|asse da stiro|meja setrika'],
+  [
+    'appliances',
+    'appliances:cleaning',
+    'vacuum|vacuum cleaner|aspirapolvere|aspirapolvere robot|robot vacuum|robot aspirapolvere|penyedot debu|steam mop|lavapavimenti|vaporetto|folletto|dyson|roomba|rowenta|hoover|washing machine|lavatrice|mesin cuci|dryer|asciugatrice|steam iron|ferro da stiro|setrika|ironing board|asse da stiro|meja setrika|mop|mocio|scopa|broom|sapu|bucket|secchio|ember|scopino|toilet brush|paletta|mollette bucato|clothes pegs|jepitan baju|stendibiancheria|drying rack|jemuran',
+    { kind: 'mop|mocio|scopa|broom|bucket|secchio' },
+  ],
   [
     'appliances',
     'appliances:air',
     'air purifier|purificatore|purificatore d aria|depuratore|air conditioner|condizionatore|climatizzatore|ac portatile|ac split|pendingin ruangan|fan|ventilatore|kipas|kipas angin|heater|stufa|stufetta|termoventilatore|pemanas ruangan|dehumidifier|deumidificatore|humidifier|umidificatore|air cooler|raffrescatore|xiaomi purifier|dyson fan',
   ],
+  // Every electronic thing, in one place (work or not: what it was bought
+  // for is the MONEY side, data/budgetKeywords.js).
   [
     'appliances',
     'appliances:electronics',
-    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|desk|scrivania|meja kerja|office chair|sedia da ufficio|sedia ufficio|kursi kantor|lamp|lampada da scrivania|desk lamp|lampu meja|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico',
-    { weak: 'phone|hp|tv|lamp|cable|tablet|pc' },
+    'laptop|notebook pc|computer|pc|monitor|keyboard|tastiera|mouse|printer|stampante|headphones|cuffie|earphones|auricolari|earbuds|webcam|router|modem|charger|caricatore|caricabatterie|cable|cavo usb|usb cable|kabel data|power bank|hard disk|ssd|usb stick|chiavetta usb|flashdisk|sd card|memory card|tablet|ipad|smartphone|phone|telefono|hp|tv|televisore|televisi|speaker|cassa bluetooth|smartwatch|hair dryer|asciugacapelli|phon|hair straightener|piastra capelli|catokan|electric toothbrush|spazzolino elettrico|shaver|rasoio elettrico|extension cord|prolunga|ciabatta elettrica|multipresa|power strip|adattatore presa|kabel roll',
+    { weak: 'phone|hp|tv|cable|tablet|pc' },
   ],
+  // Durables with no sub-category of their own: Durables main only.
+  ['appliances', null, 'scissors|forbici|stapler|spillatrice|silicone gun|pistola silicone|pistola per silicone|screwdriver|cacciavite|hammer|martello|drill|trapano|phone case|custodia telefono|cover telefono'],
 ]

@@ -46,8 +46,11 @@ export function packSizePatch(pantry, unit, packSize) {
 //   ready           – every question that must be answered is
 // `pantry` is the item (or group) the line restocks, for showing; `target`
 // the item whose stock really changes — the chosen variant for a group.
-export function purchaseLine(item, pantryItems, answer = {}) {
-  const durable = isDurable(item)
+// A durable line (its HOME category is in the Durables tree, or
+// `durableBudget`: its budget category is a durable one, lib/durable.js)
+// is an expense only: no HOME item, no stock (plan 9F).
+export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = false } = {}) {
+  const durable = isDurable(item) || durableBudget
   const entry = durable ? null : pantryItemFor(item, pantryItems)
   const group = entry?.is_group ? entry : null
   // Until the user picks one, a group line takes the first variant its
