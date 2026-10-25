@@ -2211,6 +2211,24 @@ by, so "Party pack" is not "Party", while they never count towards the
 whole name ("Ace pz" is still the weak "Ace"). `normalizeName` — the key
 of a remembered name — is unchanged.
 
+**Decisions 14a and 14b (25/10, second follow-up; code and tests only).**
+
+- 14a. MONEY "Add expense": with Add to HOME on and NO HOME category, the
+  budget filled in from the name stays (e.g. "Marlboro" → Cigarettes &
+  Vape, on or off); it no longer becomes Uncategorized. With a HOME
+  category the mapping decides, as before (purpose words first); a budget
+  picked by hand always wins (`lib/moneyPurchase.js` budgetOf).
+- 14b. Services and subscriptions lock Add to HOME like durables, with
+  their own note "Service ({category}) — expense only, never in HOME
+  stock." `SERVICE_MONEY_CATEGORY_IDS` (data/constants.js), next to the
+  unchanged durable list: Subscription, Housing & Utilities, Going out,
+  Bank & Fee, Savings & Investments, Entertainment (mains), Health ›
+  Doctor & Tests / Dentist, Personal Care › Hairdresser, Pets › Veterinary /
+  Pet Sitting, and only the four Car / Vehicle subs (Fuel, Maintenance,
+  Insurance & Tax, Parking & Tolls) — never the main, so Household
+  Supplies › Car Care stays a consumable. Same lock in Order online and
+  Arrived.
+
 **For round 7 (Trips).** Family Support and Work are never put into a trip
 automatically (like Housing & Utilities, Subscription, Savings &
 Investments). A durable bought on a trip stays locked (Add to HOME off, no

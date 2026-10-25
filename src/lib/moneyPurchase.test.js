@@ -73,7 +73,7 @@ describe('round 9F: the durable lock', () => {
     expect(rowLine({ ...byBudget, budgetId: 'groceries' }, pantry, c)).toMatchObject({ home: true, lock: null })
     expect(rowLine({ ...sandals, categoryId: 'dairy', subcategoryId: '' }, pantry, c)).toMatchObject({ home: true, lock: null })
     // An auto-filled durable budget locks too, while Add to HOME is off.
-    expect(rowLine(row({ name: 'Zara', priceText: '30', autoBudgetId: 'shoes' }), pantry, c).lock).toEqual({ source: 'money', name: 'Footwear' })
+    expect(rowLine(row({ name: 'Zara', priceText: '30', autoBudgetId: 'shoes' }), pantry, c).lock).toEqual({ source: 'money', kind: 'durable', name: 'Footwear' })
   })
 
   it('a locked row is never 1× and adds nothing to HOME, whatever was ticked before', () => {

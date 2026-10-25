@@ -8,7 +8,7 @@ vi.mock('./supabaseClient', () => ({ supabase: {} }))
 const { guessCategory, singular, createGuesser } = await import('./categoryGuess')
 const { budgetAutoFill, budgetKeywordPicks, suggestBudgetCategories, suggestCategory } = await import('./categorySuggest')
 const { budgetOf, defaultBudget, emptyRow, homeNote, rowLine } = await import('./moneyPurchase')
-const { durableLock, durableLookalike, isChosenOnPurpose, isDurableBudget, isDurableOrder, isPurposeBudget, lockNote } = await import('./durable')
+const { durableLock, durableLookalike, isChosenOnPurpose, isDurableBudget, isDurableOrder, isLockedBudget, isPurposeBudget, isServiceBudget, lockNote, orderLock } = await import('./durable')
 const { LIVE_ITEM_NAMES } = await import('../data/liveItemNames.fixture')
 const { HOME_AFTER_026, HOME_BEFORE_026, homeTree } = await import('../data/homeCategories.fixture')
 const { LIVE_MONEY_CATEGORIES, MONEY_CATEGORIES_024 } = await import('../data/moneyCategories.fixture')
@@ -89,13 +89,14 @@ const homeGuess = (name, world = AFTER) => {
 
 // A MONEY "Add expense" row as PurchaseForm fills it in from the name:
 // the HOME category (first HOME suggestion), the budget auto-fill (first
-// budget chip), then what the row shows.
-function moneyRow(name, world = AFTER) {
+// budget chip), then what the row shows. `extra`: fields set by hand
+// afterwards (e.g. { addToHome: true }).
+function moneyRow(name, world = AFTER, extra = {}) {
   const tree = homeTree(world.home)
   const ctx = { expenseCategories: world.money, inventoryCategories: world.home, mapRows: world.mapRows }
   const context = { memory: new Map(), pantryByName: new Map(), ...tree, expenseCategories: world.money, budgetFor: (pick) => defaultBudget(pick, ctx) || null }
   const pick = suggestCategory(name, context)
-  const row = { ...emptyRow(1), name, priceText: '1', categoryId: pick?.categoryId ?? '', subcategoryId: pick?.subcategoryId ?? '', autoBudgetId: budgetAutoFill(suggestBudgetCategories(name, context))?.expenseCategoryId ?? '' }
+  const row = { ...emptyRow(1), name, priceText: '1', categoryId: pick?.categoryId ?? '', subcategoryId: pick?.subcategoryId ?? '', autoBudgetId: budgetAutoFill(suggestBudgetCategories(name, context))?.expenseCategoryId ?? '', ...extra }
   const line = rowLine(row, [], ctx)
   return {
     home: pick ? homePath(world.home, pick.subcategoryId ?? pick.categoryId) : '—',
@@ -453,8 +454,8 @@ describe('lib/durable.js', () => {
 
   it('the lock: HOME durable, or MONEY durable; released only when neither is', () => {
     const ctx = { expenseCategories: money, inventoryCategories: HOME_AFTER_026 }
-    expect(durableLock({ categoryId: 'appliances', subcategoryId: 'appliances:footwear', budgetId: GROCERIES }, ctx)).toEqual({ source: 'home', name: 'Footwear' })
-    expect(durableLock({ categoryId: 'household', subcategoryId: '', budgetId: FOOTWEAR }, ctx)).toEqual({ source: 'money', name: 'Footwear' })
+    expect(durableLock({ categoryId: 'appliances', subcategoryId: 'appliances:footwear', budgetId: GROCERIES }, ctx)).toEqual({ source: 'home', kind: 'durable', name: 'Footwear' })
+    expect(durableLock({ categoryId: 'household', subcategoryId: '', budgetId: FOOTWEAR }, ctx)).toEqual({ source: 'money', kind: 'durable', name: 'Footwear' })
     expect(durableLock({ categoryId: 'household', subcategoryId: '', budgetId: GROCERIES }, ctx)).toBeNull()
     expect(lockNote({ name: '' })).toBe('Durable item — expense only, never in HOME stock.')
   })
@@ -588,7 +589,8 @@ describe('round 9F follow-up: Zidane\'s answers to the 14 doubt words (25/10)', 
   })
 
   it('MONEY rows: Office 365 is Software & Apps; Office Chair is Work and HOME Durables › Furniture, locked', () => {
-    expect(moneyRow('Office 365')).toMatchObject({ home: '—', money: 'Subscription › Software & Apps', locked: false })
+    // Locked since decision 14b: a subscription is a service.
+    expect(moneyRow('Office 365')).toMatchObject({ home: '—', money: 'Subscription › Software & Apps', locked: true })
     expect(moneyRow('Office Chair')).toMatchObject({ home: 'Durables › Furniture', money: 'Work', locked: true })
     expect(moneyRow('Adapter')).toMatchObject({ home: 'Durables › Electronics', locked: true })
     expect(moneyRow('Palloncini')).toMatchObject({ home: 'Durables › Gifts & Party', money: 'Shopping › Gifts', locked: true })
@@ -598,5 +600,130 @@ describe('round 9F follow-up: Zidane\'s answers to the 14 doubt words (25/10)', 
   it('the 253 live names: still none durable', () => {
     const tree = homeTree(HOME_AFTER_026)
     expect(LIVE_ITEM_NAMES.filter((name) => guessCategory(name, tree)?.categoryId === 'appliances')).toEqual([])
+  })
+})
+
+describe('round 9F, second follow-up: decisions 14a and 14b (25/10)', () => {
+  const money = MONEY_AFTER_026
+  const ctx = { expenseCategories: money, inventoryCategories: HOME_AFTER_026, mapRows: MAP_AFTER_026 }
+  const CAR = '8b2d4f49-af1d-41af-bd19-9050a7689164'
+  const CIGARETTES = '75310604-5b9b-431c-9837-b2065747409f'
+
+  describe('14a: the budget from the name stays when "Add to HOME" is on and there is no HOME category', () => {
+    it('Marlboro (MONEY keyword of Cigarettes & Vape, not locked; no HOME keyword): the same budget with Add to HOME off and on', () => {
+      expect(homeGuess('Marlboro')).toBe('—')
+      expect(isLockedBudget(CIGARETTES, money)).toBe(false)
+      const off = moneyRow('Marlboro', AFTER, { addToHome: false })
+      const on = moneyRow('Marlboro', AFTER, { addToHome: true })
+      expect(off).toMatchObject({ home: '—', money: 'Cigarettes & Vape', locked: false, addToHome: false })
+      expect(on).toMatchObject({ home: '—', money: 'Cigarettes & Vape', locked: false, addToHome: true })
+    })
+
+    it('a row with a HOME category still follows the mapping with Add to HOME on; off, the name decides', () => {
+      // "Tigota" is a Beauty & Perfume shop word; the HOME category Toiletries is mapped to Personal Care › Toiletries.
+      expect(moneyRow('Tigota shampoo')).toMatchObject({ home: 'Toiletries › Shampoo & Conditioner', money: 'Personal Care › Toiletries', addToHome: true })
+      expect(moneyRow('Tigota shampoo', AFTER, { addToHome: false })).toMatchObject({ money: 'Personal Care › Beauty & Perfume', addToHome: false })
+      // The purpose word still comes first.
+      expect(moneyRow('Work Printer Ink')).toMatchObject({ money: 'Work', addToHome: true })
+    })
+
+    it('a budget picked by hand always wins', () => {
+      const row = { ...emptyRow(1), name: 'Marlboro', priceText: '1', addToHome: true, autoBudgetId: CIGARETTES, budgetId: OTHER, budgetTouched: true }
+      expect(budgetOf(row, ctx)).toBe(OTHER)
+      expect(budgetOf({ ...row, budgetTouched: false }, ctx)).toBe(CIGARETTES)
+      expect(budgetOf({ ...row, budgetTouched: false, autoBudgetId: '' }, ctx)).toBe('')
+    })
+  })
+
+  describe('14b: services and subscriptions lock "Add to HOME"', () => {
+    it.each([
+      ['Netflix', 'Subscription › Streaming', 'Service (Streaming) — expense only, never in HOME stock.'],
+      ['Office 365', 'Subscription › Software & Apps', 'Service (Software & Apps) — expense only, never in HOME stock.'],
+      ['Ristorante', 'Going out › Restaurant', 'Service (Restaurant) — expense only, never in HOME stock.'],
+      ['Pizzeria', 'Going out › Restaurant', 'Service (Restaurant) — expense only, never in HOME stock.'],
+      ['Benzina', 'Car / Vehicle › Fuel', 'Service (Fuel) — expense only, never in HOME stock.'],
+    ])('%s → %s, locked with the service note', (name, budget, note) => {
+      for (const extra of [{}, { addToHome: true }]) {
+        expect(moneyRow(name, AFTER, extra)).toEqual({ home: '—', money: budget, locked: true, addToHome: false, note })
+      }
+    })
+
+    it('a Car Care product with Add to HOME on: not locked, booked to Car / Vehicle (the main is not a service)', () => {
+      for (const name of ['Car shampoo', 'Liquido tergicristalli']) {
+        expect(moneyRow(name, AFTER, { addToHome: true })).toMatchObject({ home: 'Household Supplies › Car Care', money: 'Car / Vehicle', locked: false, addToHome: true })
+      }
+      expect(isServiceBudget(CAR, money)).toBe(false)
+      expect(isServiceBudget(N.fuel, money)).toBe(true)
+    })
+
+    it('Pharmacy and Toiletries items are not locked', () => {
+      expect(moneyRow('Tachipirina')).toMatchObject({ money: 'Health › Pharmacy', locked: false, addToHome: true })
+      expect(moneyRow('Farmacia', AFTER, { addToHome: true })).toMatchObject({ home: '—', money: 'Health › Pharmacy', locked: false, addToHome: true })
+      expect(moneyRow('Dentifricio')).toMatchObject({ home: 'Toiletries › Oral Care', money: 'Personal Care › Toiletries', locked: false, addToHome: true })
+      expect(moneyRow('Shampoo')).toMatchObject({ money: 'Personal Care › Toiletries', locked: false, addToHome: true })
+    })
+
+    it('every listed id is a service (a main with all its subs, also one made later); the others are not', () => {
+      const later = { id: 'new-sub', name: 'Gym', parent_id: '688bfedf-8e4c-4b59-860f-3a55c33f50d1' }
+      expect(isServiceBudget(later.id, [...money, later])).toBe(true)
+      for (const id of ['88ea2c65-397a-4774-b4de-22886f397cf5', '2abfd336-3daa-4722-8280-4ccd9a572f42', '85f20924-a159-4db9-bab5-0cbc4ea42863', '7d2a77f8-a5ff-4846-9021-143757927bb2', '744f7d8e-c90d-49d3-ad03-72c6e81aad9d', N.taxesFines, N.doctorTests, N.dentist, N.hairdresser, N.veterinary, N.petSitting, N.fuel, N.maintenance, N.insuranceTax, N.parkingTolls]) {
+        expect(isServiceBudget(id, money), id).toBe(true)
+      }
+      const notLocked = [GROCERIES, N.personalCare, N.beautyPerfume, N.toiletries, '06729df9-06b2-4465-955b-17d03f3fe125', N.pharmacy, N.glassesLenses, PETS, CIGARETTES, TRIPS_CATEGORY_ID, N.flights, WORK_CATEGORY_ID, OTHER, CAR]
+      for (const id of notLocked) expect(isLockedBudget(id, money), id).toBe(false)
+    })
+
+    it('the two lists stay apart: the durable note and the service note', () => {
+      expect(durableLock({ categoryId: '', budgetId: N.fuel }, ctx)).toEqual({ source: 'money', kind: 'service', name: 'Fuel' })
+      expect(durableLock({ categoryId: '', budgetId: FOOTWEAR }, ctx)).toEqual({ source: 'money', kind: 'durable', name: 'Footwear' })
+      // A durable HOME category comes first.
+      expect(durableLock({ categoryId: 'appliances', subcategoryId: 'appliances:footwear', budgetId: N.fuel }, ctx)).toMatchObject({ kind: 'durable', name: 'Footwear' })
+      expect(lockNote({ kind: 'service', name: 'Fuel' })).toBe('Service (Fuel) — expense only, never in HOME stock.')
+      expect(lockNote({ kind: 'durable', name: 'Footwear' })).toBe('Durable item (Footwear) — expense only, never in HOME stock.')
+      expect(moneyRow('Office Chair').note).toBe('Durable item (Furniture) — expense only, never in HOME stock.')
+    })
+
+    it('Order online / Arrived: a service order is locked too, and says so', () => {
+      expect(orderLock({ category_id: N.streaming }, { expenseCategories: money })).toBe('service')
+      expect(orderLock({ category_id: FOOTWEAR }, { expenseCategories: money })).toBe('durable')
+      expect(orderLock({ category_id: CAR }, { expenseCategories: money })).toBeNull()
+      expect(orderLock({ category_id: GROCERIES }, { expenseCategories: money })).toBeNull()
+      expect(isDurableOrder({ category_id: N.streaming }, { expenseCategories: money })).toBe(true)
+    })
+
+    it('consistency: no consumable HOME category is locked through its mapping (live rows of 024/026)', () => {
+      // The known rows, by name.
+      const mapped = Object.fromEntries(MAP_AFTER_026.filter((r) => !r.id.startsWith('appliances')).map((r) => [homePath(HOME_AFTER_026, r.id), moneyPath(money, r.expense_category_id)]))
+      expect(mapped).toMatchObject({
+        'Beauty Care': 'Personal Care › Beauty & Perfume',
+        Toiletries: 'Personal Care › Toiletries',
+        'Health & Medicine': 'Health › Pharmacy',
+        'Pet Supplies': 'Pets',
+        'Household Supplies › Car Care': 'Car / Vehicle',
+        'Health & Medicine › Contact Lenses': 'Health › Glasses & Lenses',
+      })
+      // Every consumable HOME category (main and sub), with the budget it books to.
+      const consumable = HOME_AFTER_026.filter((c) => (c.parent_id ?? c.id) !== 'appliances')
+      expect(consumable.length).toBeGreaterThan(50)
+      const locked = consumable.filter((c) => {
+        const item = c.parent_id ? { categoryId: c.parent_id, subcategoryId: c.id } : { categoryId: c.id, subcategoryId: '' }
+        return durableLock({ ...item, budgetId: defaultBudget(item, ctx) }, ctx)
+      })
+      expect(locked.map((c) => c.id)).toEqual([])
+      // Gifts & Party is in the Durables tree since 026 (its own lock); its mapping goes to Shopping › Gifts.
+      for (const r of MAP_AFTER_026) {
+        if (!r.id.startsWith('appliances') && r.id !== 'misc:gifts') expect(isLockedBudget(r.expense_category_id, money), r.id).toBe(false)
+      }
+    })
+
+    it('the 253 live names: still none durable, and none guessed into a service through HOME', () => {
+      const tree = homeTree(HOME_AFTER_026)
+      expect(LIVE_ITEM_NAMES.filter((name) => guessCategory(name, tree)?.categoryId === 'appliances')).toEqual([])
+      const locked = LIVE_ITEM_NAMES.filter((name) => {
+        const g = guessCategory(name, tree)
+        return g && isServiceBudget(defaultBudget({ categoryId: g.categoryId, subcategoryId: g.subcategoryId ?? '' }, ctx), money)
+      })
+      expect(locked).toEqual([])
+    })
   })
 })

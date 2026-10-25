@@ -111,7 +111,8 @@ export const SUGGESTED_UNITS = {
 // HOME stock, don't count towards the grocery budget, and are booked by
 // their sub-category's mapping row, else under this expense category (or
 // its sub-category of the same name) instead of Groceries. A durable
-// budget category locks too (DURABLE_MONEY_CATEGORY_IDS below).
+// budget category locks too (DURABLE_MONEY_CATEGORY_IDS below), and so
+// does a service one (SERVICE_MONEY_CATEGORY_IDS).
 export const DURABLE_CATEGORY_IDS = ['appliances']
 export const DURABLE_EXPENSE_CATEGORY = 'Home & Appliances'
 
@@ -138,6 +139,29 @@ export const DURABLE_MONEY_CATEGORY_IDS = [
   'd0c05f29-1418-485f-9433-b4b0e97c2423', // Pets › Pet Accessories & Toys
   'a972798e-d08c-4b09-b8cf-cfe5c1724128', // Trips & Holidays › Souvenirs
   FAMILY_SUPPORT_CATEGORY_ID, // Family Support (main)
+]
+
+// Services and subscriptions (decision 14b): never HOME stock either, so
+// they lock "Add to HOME" the same way, with their own note. Car / Vehicle
+// only by its four subs, never the main: HOME Household Supplies › Car
+// Care (car shampoo, windscreen fluid) is mapped to the main and stays a
+// consumable.
+export const SERVICE_MONEY_CATEGORY_IDS = [
+  '688bfedf-8e4c-4b59-860f-3a55c33f50d1', // Subscription (main)
+  '88ea2c65-397a-4774-b4de-22886f397cf5', // Housing & Utilities (main)
+  '676901e2-4693-47cb-93e4-b071a8eac8f3', // Going out (main)
+  'b498cc5d-95ea-4666-89f2-11973222ec2c', // Bank & Fee (main)
+  '7d2a77f8-a5ff-4846-9021-143757927bb2', // Savings & Investments (main)
+  '744f7d8e-c90d-49d3-ad03-72c6e81aad9d', // Entertainment (main)
+  'cd1ec5e6-4c7e-4f38-a86f-e6d1e42b10f5', // Health › Doctor & Tests
+  '3bbb8479-42e4-4f40-b9fb-bacc5d586128', // Health › Dentist
+  'd3728a31-bd77-487d-ac80-aaffe90fa5f3', // Personal Care › Hairdresser
+  'b79bd43a-bfa9-4101-93d7-70468af9dcfd', // Pets › Veterinary
+  '9d61caa3-80c5-4104-a734-51deca1f19ed', // Pets › Pet Sitting
+  '6aedf34e-9f47-48e9-a5ca-7b8b529fa447', // Car / Vehicle › Fuel
+  '1fe3c787-1e67-4e31-86a1-d6114f2ef473', // Car / Vehicle › Maintenance
+  '90065703-c0e7-436e-9ba3-2992dc819c7c', // Car / Vehicle › Insurance & Tax
+  'e6ce7094-0f5c-49f7-aff4-78e2b9f2e494', // Car / Vehicle › Parking & Tolls
 ]
 
 // Budget categories chosen for what the money was FOR (family, work, a

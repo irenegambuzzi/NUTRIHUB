@@ -82,10 +82,16 @@ afterEach(() => {
   markDurableArrived.mockClear()
 })
 
+const SUBSCRIPTION = '688bfedf-8e4c-4b59-860f-3a55c33f50d1'
+const STREAMING = 'a953640c-9716-4f1f-a989-279c03ddba63'
+const CIGARETTES = '75310604-5b9b-431c-9837-b2065747409f'
 const expenseCategories = [
   { id: 'groceries', name: 'Groceries', parent_id: null },
   { id: SHOPPING, name: 'Shopping', parent_id: null },
   { id: 'footwear', name: 'Footwear', parent_id: SHOPPING },
+  { id: SUBSCRIPTION, name: 'Subscription', parent_id: null },
+  { id: STREAMING, name: 'Streaming', parent_id: SUBSCRIPTION },
+  { id: CIGARETTES, name: 'Cigarettes & Vape', parent_id: null },
 ]
 
 describe('MONEY Add expense: a durable row', () => {
@@ -128,6 +134,29 @@ describe('MONEY Add expense: a durable row', () => {
     type('Budget category', 'groceries')
     expect(screen.getByLabelText('Add to HOME').disabled).toBe(false)
     expect(screen.getByLabelText('Add to HOME').checked).toBe(true)
+  })
+
+  it('a service (decision 14b): Add to HOME off and disabled, with the service note', () => {
+    form()
+    type('Name', 'Netflix')
+    type('Price', '13')
+    expect(screen.getByLabelText('Budget category').value).toBe(SUBSCRIPTION) // the main; Streaming is its sub
+    expect(screen.getByLabelText('Add to HOME').checked).toBe(false)
+    expect(screen.getByLabelText('Add to HOME').disabled).toBe(true)
+    expect(screen.getByText('Service (Streaming) — expense only, never in HOME stock.')).toBeTruthy()
+  })
+
+  it('decision 14a: the budget from the name stays when Add to HOME is turned on without a HOME category', () => {
+    form()
+    type('Name', 'Marlboro')
+    type('Price', '6')
+    const box = screen.getByLabelText('Add to HOME')
+    expect(box.checked).toBe(false)
+    expect(screen.getByLabelText('Budget category').value).toBe(CIGARETTES)
+    fireEvent.click(box)
+    expect(screen.getByLabelText('Add to HOME').checked).toBe(true)
+    expect(screen.getByLabelText('Budget category').value).toBe(CIGARETTES)
+    expect(screen.getByText(/Budget category suggested from the name/)).toBeTruthy()
   })
 })
 
@@ -252,6 +281,15 @@ describe('Orders: Arrived', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Arrived' }))
     await waitFor(() => expect(markArrived).toHaveBeenCalledTimes(1))
     expect(await screen.findByText('Arrived dialog: add to HOME?')).toBeTruthy()
+  })
+
+  it('a service order too (decision 14b), marked as a service', async () => {
+    data.orders = [order({ id: 'o4', item_name: 'Netflix', category_id: STREAMING })]
+    section()
+    fireEvent.click(screen.getByRole('button', { name: 'Arrived' }))
+    await waitFor(() => expect(markDurableArrived).toHaveBeenCalledTimes(1))
+    expect(markDurableArrived.mock.calls[0][2]).toBe('service')
+    expect(markArrived).not.toHaveBeenCalled()
   })
 })
 

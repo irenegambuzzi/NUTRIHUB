@@ -129,12 +129,12 @@ export function markArrived(order, date) {
   )
 }
 
-// A durable order arrived (lib/durable.js isDurableOrder): marked arrived
-// like any other, but nothing goes into HOME, so neither "Arrived" dialog
-// opens (plan 9F).
-export async function markDurableArrived(order, date) {
+// A durable order arrived (lib/durable.js orderLock; `kind` 'durable' or
+// 'service'): marked arrived like any other, but nothing goes into HOME,
+// so neither "Arrived" dialog opens (plan 9F).
+export async function markDurableArrived(order, date, kind = 'durable') {
   const result = await markArrived(order, date)
-  if (!result.error) showToast({ message: `“${order.item_name}” arrived — durable, nothing added to HOME.` })
+  if (!result.error) showToast({ message: `“${order.item_name}” arrived — ${kind === 'service' ? 'service' : 'durable'}, nothing added to HOME.` })
   return result
 }
 

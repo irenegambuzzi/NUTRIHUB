@@ -22,7 +22,6 @@ import { splitCategory } from '../../lib/moneyList'
 import { normName } from '../../lib/grocery'
 import { withGroupTotals } from '../../lib/groups'
 import { money } from '../../lib/pricing'
-import { isPurposeBudget } from '../../lib/durable'
 import {
   budgetOf,
   defaultBudget,
@@ -37,6 +36,7 @@ import {
   rowLine,
   rowProblem,
   savesAsPlainExpense,
+  usesAutoBudget,
 } from '../../lib/moneyPurchase'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
@@ -99,8 +99,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const change = (key, patch) => setRows((all) => all.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
   // The name fills in the HOME category (until one is picked by hand), the
-  // budget category used while "Add to HOME" is off (the first budget
-  // chip, until one is picked by hand; none without a chip) and the unit
+  // budget category used while "Add to HOME" is off or there is no HOME
+  // category (the first budget chip, until one is picked by hand; none
+  // without a chip; lib/moneyPurchase.js budgetOf) and the unit
   // of the HOME item (or group) with that name (until one is picked), so
   // its stock converts without asking.
   const changeName = (row, name) => {
@@ -227,7 +228,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               problem={tried ? problems[index] : ''}
               single={rows.length === 1}
               budgetId={budgetOf(line.row, budgetCtx)}
-              purposeBudget={isPurposeBudget(line.row.autoBudgetId, expenseCategories)}
+              autoBudget={usesAutoBudget(line.row, budgetCtx)}
               mainCategories={mainCategories}
               subsOf={subsOf}
               parents={parents}
@@ -285,7 +286,7 @@ function pickPatch(pick, home) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, problem, single, budgetId, purposeBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
   // Durable (by its HOME or its budget category): never HOME stock, so
   // "Add to HOME" is off and can't be turned on, and there is no 1×.
@@ -296,8 +297,9 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, purposeBud
   const badNumber = [row.priceText, row.quantityText, row.minText, row.packSizeText].find((t) => decimalProblem(t)) ?? ''
   const chips = chipsFor(row.name, home)
   // The budget category came from the first chip, not from a pick by hand
-  // (with Add to HOME on only a purpose category does: family, work, gift).
-  const budgetSuggested = (!home || purposeBudget) && !row.budgetTouched && Boolean(row.autoBudgetId) && budgetId === row.autoBudgetId
+  // nor the HOME mapping (with Add to HOME on only a purpose category, or
+  // a row without a HOME category, uses it; lib/moneyPurchase.js budgetOf).
+  const budgetSuggested = autoBudget && !row.budgetTouched && budgetId === row.autoBudgetId
 
   // Bought before: the last normal price and the unit it was bought in fill
   // in (until the price, quantity or unit is edited by hand). The store is

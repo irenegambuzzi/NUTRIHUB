@@ -36,7 +36,7 @@ import { askDialog, showToast } from '../lib/feedback'
 import { expectedLabel } from '../lib/orders'
 import { budgetMapStore, expenseCategoryStore, inventoryCategoryStore, orderStore } from '../lib/stores'
 import { budgetCategoryFor } from '../lib/budgetMap'
-import { isDurableBudget, isDurableOrder } from '../lib/durable'
+import { isDurableBudget, orderLock } from '../lib/durable'
 import { DURABLE_CATEGORY_IDS } from '../data/constants'
 import { localDateString, parseLocalDate } from '../lib/week'
 
@@ -159,9 +159,11 @@ export function GroceryPage() {
   const listedIds = new Set([...items, ...onTheWay].map((e) => pantryFor(e)?.id).filter(Boolean))
 
   // A durable order (its budget category, or the SHOP entry it came from)
-  // is only marked arrived: nothing goes into HOME, nothing is asked.
+  // or a service one is only marked arrived: nothing goes into HOME,
+  // nothing is asked.
   const arrive = async (order, pantry) => {
-    if (isDurableOrder(order, { expenseCategories, groceryItems: onTheWay })) return markDurableArrived(order, today)
+    const lock = orderLock(order, { expenseCategories, groceryItems: onTheWay })
+    if (lock) return markDurableArrived(order, today, lock)
     if (pantry) return setArriving({ order, item: pantry })
     const { error } = await markArrived(order, today)
     if (!error) setArriving({ order })

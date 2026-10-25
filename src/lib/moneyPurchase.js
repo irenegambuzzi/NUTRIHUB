@@ -64,8 +64,8 @@ export function homeItemFor(name, pantryItems) {
 const wantsHome = (row) => row.addToHome ?? Boolean(row.categoryId)
 
 // Why a row can't go into HOME (lib/durable.js), or null: its HOME
-// category is a durable one, or its budget category is. Changing either
-// to a consumable one releases it. `ctx`: { expenseCategories,
+// category is a durable one, or its budget category is a durable or a
+// service one. Changing either to a consumable one releases it. `ctx`: { expenseCategories,
 // inventoryCategories, mapRows }; without it only the HOME category counts.
 export const lockOf = (row, ctx) => durableLock({ categoryId: row.categoryId, subcategoryId: row.subcategoryId, budgetId: budgetOf(row, ctx) }, ctx)
 
@@ -87,15 +87,20 @@ export function defaultBudget(row, ctx) {
 }
 
 // The budget category shown for a row: the one picked by hand; else the
-// one its name filled in (the first budget chip, `autoBudgetId`) when the
-// row isn't added to HOME (its HOME category is durable, or Add to HOME
-// is off) or when that is a purpose category (family, work, a gift: "Work
+// one its name filled in (the first budget chip, `autoBudgetId`) when
+// there is no HOME mapping to follow (no HOME category, decision 14a:
+// "Marlboro" stays Cigarettes & Vape with Add to HOME on), when the row
+// isn't added to HOME (its HOME category is durable, or Add to HOME is
+// off) or when that is a purpose category (family, work, a gift: "Work
 // Printer Ink" is Work even with Add to HOME on); else the mapped one.
 // The lock is worked out from the result (lockOf), never the other way
 // round.
+export const usesAutoBudget = (row, ctx) =>
+  Boolean(row.autoBudgetId) && (isPurposeBudget(row.autoBudgetId, ctx?.expenseCategories) || !row.categoryId || isDurable({ category_id: row.categoryId }) || !wantsHome(row))
+
 export const budgetOf = (row, ctx) => {
   if (row.budgetTouched) return row.budgetId
-  if (row.autoBudgetId && (isPurposeBudget(row.autoBudgetId, ctx?.expenseCategories) || isDurable({ category_id: row.categoryId }) || !wantsHome(row))) return row.autoBudgetId
+  if (usesAutoBudget(row, ctx)) return row.autoBudgetId
   return defaultBudget(row, ctx)
 }
 
