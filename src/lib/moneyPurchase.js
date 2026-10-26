@@ -8,7 +8,7 @@ import { budgetCategoryFor } from './budgetMap'
 import { durableLock, isPurposeBudget, lockNote } from './durable'
 import { packSizePatch, purchasedQuantity } from './purchase'
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
-import { exactKey, matchHomeItems, sameItemName } from './similarItems'
+import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -66,15 +66,27 @@ export function homeItemFor(name, pantryItems) {
   return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? null
 }
 
-// The similar-name question of a row (plan 9G): the HOME items like its
-// name ({ item, kind }, up to 3), or null when there is nothing to ask —
-// the row isn't added to HOME (off or locked), its name is a HOME item, or
-// "Create new" was pressed for this very name.
+// The similar-name question of a row (plan 9G): { similar, more } — the
+// HOME items like its name ({ item, kind }, up to 3) and how many more
+// matched — or null when there is nothing to ask: the row isn't added to
+// HOME (off or locked), its name is a HOME item, or "Create new" was
+// pressed for this very name.
 export function similarAsk(line, pantryItems) {
   const { row } = line
   if (!line.home || line.known || !row.name.trim() || row.similarAnswer === exactKey(row.name)) return null
-  const { exact, similar } = matchHomeItems(row.name, pantryItems)
-  return exact || !similar.length ? null : similar
+  const { exact, similar, more } = matchHomeItems(row.name, pantryItems)
+  return exact || !similar.length ? null : { similar, more }
+}
+
+// An open SHOP card (to buy, in the cart or ordered online) WITHOUT a HOME
+// item whose name is only similar to the row's ("Pumpkin" for "Pumkin"),
+// for a row added to HOME and not locked: the row says so, and the card is
+// never closed or changed from here (only an exact name can close one, see
+// listEntryFor). null when there is none.
+export function similarListEntry(line, groceryItems, orderedIds = new Set()) {
+  if (!line.home || !line.row.name.trim()) return null
+  const unlinked = groceryItems.filter((g) => !g.pantry_item_id)
+  return shopEntryFor({ name: line.row.name }, unlinked, { orderedIds, kinds: ['typo', 'words'] })?.entry ?? null
 }
 
 export const SIMILAR_PROBLEM = 'Choose “Use …” or “Create new” for this item.'

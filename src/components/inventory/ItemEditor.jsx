@@ -206,9 +206,9 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     // item being edited never with itself, and an unchanged name not at all.
     const renamed = !item || exactKey(form.name) !== exactKey(item.name)
     if (homeItems && renamed && exactKey(form.name) !== createNewKey) {
-      const { exact, similar } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
+      const { exact, similar, more } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
       if (exact) return setQuestion({ kind: 'exact', item: exact })
-      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: goToLabel(m.item) })) })
+      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: goToLabel(m.item) })), more })
     }
     setSaving(true)
     setError('')
@@ -281,6 +281,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             <SimilarItemsQuestion
               name={form.name}
               options={question.options}
+              more={question.more}
               onPick={onGoTo}
               onCreateNew={() => {
                 setCreateNewKey(exactKey(form.name))

@@ -40,9 +40,12 @@ function rememberSort(sort) {
 // yet go where their category is. A group is one card ("Chips &
 // Snacks") with a row per variant, each tapped into the cart on its own
 // (`groupOf(entry)`, see lib/groupShop.js).
-export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm }) {
+// `spotId`: the entry whose card "Go to card" shows (outlined for a
+// moment; arranging stops, so the cards are on screen).
+export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm, spotId = null }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
+  if (spotId && arranging) setArranging(false)
   const { positions, savePositions } = useShopOrder()
   // The usual place of a category without a saved position: the main
   // categories in shop order (sort_order), not the A–Z of the lists.
@@ -62,11 +65,12 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
   const query = search.trim().toLowerCase()
   const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))) : []
 
+  const spotted = (unit) => Boolean(spotId) && (unit.kind === 'group' ? unit.entries.some((e) => e.id === spotId) : unit.entry.id === spotId)
   const show = (unit, extra = {}) =>
     unit.kind === 'group' ? (
-      <ShopGroupCard key={unit.key} card={unit} pantryFor={pantryFor} totalOf={totalOf} onCheck={onCheck} showList={extra.showList} />
+      <ShopGroupCard key={unit.key} card={unit} pantryFor={pantryFor} totalOf={totalOf} onCheck={onCheck} showList={extra.showList} highlighted={spotted(unit)} />
     ) : (
-      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} />
+      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} highlighted={spotted(unit)} />
     )
 
   const setSort = (next) => {
@@ -258,13 +262,15 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
 // One big tile: tap to put it in the cart (or take it out again) — only
 // the cart changes; the purchase is confirmed separately. A one-time
 // purchase shows the grey "1× purchase".
-function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null }) {
+function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null, highlighted = false }) {
   return (
     <button
       onClick={() => onCheck(item)}
+      data-spot={highlighted ? '' : undefined}
       className={cn(
         'w-full flex items-center gap-3 rounded-2xl border px-4 py-3.5 text-left min-h-16 active:scale-[0.99] transition',
-        item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]'
+        item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]',
+        highlighted && 'ring-2 ring-[var(--color-primary)] opacity-100'
       )}
     >
       <CheckCircle checked={item.in_cart} />
@@ -288,11 +294,19 @@ function ShopTile({ item, pack = null, total, onCheck, showCategory = false, sho
 // A group's card: its name ("Not urgent" when the total is still fine but
 // a variant is at 0) and a big row per variant, each tapped into the cart
 // on its own, variants at 0 first.
-function ShopGroupCard({ card, pantryFor, totalOf, onCheck, showList = false }) {
+function ShopGroupCard({ card, pantryFor, totalOf, onCheck, showList = false, highlighted = false }) {
   const { group, entries, inCart } = card
   const notUrgent = !inCart && shopReason(group) === 'not-urgent'
   return (
-    <section aria-label={`${group.name} (group)`} className={cn('rounded-2xl border px-3 py-2 space-y-1', inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]')}>
+    <section
+      aria-label={`${group.name} (group)`}
+      data-spot={highlighted ? '' : undefined}
+      className={cn(
+        'rounded-2xl border px-3 py-2 space-y-1',
+        inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]',
+        highlighted && 'ring-2 ring-[var(--color-primary)] opacity-100'
+      )}
+    >
       <p className="flex items-center gap-1.5 px-1 text-xs font-extrabold text-[var(--color-text-soft)] min-w-0">
         <CategoryIcon category={group.category_id} size={12} />
         <span className="truncate">{group.name}</span>

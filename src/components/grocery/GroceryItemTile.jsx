@@ -17,7 +17,8 @@ import { RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryS
 // action when the item's usual store is online (`orderFirst`,
 // `usualShop`). `oneTime`: a one-time purchase (grey "1× purchase"). A
 // group's variants are shown in the group's card instead (GroupShopCard).
-export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onUpdateCategory = null, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false }) {
+// `highlighted`: outlined for a moment after "Go to card" (data-spot).
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onUpdateCategory = null, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false, highlighted = false }) {
   const c = inventoryCategoryColor(item.category_id)
   const edit = useEntryEditing(item, pack, onUpdatePricing)
   const label = RESTOCK_LABELS[reason]
@@ -30,10 +31,12 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
 
   return (
     <div
+      data-spot={highlighted ? '' : undefined}
       className={cn(
         'relative rounded-3xl border p-3.5 shadow-sm transition-all duration-200',
         item.in_cart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : tone,
-        budgetMark === 'over' && 'opacity-60'
+        budgetMark === 'over' && 'opacity-60',
+        highlighted && 'ring-2 ring-[var(--color-primary)] opacity-100'
       )}
     >
       <button

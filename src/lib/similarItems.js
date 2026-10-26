@@ -1,7 +1,6 @@
 import { isAmountWord, isUnitWord, singular } from './categoryGuess'
 import { nameDistance } from './categoryNames'
-import { convertQuantity } from './units'
-import { formatStock, isDurable, roundQuantity, stockStatus, tapStep } from './inventory'
+import { formatStock, isDurable, stockStatus } from './inventory'
 import { isFinished, isOneTime } from './oneTime'
 
 // The similar-name safety net (plan 9G): before something is added in
@@ -132,12 +131,13 @@ const searchable = (items, exceptId) => items.filter((p) => p.id !== exceptId &&
 
 // The HOME items like `name`, best first: exact, then typo, then words;
 // within those Out / Low first, then fewer words, then the shorter name,
-// then A–Z. → { exact, similar }: `exact` is the item to use without a
-// question (a normal item before a group of the same name), or null;
+// then A–Z. → { exact, similar, more }: `exact` is the item to use without
+// a question (a normal item before a group of the same name), or null;
 // `similar` up to `limit` { item, kind } to ask about (empty when there is
-// an exact one: that never needs a question).
+// an exact one: that never needs a question); `more` how many more matched
+// than are shown ("4 more — type more of the name").
 export function matchHomeItems(name, items, { exceptId = null, limit = 3 } = {}) {
-  if (!exactKey(name)) return { exact: null, similar: [] }
+  if (!exactKey(name)) return { exact: null, similar: [], more: 0 }
   const found = searchable(items, exceptId)
     .map((item) => ({ item, kind: matchKind(name, item.name) }))
     .filter((m) => m.kind)
@@ -151,7 +151,8 @@ export function matchHomeItems(name, items, { exceptId = null, limit = 3 } = {})
         a.item.name.localeCompare(b.item.name)
     )
   const exact = found.find((m) => m.kind === 'exact')?.item ?? null
-  return { exact, similar: exact ? [] : found.slice(0, limit) }
+  if (exact) return { exact, similar: [], more: 0 }
+  return { exact: null, similar: found.slice(0, limit), more: Math.max(0, found.length - limit) }
 }
 
 // Where an open SHOP entry is: 'to-buy', 'in-cart' or 'ordered' (ordered
@@ -199,23 +200,17 @@ export const inHomeNote = (item) => `In HOME: ${stockWords(item)}`
 
 // "Already on your SHOP list: Dish soap — in the cart".
 export const alreadyListedText = (found) => `Already on your SHOP list: ${found.entry.name} — ${STATE_WORDS[found.state]}`
+export const CHANGE_ON_CARD = 'Change the quantity or price on its card.'
+
+// Under the "Similar item in HOME:" buttons when more matched than shown.
+export const moreMatchesText = (more) => `${more} more — type more of the name`
+
+// MONEY: an open SHOP card without a HOME item whose name is only similar
+// to the row's — never closed from there.
+export const similarOnListText = (entry) => `Similar on your SHOP list: ${entry.name} — it stays there.`
 
 export const createNewLabel = (name) => `Create new “${String(name ?? '').trim()}”`
 export const CREATE_NEW_HINT = 'Similar names can mix up later — make it clearer, e.g. “Frozen Pumpkin Cubes”.'
 
 // "Go to Fresh Pumpkin" / "Go to Balloons (finished 1×)" in the HOME editor.
 export const goToLabel = (item) => `Go to ${item.name}${isFinished(item) ? ' (finished 1×)' : ''}`
-
-// How much "Add … more" adds to an entry that is already on the list, in
-// the entry's own unit: the quantity typed (`typed` = { quantity, unit })
-// when it is in that unit or converts to it (`pack`: the HOME item, for a
-// multipack), else one step of the unit (1 pcs, 1 pack… as the + button
-// does). → { amount, total, label: "Add 1 more (now 2 pcs)" }.
-export function addMore(entry, typed = null, pack = null) {
-  const unit = entry.unit
-  const quantity = Number(typed?.quantity) || 0
-  const converted = quantity > 0 ? (typed.unit === unit ? quantity : convertQuantity(quantity, typed.unit, unit, pack)) : null
-  const amount = converted ? roundQuantity(converted, unit) || tapStep(unit) : tapStep(unit)
-  const total = roundQuantity((Number(entry.quantity) || 0) + amount, unit)
-  return { amount, total, label: `Add ${amount} more (now ${total} ${unit})` }
-}

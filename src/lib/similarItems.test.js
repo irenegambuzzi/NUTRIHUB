@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./supabaseClient', () => ({ supabase: {} }))
 const {
-  addMore,
   addedMessage,
   alreadyListedText,
   countedWords,
@@ -11,7 +10,9 @@ const {
   inHomeNote,
   matchHomeItems,
   matchKind,
+  moreMatchesText,
   sameItemName,
+  similarOnListText,
   shopEntryFor,
   typoEqual,
   pickLabel,
@@ -81,15 +82,15 @@ describe('matching classes', () => {
 describe('matchHomeItems', () => {
   it('"Cucumber" is the HOME item "cucumber": used without a question', () => {
     const cucumber = item('cucumber')
-    expect(matchHomeItems('Cucumber', [cucumber, item('Fresh Cucumber Salad')])).toEqual({ exact: cucumber, similar: [] })
+    expect(matchHomeItems('Cucumber', [cucumber, item('Fresh Cucumber Salad')])).toEqual({ exact: cucumber, similar: [], more: 0 })
   })
 
   it('"Pumpkin" and "Pumkin" ask about Fresh Pumpkin; "Pumpkin Cubes" and "Frozen Pumpkin Cubes" don\'t', () => {
     const home = [item('Fresh Pumpkin')]
     expect(names(matchHomeItems('Pumpkin', home))).toEqual(['Fresh Pumpkin'])
     expect(names(matchHomeItems('Pumkin', home))).toEqual(['Fresh Pumpkin'])
-    expect(matchHomeItems('Pumpkin Cubes', home)).toEqual({ exact: null, similar: [] })
-    expect(matchHomeItems('Frozen Pumpkin Cubes', home)).toEqual({ exact: null, similar: [] })
+    expect(matchHomeItems('Pumpkin Cubes', home)).toEqual({ exact: null, similar: [], more: 0 })
+    expect(matchHomeItems('Frozen Pumpkin Cubes', home)).toEqual({ exact: null, similar: [], more: 0 })
   })
 
   it('"Snack" → only Corn Snack', () => {
@@ -99,7 +100,7 @@ describe('matchHomeItems', () => {
 
   it('"Chicken" → nothing', () => {
     const home = ['Chicken Feet Snack', 'Frozen Chinese Chicken Sausage', 'Chicken Slice - Affettato di pollo'].map((n) => item(n))
-    expect(matchHomeItems('Chicken', home)).toEqual({ exact: null, similar: [] })
+    expect(matchHomeItems('Chicken', home)).toEqual({ exact: null, similar: [], more: 0 })
   })
 
   it('"Powder" → only Electrolytes Powder; "Gel" → only Hair Gel', () => {
@@ -132,6 +133,9 @@ describe('matchHomeItems', () => {
       ['Tomato Soup', 'words'],
       ['Tomato Paste', 'words'],
     ])
+    // Tomato Chips and Tomato Sauce matched too but are not shown.
+    expect(asked.more).toBe(2)
+    expect(moreMatchesText(asked.more)).toBe('2 more — type more of the name')
   })
 
   it('a finished 1× item counts as Out; groups and variants are searched; durables never', () => {
@@ -148,11 +152,11 @@ describe('matchHomeItems', () => {
     const group = item('Pasta', { is_group: true })
     const pasta = item('pasta')
     expect(matchHomeItems('Pasta', [group, pasta]).exact).toBe(pasta)
-    expect(matchHomeItems('Pasta', [pasta], { exceptId: pasta.id })).toEqual({ exact: null, similar: [] })
+    expect(matchHomeItems('Pasta', [pasta], { exceptId: pasta.id })).toEqual({ exact: null, similar: [], more: 0 })
   })
 
   it('an empty name matches nothing', () => {
-    expect(matchHomeItems('  ', [item('Milk')])).toEqual({ exact: null, similar: [] })
+    expect(matchHomeItems('  ', [item('Milk')])).toEqual({ exact: null, similar: [], more: 0 })
   })
 })
 
@@ -190,13 +194,8 @@ describe('texts', () => {
     expect(alreadyListedText({ entry: { name: 'Dish soap' }, state: 'in-cart' })).toBe('Already on your SHOP list: Dish soap — in the cart')
   })
 
-  it('"Add … more": one of the entry\'s unit, or the typed quantity when it converts', () => {
-    expect(addMore({ quantity: 1, unit: 'pcs' }).label).toBe('Add 1 more (now 2 pcs)')
-    expect(addMore({ quantity: 2, unit: 'pack' }).label).toBe('Add 1 more (now 3 pack)')
-    expect(addMore({ quantity: 1, unit: 'pcs' }, { quantity: 3, unit: 'pcs' }).label).toBe('Add 3 more (now 4 pcs)')
-    expect(addMore({ quantity: 500, unit: 'gr' }, { quantity: 1, unit: 'kg' }).label).toBe('Add 1000 more (now 1500 gr)')
-    expect(addMore({ quantity: 1, unit: 'pack' }, { quantity: 12, unit: 'pcs' }, { unit: 'pcs', packaging_unit: 'pack', quantity_per_pack: 6 }).label).toBe('Add 2 more (now 3 pack)')
-    expect(addMore({ quantity: 1, unit: 'pack' }, { quantity: 3, unit: 'pcs' }).label).toBe('Add 1 more (now 2 pack)')
+  it('MONEY: a similar card on the SHOP list', () => {
+    expect(similarOnListText({ name: 'Pumpkin' })).toBe('Similar on your SHOP list: Pumpkin — it stays there.')
   })
 })
 

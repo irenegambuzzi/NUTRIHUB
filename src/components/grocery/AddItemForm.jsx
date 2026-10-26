@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Plus } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
@@ -9,6 +9,7 @@ import { CategoryFields } from '../inventory/CategoryFields'
 import { CategoryChips } from '../ui/CategoryChips'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker, UnitOptions } from './shared'
+import { NameSuggestions } from './NameSuggestions'
 import { EXTRA_PACKAGING_UNITS, normName } from '../../lib/grocery'
 import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
@@ -20,7 +21,8 @@ import { isOneTime } from '../../lib/oneTime'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { priceUnitOptions } from '../../lib/pricing'
 import { showToast } from '../../lib/feedback'
-import { addMore, addedMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
+import { buildSuggestions, matchSuggestions } from '../../lib/quickAdd'
+import { addedMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
 import { AlreadyListed, CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
@@ -42,15 +44,22 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
   return fields
 }
 
-// The full form for adding an item to the grocery list. `initialName`
-// (from the quick-add box) starts it filled in. The category is suggested
-// from the name, or left empty for the user to pick; a pick by hand is
-// remembered for that name on both phones.
-// "Add to list" runs the similar-name safety net first (plan 9G, the same
-// checks as the quick-add box): `homeItems` every HOME item, `openEntries`
-// the open entries (ordered online too, `orderedIds`); `onAddMore(entry,
-// quantity)` sets the quantity of an entry already on the list.
-export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, homeItems = [], openEntries = [], orderedIds = new Set(), onAdd, onAddMore, onAddCategory, onAddSubcategory, initialName = '', onAdded }) {
+// The "Add to SHOP list" form. `initialName` (from Shop mode's quick-add
+// box) starts it filled in. The category is suggested from the name, or
+// left empty for the user to pick; a pick by hand is remembered for that
+// name on both phones.
+// While typing, the names of the HOME items (variants and groups too) and
+// of the open SHOP cards that match are listed under the name; tapping one
+// fills the name as if it had been typed. One is never picked by itself:
+// Enter and the buttons use the name as typed.
+// "Save" and "Save & add another" run the similar-name safety net first
+// (plan 9G, the same checks as the quick-add box): `homeItems` every HOME
+// item, `openEntries` the open entries (ordered online too, `orderedIds`).
+// When it ends — saved, or "OK" with nothing saved — "Save" closes the
+// form (`onAdded`), "Save & add another" empties it for the next item,
+// keeping "Paid by". "Go to card" (`onGoToCard(entry)`) closes it without
+// saving and shows the card already on the list.
+export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, homeItems = [], openEntries = [], orderedIds = new Set(), onAdd, onAddCategory, onAddSubcategory, initialName = '', onAdded, onGoToCard = null }) {
   const { suggest, suggestions, remember } = useCategorySuggestions({ parents, subsByParent })
   const [initial] = useState(() => (initialName ? fieldsFromName(initialName, suggest, pantryByName) : {}))
   const [name, setName] = useState(initialName)
@@ -71,6 +80,16 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   // for (its exactKey).
   const [question, setQuestion] = useState(null)
   const [createNewKey, setCreateNewKey] = useState(null)
+  // Which button started the save: "Save & add another" keeps the form open.
+  const again = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const nameRef = useRef(null)
+  // The names offered under the field: HOME items (durables are not HOME
+  // stock) and open SHOP cards — never this phone's quick-add history.
+  // Shown while typing, hidden once one is tapped.
+  const [listOpen, setListOpen] = useState(false)
+  const suggestionList = useMemo(() => buildSuggestions(homeItems.filter((p) => !isDurable(p)), openEntries), [homeItems, openEntries])
+  const matches = listOpen && !question ? matchSuggestions(suggestionList, name) : []
   // Bought before: the last normal price and the unit it was bought in fill
   // in until the price or unit is changed by hand (the store never is).
   const [priceEdited, setPriceEdited] = useState(false)
@@ -95,6 +114,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const handleNameChange = (value) => {
     setName(value)
     setQuestion(null)
+    setListOpen(true)
     if (categoryTouched) return
     const fields = fieldsFromName(value, suggest, pantryByName, priceDraft)
     setCategoryId(fields.categoryId)
@@ -114,16 +134,20 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   // Checks in this order: a durable (its category in the Durables tree)
   // skips the HOME check; the same name as a HOME item uses it; a similar
   // name asks and nothing is added; then: already on the list?
-  const handleAdd = async (e) => {
-    e.preventDefault()
-    if (!name.trim()) return
+  // `addAnother`: "Save & add another" was pressed (both buttons ask the
+  // same questions).
+  const handleAdd = (e, addAnother = false) => {
+    e?.preventDefault()
+    if (!name.trim() || saving) return
     if (firstDecimalProblem(quantity, priceDraft.price, priceDraft.price_qty)) return
+    again.current = addAnother
+    setListOpen(false)
     if (exactKey(name) !== createNewKey && !isDurable({ category_id: categoryId })) {
-      const { exact, similar } = matchHomeItems(name, homeItems)
+      const { exact, similar, more } = matchHomeItems(name, homeItems)
       if (exact) return listCheck(exact)
       if (similar.length) {
         const options = similar.map(({ item }) => ({ item, label: pickLabel(item, shopEntryFor({ item, name: item.name }, openEntries, { orderedIds })?.state) }))
-        return setQuestion({ kind: 'similar', options })
+        return setQuestion({ kind: 'similar', options, more })
       }
     }
     listCheck(null)
@@ -135,23 +159,17 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     save(item)
   }
 
-  // The quantity typed when it is in the entry's unit or converts to it,
-  // else one more of the entry's unit.
-  const moreFor = (found, item) => addMore(found.entry, { quantity: formQuantity, unit }, item ?? homeItems.find((p) => p.id === found.entry.pantry_item_id) ?? null)
-
-  const addToEntry = async ({ found, item }) => {
-    const { error } = await onAddMore(found.entry, moreFor(found, item).total)
-    if (!error) done()
-  }
-
   // `item`: the HOME item used (the same name, or "Use …"): the entry takes
   // its name, and its category unless one was picked by hand. A group is
   // never linked from here, exactly as when its name is typed by hand.
+  // ("Add anyway" next to an order online saves here too: a new card to
+  // buy with what the form says.)
   const save = async (item = null) => {
     const known = item ? (item.is_group ? null : item) : pantryByName.get(normName(name))
     const fromItem = item && !categoryTouched && item.category_id
     const pickedCategory = fromItem ? item.category_id : categoryId
     const pickedSub = fromItem ? item.subcategory_id || '' : subcategoryId
+    setSaving(true)
     const { error } = await onAdd({
       name: item?.name ?? name.trim(),
       categoryId: pickedCategory || null,
@@ -165,6 +183,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
       pantryItemId: known?.id ?? null,
       oneTime: !known && oneTime && !isDurable({ category_id: pickedCategory }),
     })
+    setSaving(false)
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
     if (categoryTouched && categoryId) remember(name, categoryId, subcategoryId || null, { chips })
@@ -172,30 +191,47 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     done()
   }
 
+  // Saved, or "OK" with nothing saved: "Save" closes the form; "Save &
+  // add another" empties every field but "Paid by" for the next item.
   const done = () => {
     setQuestion(null)
     setCreateNewKey(null)
     setName('')
     setCategoryId('')
     setSubcategoryId('')
-    setPriceDraft({ price: '', price_qty: '1', price_unit: '' })
+    setCategoryError('')
+    setPriceDraft(EMPTY_PRICE)
     setQuantity('1')
+    setUnit(DEFAULT_UNIT)
     setCategoryTouched(false)
     setSuggested(false)
     setOneTime(false)
     setPriceEdited(false)
     setAutoFilled(false)
-    onAdded?.()
+    setListOpen(false)
+    if (!again.current) return onAdded?.()
+    nameRef.current?.focus()
   }
 
   return (
     <form onSubmit={handleAdd} data-unsaved={name.trim() ? '' : undefined}>
       <Card className="space-y-3 rounded-3xl">
-        <Input placeholder="Item name (e.g. Olive oil)" aria-label="Item name" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+        <Input ref={nameRef} placeholder="Item name (e.g. Olive oil)" aria-label="Item name" autoComplete="off" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+        <NameSuggestions
+          matches={matches}
+          onPick={(s) => {
+            handleNameChange(s.name)
+            setListOpen(false)
+          }}
+          categoryName={categoryName}
+          listed={openEntries}
+        />
         {question?.kind === 'similar' && (
           <SimilarItemsQuestion
             name={name}
             options={question.options}
+            more={question.more}
+            busy={saving}
             onPick={listCheck}
             onCreateNew={() => {
               setCreateNewKey(exactKey(name))
@@ -206,9 +242,11 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
         {question?.kind === 'listed' && (
           <AlreadyListed
             found={question.found}
+            busy={saving}
             onOk={done}
-            actionLabel={question.found.state === 'ordered' ? 'Add anyway' : moreFor(question.found, question.item).label}
-            onAction={() => (question.found.state === 'ordered' ? save(question.item) : addToEntry(question))}
+            // Nothing typed here is used: the card is changed on the list.
+            onGoToCard={() => (onGoToCard ? onGoToCard(question.found.entry) : onAdded?.())}
+            onAddAnyway={() => save(question.item)}
           />
         )}
         {createNewKey && !question && <CreateNewHint />}
@@ -290,9 +328,14 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
           <span className="text-xs text-[var(--color-text-muted)]">Paid by</span>
           <PayerPicker value={payer} onChange={setPayer} />
         </div>
-        <Button type="submit" className="w-full rounded-2xl">
-          <Plus size={16} /> Add to list
-        </Button>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={saving} className="flex-1 rounded-2xl">
+            <Plus size={16} /> Save
+          </Button>
+          <Button type="button" variant="ghost" disabled={saving} onClick={(e) => handleAdd(e, true)} className="flex-[1.6] rounded-2xl px-3">
+            Save & add another
+          </Button>
+        </div>
       </Card>
     </form>
   )

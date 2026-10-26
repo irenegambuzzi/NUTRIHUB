@@ -37,7 +37,7 @@ describe('SHOP add form (More options): chips and the last price', () => {
     fireEvent.change(screen.getByPlaceholderText(/Item name/), { target: { value: 'Test kefir' } })
     fireEvent.click(screen.getByRole('button', { name: 'Snacks' }))
     expect(screen.getByLabelText('Item category').value).toBe('snacks')
-    fireEvent.click(screen.getByRole('button', { name: /Add to list/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Test kefir', categoryId: 'snacks' })
     expect(remember).toHaveBeenCalledWith('Test kefir', 'snacks', null, { chips: data.chips })
@@ -46,7 +46,7 @@ describe('SHOP add form (More options): chips and the last price', () => {
   it('an item can be added without a category (grey "No category" on the list)', async () => {
     const onAdd = form()
     fireEvent.change(screen.getByPlaceholderText(/Item name/), { target: { value: 'Zorblax' } })
-    fireEvent.click(screen.getByRole('button', { name: /Add to list/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Zorblax', categoryId: null, subcategoryId: null })
     expect(remember).not.toHaveBeenCalled()

@@ -94,8 +94,6 @@ describe('grocery components render', () => {
         subsByParent={new Map()}
         categoryName={categoryName}
         addItem={async () => ({})}
-        updatePricing={async () => ({})}
-        totalFor={totalOf}
         onMoreOptions={() => {}}
       />
     )

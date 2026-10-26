@@ -37,10 +37,11 @@ import {
   rowProblem,
   savesAsPlainExpense,
   similarAsk,
+  similarListEntry,
   SIMILAR_PROBLEM,
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
-import { exactKey, inHomeNote, pickLabel, shopEntryFor } from '../../lib/similarItems'
+import { exactKey, inHomeNote, pickLabel, shopEntryFor, similarOnListText } from '../../lib/similarItems'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
@@ -235,6 +236,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               index={index}
               line={line}
               listEntry={entryOf(line)}
+              similarEntry={similarListEntry(line, groceryItems, orderedIds)}
               ask={asks[index]}
               tried={tried}
               optionLabel={(item) => pickLabel(item, shopEntryFor({ item, name: item.name }, groceryItems, { orderedIds })?.state)}
@@ -299,7 +301,7 @@ function pickPatch(pick, home) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, ask, tried, optionLabel, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
   // Durable (by its HOME or its budget category): never HOME stock, so
   // "Add to HOME" is off and can't be turned on, and there is no 1×.
@@ -350,7 +352,8 @@ function ItemRow({ index, line, listEntry, ask, tried, optionLabel, problem, sin
       {showAsk && (
         <SimilarItemsQuestion
           name={row.name}
-          options={ask.map(({ item }) => ({ item, label: optionLabel(item) }))}
+          options={ask.similar.map(({ item }) => ({ item, label: optionLabel(item) }))}
+          more={ask.more}
           onPick={(item) => onName(item.name)}
           onCreateNew={() => onChange({ similarAnswer: exactKey(row.name) })}
           scroll={false}
@@ -481,6 +484,7 @@ function ItemRow({ index, line, listEntry, ask, tried, optionLabel, problem, sin
       )}
 
       {entryNote && <p className="text-[11px] text-[var(--color-text-muted)]">{entryNote}</p>}
+      {similarEntry && <p className="text-[11px] text-[var(--color-text-muted)]">{similarOnListText(similarEntry)}</p>}
       {home && line.paid === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">Free: stock only, no expense.</p>}
       {problem && (
         <p className="text-[11px] text-amber-300 flex items-center gap-1.5">

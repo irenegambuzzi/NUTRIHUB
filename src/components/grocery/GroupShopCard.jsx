@@ -22,7 +22,8 @@ import { RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryS
 // restocked (to stop it coming back, mark it 1× or delete it in HOME). Only
 // a row added with "+ Add another variant" (typed by hand) has ×.
 // `addable`: variants with stock that can be added (`onAddVariant`).
-export function GroupShopCard({ card, reason, pantryFor, totalOf, budgetMarkOf = () => undefined, categoryName, onToggle, onRemove, onUpdatePricing, onUpdatePayer, orderPropsOf = () => ({}), addable = [], onAddVariant = null, showList = false }) {
+// `highlighted`: outlined for a moment after "Go to card" (data-spot).
+export function GroupShopCard({ card, reason, pantryFor, totalOf, budgetMarkOf = () => undefined, categoryName, onToggle, onRemove, onUpdatePricing, onUpdatePayer, orderPropsOf = () => ({}), addable = [], onAddVariant = null, showList = false, highlighted = false }) {
   const { group, entries, inCart } = card
   const c = inventoryCategoryColor(group.category_id)
   const label = RESTOCK_LABELS[reason]
@@ -30,7 +31,8 @@ export function GroupShopCard({ card, reason, pantryFor, totalOf, budgetMarkOf =
   return (
     <section
       aria-label={`${group.name} (group)`}
-      className={cn('col-span-2 rounded-3xl border p-3.5 shadow-sm space-y-2', inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)]' : tone)}
+      data-spot={highlighted ? '' : undefined}
+      className={cn('col-span-2 rounded-3xl border p-3.5 shadow-sm space-y-2', inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)]' : tone, highlighted && 'ring-2 ring-[var(--color-primary)]')}
     >
       <div className="flex items-center gap-2">
         <span className={cn('w-9 h-9 rounded-2xl flex items-center justify-center text-white shrink-0', inCart ? 'bg-[var(--color-primary)]' : c.solid)}>

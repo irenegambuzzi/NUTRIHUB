@@ -27,7 +27,7 @@ const chip = (categoryId, subcategoryId, label) => ({ categoryId, subcategoryId,
 function setup() {
   const addItem = vi.fn(async () => ({ error: null }))
   render(
-    <QuickAdd items={[]} pantryItems={[]} parents={parents} subsByParent={subsByParent} categoryName={(id) => id} addItem={addItem} updatePricing={vi.fn()} totalFor={() => 0} onMoreOptions={vi.fn()} />
+    <QuickAdd items={[]} pantryItems={[]} parents={parents} subsByParent={subsByParent} categoryName={(id) => id} addItem={addItem} onMoreOptions={vi.fn()} />
   )
   return addItem
 }

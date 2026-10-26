@@ -258,7 +258,7 @@ describe('SHOP add form (More options)', () => {
   it('a new item not in HOME can be marked 1×', async () => {
     const onAdd = form()
     fireEvent.click(screen.getByRole('checkbox', { name: /One-time purchase/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Add to list/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await vi.waitFor(() => expect(onAdd).toHaveBeenCalled())
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Balloons', oneTime: true, pantryItemId: null })
   })
@@ -268,7 +268,7 @@ describe('SHOP add form (More options)', () => {
     const onAdd = form(new Map([[normName('Balloons'), hats]]))
     expect(screen.queryByRole('checkbox', { name: /One-time purchase/ })).toBeNull()
     expect(screen.getByText(/is a one-time purchase \(1×\) in HOME/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /Add to list/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await vi.waitFor(() => expect(onAdd).toHaveBeenCalled())
     expect(onAdd.mock.calls[0][0]).toMatchObject({ pantryItemId: 'hats', oneTime: false })
   })

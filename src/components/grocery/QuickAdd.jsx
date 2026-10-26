@@ -3,16 +3,14 @@ import { Plus, SlidersHorizontal } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Input } from '../ui/Field'
 import { CategoryChips } from '../ui/CategoryChips'
-import { CategoryIcon } from '../ui/CategoryIcon'
-import { cn } from '../../lib/cn'
+import { NameSuggestions } from './NameSuggestions'
 import { DEFAULT_UNIT } from '../../data/constants'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
-import { normName, payerLabel } from '../../lib/grocery'
+import { normName } from '../../lib/grocery'
 import { isDurable } from '../../lib/inventory'
-import { formatUnitPrice } from '../../lib/pricing'
 import { showToast } from '../../lib/feedback'
 import { buildSuggestions, matchSuggestions, readHistory, rememberAdded, suggestionFrom } from '../../lib/quickAdd'
-import { addMore, addedMessage, exactKey, matchHomeItems, shopEntryFor, pickLabel } from '../../lib/similarItems'
+import { addedMessage, exactKey, matchHomeItems, shopEntryFor, pickLabel } from '../../lib/similarItems'
 import { AlreadyListed, CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 // A sensible first quantity: 100 gr / ml, otherwise 1.
@@ -24,10 +22,12 @@ const firstQuantity = (unit) => (unit === 'gr' || unit === 'ml' ? 100 : 1)
 // name as a HOME item uses that item; a similar one asks inline ("Similar
 // item in HOME: …") and nothing is added until a button is pressed; an
 // item already on the list (to buy, in the cart or ordered online) asks
-// too, instead of making a second entry. `homeItems`: every HOME item
-// (variants and finished 1× items too); `openEntries`: the open entries,
-// those ordered online included (`orderedIds`).
-export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntries = items, orderedIds = new Set(), parents, subsByParent, categoryName, addItem, updatePricing, totalFor, onMoreOptions }) {
+// too, instead of making a second entry ("Go to card" shows that card,
+// `onGoToCard(entry)`). `homeItems`: every HOME item (variants and finished
+// 1× items too); `openEntries`: the open entries, those ordered online
+// included (`orderedIds`). Since 26/10 only Shop mode has this box; the
+// list has the "Add to SHOP list" form.
+export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntries = items, orderedIds = new Set(), parents, subsByParent, categoryName, addItem, onGoToCard = () => {}, onMoreOptions }) {
   const [text, setText] = useState('')
   const [active, setActive] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -80,11 +80,11 @@ export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntr
     if (busy || !name) return
     const creating = exactKey(name) === createNewKey
     if (!creating && !isDurable({ category_id: entryFor(suggestion).categoryId })) {
-      const { exact, similar } = matchHomeItems(name, homeItems)
+      const { exact, similar, more } = matchHomeItems(name, homeItems)
       if (exact) return listCheck(exact)
       if (similar.length) {
         const options = similar.map(({ item }) => ({ item, label: pickLabel(item, shopEntryFor({ item, name: item.name }, openEntries, { orderedIds })?.state) }))
-        return setQuestion({ kind: 'similar', name, options })
+        return setQuestion({ kind: 'similar', name, options, more })
       }
     }
     const chosen = suggestion ?? (creating ? null : matches[active]) ?? null
@@ -99,17 +99,6 @@ export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntr
     const found = shopEntryFor({ item, name: (source?.name ?? text).trim() }, openEntries, { orderedIds })
     if (found) return setQuestion({ kind: 'listed', found, item, source })
     add(source, item)
-  }
-
-  // One more of the entry already on the list (to buy or in the cart).
-  const addOneMore = async (entry) => {
-    setBusy(true)
-    const quantity = addMore(entry).total
-    const { error } = await updatePricing(entry, { quantity }, totalFor({ ...entry, quantity }))
-    setBusy(false)
-    if (error) return
-    showToast({ message: `"${entry.name}" was already on the list — now ${quantity} ${entry.unit}` })
-    reset()
   }
 
   const add = async (suggestion, homeItem = null) => {
@@ -194,6 +183,7 @@ export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntr
         <SimilarItemsQuestion
           name={question.name}
           options={question.options}
+          more={question.more}
           busy={busy}
           onPick={(item) => listCheck(item)}
           onCreateNew={() => {
@@ -207,9 +197,12 @@ export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntr
           found={question.found}
           busy={busy}
           onOk={reset}
+          onGoToCard={() => {
+            onGoToCard(question.found.entry)
+            reset()
+          }}
           // An order online can't change: a new entry "to buy" instead.
-          actionLabel={question.found.state === 'ordered' ? 'Add anyway' : addMore(question.found.entry).label}
-          onAction={() => (question.found.state === 'ordered' ? add(question.source, question.item) : addOneMore(question.found.entry))}
+          onAddAnyway={() => add(question.source, question.item)}
         />
       )}
       {createNewKey && !question && <CreateNewHint />}
@@ -222,33 +215,7 @@ export function QuickAdd({ items, pantryItems, homeItems = pantryItems, openEntr
         onPick={(pick) => setPicked({ categoryId: pick.categoryId, subcategoryId: pick.subcategoryId ?? null })}
       />
 
-      {matches.length > 0 && !question && (
-        <ul role="listbox" className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)] overflow-hidden">
-          {matches.map((s, i) => {
-            const onList = items.some((g) => !g.completed && normName(g.name) === normName(s.name))
-            const price = formatUnitPrice({ price: s.price, price_qty: s.priceQty, price_unit: s.priceUnit, unit: s.unit })
-            return (
-              <li key={s.name} role="option" aria-selected={i === active}>
-                <button
-                  type="button"
-                  onClick={() => submit(s)}
-                  onMouseEnter={() => setActive(i)}
-                  className={cn('w-full flex items-center gap-3 px-3 py-2.5 text-left', i === active ? 'bg-[var(--color-surface-soft)]' : '')}
-                >
-                  <CategoryIcon category={s.categoryId} size={16} />
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{s.name}</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
-                      {[s.categoryId && categoryName(s.categoryId), s.unit, price, s.payer && payerLabel(s.payer)].filter(Boolean).join(' · ')}
-                    </span>
-                  </span>
-                  {onList && <span className="text-[10px] font-bold text-[var(--color-accent)] shrink-0">on list</span>}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      {!question && <NameSuggestions matches={matches} onPick={submit} categoryName={categoryName} listed={items} active={active} onHover={setActive} />}
 
       <button
         type="button"

@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { Receipt, ShoppingCart, Sparkles, Wallet, X, Users, Microwave } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Plus, Receipt, ShoppingCart, Sparkles, Wallet, X, Users, Microwave } from 'lucide-react'
 import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
 import { Select } from '../components/ui/Field'
 import { SearchBox } from '../components/ui/SearchBox'
 import { CategoryIcon } from '../components/ui/CategoryIcon'
@@ -113,7 +114,11 @@ export function GroceryPage() {
   const { parents, subsByParent, shopOrder, categoryName, addCategory, addSubcategory } = useInventoryCategories()
 
   const [view, setViewState] = useState(readView)
-  const [fullForm, setFullForm] = useState(null) // null | name to start the full form with
+  const [fullForm, setFullForm] = useState(null) // null | name to start the "Add to SHOP list" form with
+  // "Go to card": the entry whose card is scrolled to and outlined for a
+  // moment ({ id }, a new object each time so the same card can be shown
+  // again).
+  const [spot, setSpot] = useState(null)
   const [confirming, setConfirming] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [sortMode, setSortMode] = useState('priority')
@@ -195,6 +200,19 @@ export function GroceryPage() {
   const inCategory = query
     ? (i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))
     : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
+  // "Go to card" (the safety net's "Already on your SHOP list"): the form
+  // closes without saving and the list shows the card that is already
+  // there — to buy or in the cart, a group's card for a variant. A search
+  // or category filter that hides it is cleared first.
+  const goToCard = (entry) => {
+    setFullForm(null)
+    if (!inCategory(entry)) {
+      setSearch('')
+      setSelectedCategory('All')
+    }
+    setSpot({ id: entry.id })
+  }
+  const spotted = (unit) => Boolean(spot) && (unit.kind === 'group' ? unit.entries.some((e) => e.id === spot.id) : unit.entry.id === spot.id)
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
     : sortItems(groceryItems.filter(inCategory), sortMode)
@@ -228,6 +246,15 @@ export function GroceryPage() {
     rememberView(next)
   }
 
+  // The card is outlined (data-spot) once it is on screen; the outline goes
+  // after a few seconds.
+  useEffect(() => {
+    if (!spot) return
+    document.querySelector('[data-spot]')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    const timer = setTimeout(() => setSpot(null), 3500)
+    return () => clearTimeout(timer)
+  }, [spot])
+
   const handleAddNeeded = async () => {
     setSyncing(true)
     // Safe to repeat: items already on the list are skipped.
@@ -258,6 +285,7 @@ export function GroceryPage() {
           addable={addableVariants(unit.group, listedIds)}
           onAddVariant={addVariant}
           showList={Boolean(query)}
+          highlighted={spotted(unit)}
         />
       )
     }
@@ -279,6 +307,7 @@ export function GroceryPage() {
         onUpdatePayer={updatePayer}
         onUpdateCategory={updateCategory}
         oneTime={entryIsOneTime(item, pantryFor(item))}
+        highlighted={spotted(unit)}
         {...orderProps(item)}
       />
     )
@@ -288,8 +317,9 @@ export function GroceryPage() {
   // every open entry, those ordered online too.
   const openEntries = [...items, ...onTheWay]
   const orderedIds = new Set(onTheWay.map((e) => e.id))
-  const addMore = (entry, quantity) => updatePricing(entry, { quantity }, totalOf({ ...entry, quantity }))
 
+  // Shop mode keeps its quick-add box; the list has "+ Add to SHOP list".
+  // (Its "More options" opens the form, which is shown on the list.)
   const quickAdd = (
     <QuickAdd
       items={items}
@@ -301,8 +331,7 @@ export function GroceryPage() {
       subsByParent={subsByParent}
       categoryName={categoryName}
       addItem={addItem}
-      updatePricing={updatePricing}
-      totalFor={totalOf}
+      onGoToCard={goToCard}
       onMoreOptions={setFullForm}
     />
   )
@@ -396,12 +425,15 @@ export function GroceryPage() {
             })}
           </div>
 
-          {quickAdd}
-          {fullForm !== null && (
+          {fullForm === null ? (
+            <Button variant="ghost" onClick={() => setFullForm('')} className="w-full min-h-9 text-xs">
+              <Plus size={14} /> Add to SHOP list
+            </Button>
+          ) : (
             <div className="space-y-1">
               <div className="flex justify-between items-center px-1">
-                <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add with all options</p>
-                <button onClick={() => setFullForm(null)} aria-label="Close the full form" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
+                <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add to SHOP list</p>
+                <button onClick={() => setFullForm(null)} aria-label="Close the form" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] w-9 h-9 flex items-center justify-center -mr-2">
                   <X size={14} />
                 </button>
               </div>
@@ -416,10 +448,10 @@ export function GroceryPage() {
                 openEntries={openEntries}
                 orderedIds={orderedIds}
                 onAdd={addItem}
-                onAddMore={addMore}
                 onAddCategory={addCategory}
                 onAddSubcategory={addSubcategory}
                 onAdded={() => setFullForm(null)}
+                onGoToCard={goToCard}
               />
             </div>
           )}
@@ -532,6 +564,7 @@ export function GroceryPage() {
             searchNamesOf={searchNamesOf}
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
+            spotId={spot?.id ?? null}
           />
           {onTheWaySection}
         </>

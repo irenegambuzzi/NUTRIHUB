@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { PAID_BY_OPTIONS } from '../data/constants'
 
-// The similar-name safety net on the screens (plan 9G): SHOP quick add and
-// More options, MONEY "Add expense" rows, the HOME item editor.
+// The similar-name safety net on the screens (plan 9G and its follow-up of
+// 26/10): Shop mode's quick add, the SHOP "Add to SHOP list" form, MONEY
+// "Add expense" rows, the HOME item editor.
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
@@ -16,15 +18,21 @@ const data = vi.hoisted(() => {
   const cucumber = { id: 'cucumber', name: 'cucumber', unit: 'pcs', current_stock: 2, min_stock: 0, category_id: 'fresh' }
   const soap = { id: 'soap', name: 'Dish soap', unit: 'pcs', current_stock: 1, min_stock: 0, category_id: 'cleaning' }
   const balloons = { id: 'balloons', name: 'Balloons', unit: 'pcs', current_stock: 0, min_stock: 0, one_time: true, category_id: 'misc' }
+  // Five sauces: "Sauce" matches all of them, 3 are shown.
+  const sauces = ['Soy Sauce', 'Fish Sauce', 'Oyster Sauce', 'Tomato Sauce', 'Teriyaki Sauce'].map((name, i) => ({ id: `sauce${i}`, name, unit: 'btl', current_stock: 1, min_stock: 0, category_id: 'fresh' }))
   return {
     pumpkin,
     cucumber,
     soap,
     balloons,
-    pantry: [pumpkin, cucumber, soap, balloons],
+    sauces,
+    pantry: [pumpkin, cucumber, soap, balloons, ...sauces],
     grocery: [
       { id: 'g-cucumber', name: 'cucumber', quantity: 1, unit: 'pcs', pantry_item_id: 'cucumber', completed: false, in_cart: false },
       { id: 'g-soap', name: 'Dish soap', quantity: 1, unit: 'pcs', pantry_item_id: 'soap', completed: false, in_cart: true },
+      // Typed in SHOP, no HOME item.
+      { id: 'g-kites', name: 'Paper kites', quantity: 1, unit: 'pcs', pantry_item_id: null, completed: false, in_cart: false },
+      { id: 'g-lamp', name: 'Lamp', quantity: 1, unit: 'pcs', pantry_item_id: null, completed: false, in_cart: false, category_id: 'appliances' },
     ],
   }
 })
@@ -45,7 +53,7 @@ vi.mock('../hooks/useInventoryCategories', () => {
   return { useInventoryCategories: () => ({ parents, subsByParent: new Map(parents.map((p) => [p.id, []])), addCategory: vi.fn(), addSubcategory: vi.fn() }) }
 })
 // Names that get a HOME category from the suggestion door (it has its own tests).
-const CATEGORY = { pumpkin: 'fresh', pumkin: 'fresh', 'fresh pumpkin': 'fresh', cucumber: 'fresh', cucumbers: 'fresh', 'dish soap': 'cleaning', 'frozen pumpkin cubes': 'fresh', lamp: 'appliances' }
+const CATEGORY = { pumpkin: 'fresh', pumkin: 'fresh', 'fresh pumpkin': 'fresh', cucumber: 'fresh', cucumbers: 'fresh', 'dish soap': 'cleaning', 'frozen pumpkin cubes': 'fresh', lamp: 'appliances', kites: 'fresh', 'paper kites': 'fresh', sauce: 'fresh' }
 vi.mock('../hooks/useCategorySuggestions', () => {
   const pick = (name) => CATEGORY[name.trim().toLowerCase()]
   return {
@@ -82,11 +90,11 @@ const parents = [{ id: 'fresh', name: 'Fresh' }, { id: 'cleaning', name: 'Cleani
 const subsByParent = new Map(parents.map((p) => [p.id, []]))
 const entry = (extra) => ({ id: 'g1', name: 'Dish soap', quantity: 1, unit: 'pcs', pantry_item_id: 'soap', completed: false, in_cart: false, created_at: '2026-10-26T08:00:00Z', ...extra })
 
-describe('SHOP quick add', () => {
+describe('SHOP quick add (Shop mode)', () => {
   // `listed`: what the suggestion list under the box is built from.
   const quickAdd = ({ entries = [], orderedIds = new Set(), homeItems = data.pantry, listed = homeItems } = {}) => {
     const addItem = vi.fn(async () => ({ error: null }))
-    const updatePricing = vi.fn(async () => ({ error: null }))
+    const onGoToCard = vi.fn()
     const open = entries.filter((e) => !orderedIds.has(e.id))
     render(
       <QuickAdd
@@ -99,12 +107,11 @@ describe('SHOP quick add', () => {
         subsByParent={subsByParent}
         categoryName={(id) => id}
         addItem={addItem}
-        updatePricing={updatePricing}
-        totalFor={() => 0}
+        onGoToCard={onGoToCard}
         onMoreOptions={vi.fn()}
       />
     )
-    return { addItem, updatePricing }
+    return { addItem, onGoToCard }
   }
   const typeIn = (text) => fireEvent.change(screen.getByLabelText('Add an item'), { target: { value: text } })
   const press = () => fireEvent.click(screen.getByRole('button', { name: 'Add' }))
@@ -176,22 +183,22 @@ describe('SHOP quick add', () => {
     expect(toast).toHaveBeenCalledWith({ message: 'Added “Balloons” · finished 1× item, it comes back' })
   })
 
-  it('already in the cart: no second entry; "OK" changes nothing, "Add 1 more (now 2 pcs)" adds to the entry', async () => {
+  it('already in the cart: no second entry; "OK" changes nothing, "Go to card" shows the card; no "Add 1 more"', () => {
     const inCart = entry({ in_cart: true })
-    const { addItem, updatePricing } = quickAdd({ entries: [inCart] })
+    const { addItem, onGoToCard } = quickAdd({ entries: [inCart] })
     typeIn('dish soap')
     press()
     expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
+    expect(screen.getByText('Change the quantity or price on its card.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /more \(now/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'OK' }))
     expect(screen.queryByText(/Already on your SHOP list/)).toBeNull()
-    expect(addItem).not.toHaveBeenCalled()
-    expect(updatePricing).not.toHaveBeenCalled()
     typeIn('dish soap')
     press()
-    fireEvent.click(screen.getByRole('button', { name: 'Add 1 more (now 2 pcs)' }))
-    await waitFor(() => expect(updatePricing).toHaveBeenCalledTimes(1))
-    expect(updatePricing.mock.calls[0][0]).toBe(inCart)
-    expect(updatePricing.mock.calls[0][1]).toEqual({ quantity: 2 })
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    expect(onGoToCard).toHaveBeenCalledWith(inCart)
+    expect(screen.queryByText(/Already on your SHOP list/)).toBeNull()
+    expect(screen.getByLabelText('Add an item').value).toBe('')
     expect(addItem).not.toHaveBeenCalled()
   })
 
@@ -201,6 +208,8 @@ describe('SHOP quick add', () => {
     typeIn('Dish soap')
     press()
     expect(screen.getByText('Already on your SHOP list: Dish soap — ordered online')).toBeTruthy()
+    expect(screen.queryByText('Change the quantity or price on its card.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Go to card' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }))
     await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
     expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Dish soap', pantryItemId: 'soap' })
@@ -225,32 +234,37 @@ describe('SHOP quick add', () => {
   })
 })
 
-describe('SHOP More options', () => {
-  const form = ({ entries = [] } = {}) => {
+describe('SHOP "Add to SHOP list" form', () => {
+  const form = ({ entries = [], orderedIds = new Set(), homeItems = data.pantry } = {}) => {
     const onAdd = vi.fn(async () => ({ error: null }))
-    const onAddMore = vi.fn(async () => ({ error: null }))
-    const pantryByName = new Map(data.pantry.map((p) => [p.name.toLowerCase(), p]))
+    const onAdded = vi.fn()
+    const onGoToCard = vi.fn()
+    const pantryByName = new Map(homeItems.filter((p) => !p.is_group).map((p) => [p.name.toLowerCase(), p]))
     render(
       <AddItemForm
         parents={parents}
         subsByParent={subsByParent}
         categoryName={(id) => id}
         pantryByName={pantryByName}
-        homeItems={data.pantry}
+        homeItems={homeItems}
         openEntries={entries}
+        orderedIds={orderedIds}
         onAdd={onAdd}
-        onAddMore={onAddMore}
         onAddCategory={vi.fn()}
         onAddSubcategory={vi.fn()}
+        onAdded={onAdded}
+        onGoToCard={onGoToCard}
       />
     )
-    return { onAdd, onAddMore }
+    return { onAdd, onAdded, onGoToCard }
   }
   const typeName = (text) => fireEvent.change(screen.getByLabelText('Item name'), { target: { value: text } })
-  const press = () => fireEvent.click(screen.getByRole('button', { name: /Add to list/ }))
+  const press = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  const pressAgain = () => fireEvent.click(screen.getByRole('button', { name: 'Save & add another' }))
+  const suggestions = () => screen.queryByRole('listbox', { name: 'Suggestions' })
 
-  it('a similar name asks; "Use …" adds the HOME item', async () => {
-    const { onAdd } = form()
+  it('a similar name asks; "Use …" adds the HOME item and closes the form', async () => {
+    const { onAdd, onAdded } = form()
     typeName('Pumpkin')
     press()
     expect(screen.getByText('Similar item in HOME:')).toBeTruthy()
@@ -259,18 +273,127 @@ describe('SHOP More options', () => {
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Fresh Pumpkin', pantryItemId: 'pumpkin', categoryId: 'fresh' })
     expect(toast).toHaveBeenCalledWith({ message: 'Added “Fresh Pumpkin” · in HOME: 2 pcs' })
+    expect(onAdded).toHaveBeenCalledTimes(1)
   })
 
-  it('already in the cart: "Add 3 more (now 4 pcs)" uses the quantity typed', async () => {
+  it('suggestions while typing come from HOME items (variants and groups too) and open SHOP cards, never from this phone’s history', () => {
+    localStorage.setItem('nutrihub-quick-add-history', JSON.stringify([{ name: 'Pumpkin seeds', unit: 'pcs', price: 0, payer: 'shared' }]))
+    const group = { id: 'chips', name: 'Chips & Snacks', is_group: true, unit: 'pcs', current_stock: 0, category_id: 'fresh' }
+    const variant = { id: 'lays', name: 'Lays chips', group_id: 'chips', unit: 'pcs', current_stock: 0, category_id: 'fresh' }
+    form({ homeItems: [...data.pantry, group, variant], entries: [entry({ id: 'g-pk', name: 'Pumpkin pie', pantry_item_id: null })] })
+    typeName('pum')
+    const shown = within(suggestions()).getAllByRole('option').map((o) => o.textContent)
+    expect(shown.some((t) => t.startsWith('Fresh Pumpkin'))).toBe(true)
+    expect(shown.some((t) => t.startsWith('Pumpkin pie'))).toBe(true)
+    expect(shown.some((t) => t.startsWith('Pumpkin seeds'))).toBe(false)
+    typeName('chips')
+    const chips = within(suggestions()).getAllByRole('option').map((o) => o.textContent)
+    expect(chips.some((t) => t.startsWith('Chips & Snacks'))).toBe(true)
+    expect(chips.some((t) => t.startsWith('Lays chips'))).toBe(true)
+  })
+
+  it('a suggestion is never picked by itself: Save uses the name as typed (and the safety net checks it)', async () => {
+    const milk = { ...data.cucumber, id: 'milk', name: 'Milk', unit: 'btl' }
+    const { onAdd } = form({ homeItems: [milk] })
+    typeName('mil')
+    expect(within(suggestions()).getByText('Milk')).toBeTruthy()
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'mil', pantryItemId: null })
+  })
+
+  it('tapping a suggestion fills the name, as if typed: the HOME item’s category and unit, then linked', async () => {
+    const milk = { ...data.cucumber, id: 'milk', name: 'Milk', unit: 'btl', category_id: 'fresh' }
+    const { onAdd } = form({ homeItems: [milk] })
+    typeName('mil')
+    fireEvent.click(within(suggestions()).getByRole('button', { name: /^Milk/ }))
+    expect(screen.getByLabelText('Item name').value).toBe('Milk')
+    expect(screen.getByLabelText('Unit').value).toBe('btl')
+    expect(suggestions()).toBeNull()
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Milk', pantryItemId: 'milk', unit: 'btl' })
+  })
+
+  it('"Save & add another" saves and keeps the form open, every field empty except Paid by', async () => {
+    const { onAdd, onAdded } = form()
+    const payer = PAID_BY_OPTIONS[0]
+    typeName('Paper towels')
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'pack' } })
+    fireEvent.click(screen.getByRole('button', { name: payer.label }))
+    pressAgain()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Paper towels', quantity: 3, unit: 'pack', payer: payer.value })
+    expect(onAdded).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Item name').value).toBe('')
+    expect(screen.getByLabelText('Quantity').value).toBe('1')
+    expect(screen.getByLabelText('Unit').value).toBe('pcs')
+    expect(screen.getByRole('button', { name: payer.label }).className).toContain('bg-[var(--color-accent)]')
+    typeName('Napkins')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(2))
+    expect(onAdd.mock.calls[1][0]).toMatchObject({ name: 'Napkins', payer: payer.value })
+    expect(onAdded).toHaveBeenCalledTimes(1)
+  })
+
+  it('"Save & add another" asks the same questions; "OK" saves nothing and keeps the form open, emptied', () => {
     const inCart = entry({ in_cart: true })
-    const { onAdd, onAddMore } = form({ entries: [inCart] })
+    const { onAdd, onAdded } = form({ entries: [inCart] })
+    typeName('Dish soap')
+    pressAgain()
+    expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+    expect(onAdd).not.toHaveBeenCalled()
+    expect(onAdded).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Item name').value).toBe('')
+  })
+
+  it('"OK" after "Save" closes the form, nothing saved', () => {
+    const { onAdd, onAdded } = form({ entries: [entry()] })
+    typeName('Dish soap')
+    press()
+    expect(screen.getByText('Already on your SHOP list: Dish soap — to buy')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+    expect(onAdd).not.toHaveBeenCalled()
+    expect(onAdded).toHaveBeenCalledTimes(1)
+  })
+
+  it('in the cart: "Change the quantity or price on its card." and "Go to card" (nothing saved, the quantity typed not used) — after either button', () => {
+    const inCart = entry({ in_cart: true })
+    const { onAdd, onGoToCard } = form({ entries: [inCart] })
     typeName('Dish soap')
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } })
-    press()
-    expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Add 3 more (now 4 pcs)' }))
-    await waitFor(() => expect(onAddMore).toHaveBeenCalledWith(inCart, 4))
+    pressAgain()
+    expect(screen.getByText('Change the quantity or price on its card.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /more \(now/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    expect(onGoToCard).toHaveBeenCalledWith(inCart)
     expect(onAdd).not.toHaveBeenCalled()
+  })
+
+  it('ordered online: "Add anyway" saves a new card to buy with what the form says (quantity, unit, price, payer)', async () => {
+    const ordered = entry({ name: 'Paper kites', pantry_item_id: null })
+    const { onAdd, onAdded } = form({ entries: [ordered], orderedIds: new Set([ordered.id]) })
+    const payer = PAID_BY_OPTIONS[1]
+    typeName('Paper kites')
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('Unit price (€)'), { target: { value: '2,50' } })
+    fireEvent.click(screen.getByRole('button', { name: payer.label }))
+    press()
+    expect(screen.getByText('Already on your SHOP list: Paper kites — ordered online')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }))
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Paper kites', quantity: 4, unit: 'pcs', price: 2.5, payer: payer.value, pantryItemId: null })
+    expect(onAdded).toHaveBeenCalledTimes(1)
+  })
+
+  it('more than 3 similar items: "2 more — type more of the name" under the buttons', () => {
+    form()
+    typeName('Sauce')
+    press()
+    expect(screen.getAllByRole('button', { name: /^Use .* Sauce/ })).toHaveLength(3)
+    expect(screen.getByText('2 more — type more of the name')).toBeTruthy()
   })
 
   it('a durable category skips the HOME check (only the SHOP list is checked)', async () => {
@@ -280,6 +403,15 @@ describe('SHOP More options', () => {
     press()
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(screen.queryByText('Similar item in HOME:')).toBeNull()
+  })
+
+  it('a durable already on the list: the SHOP list check still runs', () => {
+    const { onAdd } = form({ entries: [entry({ id: 'g-lamp', name: 'Lamp', pantry_item_id: null, category_id: 'appliances' })] })
+    typeName('Lamp')
+    press()
+    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
+    expect(screen.getByText('Already on your SHOP list: Lamp — to buy')).toBeTruthy()
+    expect(onAdd).not.toHaveBeenCalled()
   })
 })
 
@@ -355,10 +487,47 @@ describe('MONEY Add expense: rows with Add to HOME on', () => {
     expect(screen.queryByText('Similar item in HOME:')).toBeNull()
   })
 
+  it('more than 3 similar items: "2 more — type more of the name"', async () => {
+    form()
+    type('Name', 'Sauce')
+    type('Price', '3')
+    expect(await screen.findByText('2 more — type more of the name')).toBeTruthy()
+  })
+
+  it('a similar (not exact) SHOP card without a HOME item: "Similar on your SHOP list: … — it stays there."; never closed', async () => {
+    form()
+    type('Name', 'Kites')
+    type('Price', '3')
+    expect(screen.getByText('Similar on your SHOP list: Paper kites — it stays there.')).toBeTruthy()
+    // Not with Add to HOME off.
+    fireEvent.click(screen.getByLabelText('Add to HOME'))
+    expect(screen.queryByText(/Similar on your SHOP list/)).toBeNull()
+    fireEvent.click(screen.getByLabelText('Add to HOME'))
+    save()
+    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
+    expect(recordMoneyPurchase.mock.calls[0][0].payload.items[0].list_entry_id ?? null).toBeNull()
+  })
+
+  it('the exact name of a SHOP card keeps the existing text, not the similar one', () => {
+    form()
+    type('Name', 'Paper kites')
+    expect(screen.getByText('On your SHOP list — it will leave the list.')).toBeTruthy()
+    expect(screen.queryByText(/Similar on your SHOP list/)).toBeNull()
+  })
+
   it('an entry in the cart stays there (existing text)', () => {
     form()
     type('Name', 'Dish soap')
     expect(screen.getByText("It's in the cart in SHOP — it stays there.")).toBeTruthy()
+  })
+
+  it('a locked (durable) row: no HOME question, the SHOP list is still checked', async () => {
+    form()
+    type('Name', 'Lamp')
+    type('Price', '3')
+    await new Promise((r) => setTimeout(r, 450))
+    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
+    expect(screen.getByText('On your SHOP list — it stays there (Add to HOME is off).')).toBeTruthy()
   })
 
   it('a row with Add to HOME off asks nothing', async () => {
@@ -412,6 +581,14 @@ describe('HOME item editor', () => {
     save()
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
     expect(onSave.mock.calls[0][0]).toMatchObject({ name: 'Pumpkin' })
+  })
+
+  it('more than 3 similar items: "2 more — type more of the name"', () => {
+    editor()
+    typeName('Sauce')
+    save()
+    expect(screen.getAllByRole('button', { name: /^Go to .* Sauce$/ })).toHaveLength(3)
+    expect(screen.getByText('2 more — type more of the name')).toBeTruthy()
   })
 
   it('a rename is checked (never against the item itself); an unchanged name is not', async () => {

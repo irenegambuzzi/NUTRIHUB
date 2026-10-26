@@ -1902,6 +1902,9 @@ many names":**
 - Existing chips items are merged into "Chips & Snacks" (stock summed; old
   names keep being recognised; MONEY history unchanged).
 - Screen details are decided before round 6D.
+- Also in 6D (moved from 9G, decision 7): a name made with "Create new"
+  stays linked to what was typed then ("Pumpkin" → "Frozen Pumpkin
+  Cubes"), as one of the item's names (aliases), for all devices.
 
 ### 9E. Data fix 025 (Action 17/10/2026)
 
@@ -2241,8 +2244,23 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    MONEY (Add to HOME on), warn "Similar item in HOME: …" / "Already on
    your SHOP list" and offer to use the existing item, even when its stock
    is high.~~ **Done 26/10 — section 9G.**
-2. Round 6D (section 9D).
-3. Later: a "Kids" durable sub under Durables when the household has a
+2. Small round: pack size per purchase (e.g. 1 box = 40 pcs for this
+   purchase only, without changing the item's usual 48). Today (checked
+   26/10, see 9G "Follow-up 26/10", step 8): the pack size lives only on
+   the HOME item (`pantry_items.packaging_unit` + `quantity_per_pack`, set
+   in the HOME editor's multipack fields). Buying in that unit always uses
+   it (`toBaseQuantity` / `purchasedQuantity`): Confirm purchase and MONEY
+   ask "How many pcs are in 1 …?" only when the unit can't be converted,
+   and the answer is then saved on the item (`packSizePatch`) unless the
+   item already has another packaging unit (then it counts for that
+   purchase only). Order online and Arrived have no pack-size field
+   (Arrived: quantity in the item's pack unit or its stock unit). So a
+   40-pcs box can only be recorded as "40 pcs" today; a 4-pcs pack as
+   "1 pack" + the answer 4 (kept for that purchase, because the item's
+   unit is "box") or as "4 pcs". The expense is always the price typed,
+   never computed from the pack.
+3. Round 6D (section 9D).
+4. Later: a "Kids" durable sub under Durables when the household has a
    child (baby bottles, pacifiers… today Baby › Feeding).
 
 ### 9G. Similar-name safety net (decided 26/10, as built)
@@ -2381,7 +2399,8 @@ typed then). It needs a record kept for all devices ("Pumpkin" →
 allowed), browser storage is excluded, `category_memory` would change the
 category suggestions and `household_settings` is a settings table with no
 store in the app. In SHOP the new item doesn't even exist in HOME yet
-when "Create new" is pressed. Best done with the aliases of round 6D.
+when "Create new" is pressed. Best done with the aliases of round 6D —
+moved there on 26/10 (see the follow-up below).
 
 **Deviations / open points** (open questions in the round summary):
 quick add with nothing alike still adds the first suggestion under the box
@@ -2410,6 +2429,143 @@ new, exact, finished 1×, in the cart OK / Add 1 more, ordered Add anyway,
 durable, nothing alike; More options: similar, Add 3 more, durable; MONEY:
 pause, Save blocked, Create new, Use, exact note, check 2 texts, Add to
 HOME off; HOME: exact + Go to, finished 1×, similar + Create new, rename).
+
+### Follow-up 26/10 (as built)
+
+Code and tests only (no SQL, no new column, no browser storage). The
+changes 1–7 decided after testing 9G:
+
+1. **SHOP list: one button "+ Add to SHOP list".** The quick-add box and
+   "More options" are gone from the List view (`GroceryPage`); the button
+   opens the form that "More options" opened (`AddItemForm`), titled "Add
+   to SHOP list", unchanged otherwise (name, category chips, category and
+   sub-category, price per unit / total, unit, 1×, Paid by). **Shop mode
+   keeps its quick-add box** (`QuickAdd`, the only other place it was
+   used; HOME never had it), with its suggestions and this phone's
+   quick-add history as before; its "More options" still opens the form,
+   which is shown in the List view (as before). Offline: the form saves
+   exactly as quick add did — both call `addItem`, which refuses offline
+   with the usual toast (nothing is queued; only cart, quantity and stock
+   changes are, `lib/offlineActions.js`). No code became completely unused
+   apart from "Add … more" (below).
+2. **Name suggestions in the form**, under the name while typing
+   (`components/grocery/NameSuggestions.jsx`, shared with quick add; list
+   logic `lib/quickAdd.js` `buildSuggestions` / `matchSuggestions`: starts
+   with, a word starts with, contains). Sources: every HOME item (variants
+   and groups too; never a durable) and the open SHOP cards (to buy, in
+   the cart, ordered online) — not this phone's history (left stored, not
+   read by the form). Tapping one fills the name as if typed (category,
+   unit and last price as the form already fills them) and hides the
+   list. Never picked by itself: Enter / "Save" use the name as typed.
+3. **"Save" and "Save & add another".** Both run the same safety-net
+   questions. When a question ends — saved, or "OK" with nothing saved —
+   "Save" closes the form and "Save & add another" keeps it open with
+   every field emptied (unit back to pcs) except "Paid by". "Go to card"
+   always closes it.
+4. **"Already on your SHOP list"** (check 2): "Add 1 more / Add N more
+   (now …)" is removed with its logic (`similarItems.addMore`, QuickAdd's
+   `updatePricing` / `totalFor`, AddItemForm's `onAddMore`) and tests. To
+   buy / in the cart: "Already on your SHOP list: Dish soap — to buy" (or
+   "— in the cart"), "Change the quantity or price on its card.", "OK"
+   (nothing changes) and "Go to card": the form closes without saving
+   (what was typed is not used); the list scrolls to the card and outlines
+   it for 3.5 s (`data-spot`, the OrdersSection pattern) — also in the
+   cart, and the group's card for a variant; a search or category filter
+   that hides it is cleared first. In Shop mode the same, on the Shop-mode
+   card (arranging stops). Ordered online: "OK" and "Add anyway" — a new
+   card to buy with what the form says (quantity, unit, price, category,
+   1×, Paid by; the name is the HOME item's when one is linked, as every
+   save). With several open cards the preferred one (to buy, then in the
+   cart, then ordered — `shopEntryFor`) is named and shown.
+5. **More than 3 similar items** (`matchHomeItems` now also gives `more`):
+   under the 3 buttons "4 more — type more of the name" (the number not
+   shown), in the SHOP form, quick add, the MONEY row
+   (`moneyPurchase.similarAsk` → `{ similar, more }`) and the HOME editor.
+6. **MONEY: a similar SHOP card without a HOME item**
+   (`moneyPurchase.similarListEntry`): a row with Add to HOME on and not
+   locked, and an open card (to buy, in the cart, ordered online) with no
+   HOME item whose name is similar but not exact (typo or half-name) →
+   "Similar on your SHOP list: Pumpkin — it stays there." The card is
+   never closed or changed (`list_entry_id` still only for the exact name,
+   `listEntryFor`).
+7. **Confirmed, nothing to fix:** the safety net searches groups and
+   variants (all three screens pass every HOME item: `usePantryItems` /
+   `withGroupTotals`); check 1 is skipped for a durable SHOP category
+   (`isDurable`) and for a MONEY row that is locked or off (`similarAsk`
+   needs `line.home`), and check 2 still runs for them (SHOP:
+   `listCheck`; MONEY: `listEntryFor` + `listEntryNote`, "On your SHOP
+   list — it stays there (Add to HOME is off)."). New tests prove both.
+
+**Decision 7** ("Create new" names offered again for what was typed)
+moved to round 6D: it is the aliases' job (section 9D).
+
+**Step 8, pack size today (report only).**
+
+- *Where it is stored:* only on the HOME item —
+  `pantry_items.packaging_unit` + `quantity_per_pack` (null = none).
+  What was bought is kept per line (`grocery_items.quantity` / `unit`,
+  `shopping_trip_items.quantity` / `unit` / `stock_added`,
+  `orders.quantity` / `unit`); the item's pack before a purchase is in
+  `shopping_trip_items.pantry_before` (Reopen puts it back).
+- *Where it is set:* HOME editor (`ItemEditor`, multipack: "pcs per box",
+  quick chips); Confirm purchase and MONEY "Add expense" only by the
+  inline question "How many pcs are in 1 pack?", shown only when the unit
+  can't be converted (`purchaseLine.needsPackSize`, `rowLine` /
+  `rowProblem`). The SHOP form, Order online (`orderUnits`: the entry's
+  unit, the item's pack unit, its stock unit) and Arrived
+  (`LinkedArrivedDialog` → `RestockForm`: pack unit × stored size, or the
+  stock unit) never set it.
+- *Stock:* `purchasedQuantity(pantry, line, packSize)` = `toBaseQuantity`
+  (same unit → as is; the item's pack unit → × `quantity_per_pack`; kg ↔
+  gr…) else × the answer; sent as `add`; `confirm_shopping_trip` adds it
+  to `current_stock`, writes one `stock_logs` row (change = add, stock
+  unit, reason 'purchased') and the line keeps quantity/unit as bought +
+  `stock_added`. Arrived: `arrive_order(add_qty)` the same way. The
+  expense is `line_total` (the price typed, after discounts; an order's
+  expense was made when ordering) — never computed from the pack. The
+  item's last price becomes the entry's price per its price unit.
+- *One purchase only:* not possible in the item's own pack unit (the
+  stored size is always used, no question). The question's answer is
+  saved on the item (`packSizePatch`) when the item has no packaging unit
+  or the same one; it is used for that purchase only when the item already
+  has another packaging unit, or the unit is kg / gr / ml / L.
+
+| Cat wet food (stock pcs, usually 1 box = 48 pcs) | What to type today | Stock added | Item's 48 |
+|---|---|---|---|
+| 1 box = 48 pcs | 1 box | 48 pcs (stored size, no question) | kept |
+| 1 box = 40 pcs | 40 pcs (SHOP card, Confirm, MONEY row or Arrived) — "1 box" would add 48 | 40 pcs | kept |
+| 1 pack = 4 pcs | 1 pack + answer 4 to "How many pcs are in 1 pack?" (Confirm / MONEY), or 4 pcs; Arrived: 4 pcs | 4 pcs | kept (pack ≠ box) |
+
+**Tests:** 1615 → 1634 (93 → 94 files). Removed: the "Add … more" unit
+test and the two "Add 1 more" / "Add 3 more" render tests. New / changed:
+`pages/shopAdd.render.test.jsx` (the button and the form "Add to SHOP
+list", no quick add on the list, Go to card in the cart and for a group
+variant, a filter cleared, Shop mode keeps quick add and its Go to card);
+`components/similarItems.render.test.jsx` (suggestions from HOME / SHOP
+not history, never auto-picked, a tapped suggestion, Save & add another
+keeps only Paid by, OK after both buttons, Go to card, Add anyway with
+the typed quantity, "2 more — type more of the name" in SHOP, MONEY and
+HOME, MONEY "Similar on your SHOP list", check 2 for a durable and a
+locked row); `lib/similarItems.test.js` (`more`, the new texts); the
+"Add to list" button is "Save" in the older form tests.
+
+### iPhone checklist for the 26/10 follow-up
+
+1. SHOP → List: no "Add an item…" box, no "More options"; "+ Add to SHOP
+   list" opens "Add to SHOP list".
+2. Type "pum" → HOME and SHOP names under the field; tap one → the name,
+   category and unit fill in. Type "mil" and press Save → saved as "mil".
+3. "Save & add another" → saved; the form stays, empty, Paid by kept.
+4. An item in the cart → "Already on your SHOP list: … — in the cart" →
+   "Go to card" → the form closes, the card is outlined.
+5. An item ordered online → "Add anyway" → a new card with the quantity
+   typed.
+6. "Sauce" (or "Frozen") → 3 buttons and "… more — type more of the name".
+7. MONEY → Add expense → a name like a SHOP card typed by hand (not in
+   HOME) → "Similar on your SHOP list: … — it stays there."; after saving
+   the card is still on the list.
+8. Shop mode: the quick-add box is still there.
+9. 375 px: no sideways scroll; both Save buttons fit.
 
 ### iPhone checklist for round 9G
 
