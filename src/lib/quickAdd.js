@@ -26,7 +26,8 @@ export function rememberAdded(entry) {
   }
 }
 
-const fromRow = (row, source) => ({
+// What a pantry item (source 'pantry') or a SHOP entry ('list') fills in.
+export const suggestionFrom = (row, source) => ({
   name: row.name.trim(),
   categoryId: row.category_id ?? null,
   subcategoryId: row.subcategory_id ?? null,
@@ -48,8 +49,8 @@ export function buildSuggestions(pantryItems, groceryItems, history = []) {
     const key = normName(s.name)
     if (key && !byName.has(key)) byName.set(key, s)
   }
-  pantryItems.forEach((p) => add(fromRow(p, 'pantry')))
-  ;[...groceryItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).forEach((g) => add(fromRow(g, 'list')))
+  pantryItems.forEach((p) => add(suggestionFrom(p, 'pantry')))
+  ;[...groceryItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).forEach((g) => add(suggestionFrom(g, 'list')))
   history.forEach((h) => add({ ...h, source: 'history' }))
   return [...byName.values()]
 }

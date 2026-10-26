@@ -24,6 +24,7 @@ Contents
    - 9D. Decided 21–22/10 for later rounds (Trips, round 7, round 6D)
    - 9E. Data fix 025 (Action 17/10/2026)
    - 9F. Durable lock (decided 25/10, as built)
+   - 9G. Similar-name safety net (decided 26/10, as built)
 10. Risks and decisions
 
 ---
@@ -2236,13 +2237,200 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
 
 **Next rounds, in this order.**
 
-1. A small "similar name safety net" round: when adding in SHOP or in
+1. ~~A small "similar name safety net" round: when adding in SHOP or in
    MONEY (Add to HOME on), warn "Similar item in HOME: …" / "Already on
    your SHOP list" and offer to use the existing item, even when its stock
-   is high.
+   is high.~~ **Done 26/10 — section 9G.**
 2. Round 6D (section 9D).
 3. Later: a "Kids" durable sub under Durables when the household has a
    child (baby bottles, pacifiers… today Baby › Feeding).
+
+### 9G. Similar-name safety net (decided 26/10, as built)
+
+Code and tests only: no SQL, no new column, no browser storage. It only
+reads what is already on the phone (`pantryStore`, `groceryStore`,
+`orderStore`), so it works offline exactly like online, and the same on
+all six devices.
+
+**What the code did before (round 9G, step 1).**
+
+- SHOP quick add (`QuickAdd`): suggestions while typing already existed
+  (`lib/quickAdd.js` `buildSuggestions` / `matchSuggestions`: names
+  starting with the text, then a word starting with it, then containing
+  it; from HOME items without variants, SHOP entries and this phone's
+  quick-add history). Enter / + added the highlighted suggestion (the
+  first one) or, with none, the typed text. The HOME link came from the
+  suggestion (exact name, capitals and outer spaces ignored: `normName`).
+  An open entry with exactly that name (not one ordered online) got one
+  more step at once, toast "… was already on the list — now 2 pcs".
+- SHOP More options (`AddItemForm`): `pantryByName.get(normName(name))`,
+  exact only, never a group; nothing checked the SHOP list (a second
+  entry could be made).
+- MONEY "Add expense" (`PurchaseForm`): `moneyPurchase.homeItemFor`,
+  exact only (`normName`; a normal item before a group). The SHOP entry
+  texts existed and worked (`listEntryFor` / `listEntryNote`): "On your
+  SHOP list — it will leave the list." (sent as `list_entry_id` only when
+  the line really adds stock and the entry is still to buy; 023 checks
+  again), "It's in the cart in SHOP — it stays there.", "It's ordered
+  online (on the way) — it stays on the SHOP list." and "On your SHOP list
+  — it stays there (Add to HOME is off)." They are kept unchanged.
+- HOME add / edit (`ItemEditor`): no name check at all (only the round-9F
+  durable-name warning, which stays).
+- SHOP Confirm purchase (`purchase.pantryItemFor`): not changed (not in
+  this round).
+
+**Matching (`src/lib/similarItems.js`, one path for every screen).**
+
+- `exactKey`: lower case, accents off, punctuation as a space, single
+  spaces, every word singular with the keyword list's `singular`
+  (`NOT_PLURAL` kept: "glasses"). Numbers and units stay: "Milk 1L" and
+  "Milk 500ml" are not exact.
+- `countedWords`: the same words without numbers / amounts ("500",
+  "1l", "x2"), unit words (the keyword engine's list, exported from
+  `lib/categoryGuess.js` as `isUnitWord` / `isAmountWord`: kg, g, gr, mg,
+  ml, cl, dl, l, lt, litri, pz, pcs, pezzi, pack, conf, confezione, x, oz…)
+  and linking words (di, de, del, della, delle, dei, degli, la, le, il, lo,
+  al, alla, e, and, with, con, per, for, of, the, a, yang, dan, untuk,
+  dengan, "&", "-").
+- `matchKind`: **exact** (same exactKey); **typo** (as many counted words,
+  each the same or typo-equal, at least one typo); **words**, the
+  half-name rule (every word of the shorter name equal or typo-equal to
+  its own word of the longer one, and shorter × 2 ≥ longer). Words are
+  paired one to one.
+- Typo-equal, item words only (category names keep the round-5 rule):
+  4 letters or fewer identical; 5–8 letters at most 1 step
+  (Damerau-Levenshtein, `nameDistance` on single words); 9 or more at most
+  2. The shorter of the two words decides ("Pear" / "Pearl": no).
+- `matchHomeItems(name, items, { exceptId })` → `{ exact, similar }`:
+  every pantry item (finished 1× items, groups, variants), never a durable
+  (`isDurable`); best class first, then Out / Low first (`stockStatus`; a
+  finished 1× item is Out, another 1× item never Low/Out), then fewer
+  counted words, shorter name, A–Z; at most 3. An exact match never asks
+  (a normal item before a group of the same name).
+- `shopEntryFor({ item, name }, entries, { orderedIds })`: the open entry
+  (to buy, in the cart, ordered online — never bought) linked to the item,
+  or an entry without a HOME item whose name matches (exact, typo or
+  words); to buy first, then in the cart, then ordered online. The SHOP
+  durable section counts too.
+- `moneyPurchase.homeItemFor` now finds the HOME item by exactKey too
+  ("cucumbers" → "Cucumber"), after the old exact name. `listEntryFor`
+  compares names without a HOME item by exactKey (it was capitals only).
+
+**Order of the checks everywhere.** (1) Durable / service lock first:
+SHOP, an entry whose HOME category is in the Durables tree; MONEY, a row
+with Add to HOME off or locked → no HOME check, only the SHOP list check
+(SHOP). (2) Exact → that item, no question. (3) Similar → ask. (4)
+Nothing → as before.
+
+**SHOP quick add and More options** (on + / Enter / "Add to list"):
+
+- Exact → the entry is that HOME item (its name; More options also its
+  category unless one was picked by hand). Not on the list → added, toast
+  "Added “cucumber” · in HOME: 2 pcs" (`formatStock`; stock 0 "· out of
+  stock"; finished 1× "· finished 1× item, it comes back").
+- Similar → nothing is saved. Under the name: "Similar item in HOME:", up
+  to 3 buttons "Use Fresh Pumpkin · 2 pcs at home" ("· out of stock",
+  "· finished 1× item, it comes back"; on the list "· already to buy",
+  "· already in the cart", "· ordered online") and "Create new “Pumpkin”".
+  "Use …" = exact for that item. "Create new" keeps the field editable
+  with "Similar names can mix up later — make it clearer, e.g. “Frozen
+  Pumpkin Cubes”."; the next press adds the name as it is; a changed name
+  is checked again. Typing closes an open question.
+- On the list already → no second entry: "Already on your SHOP list: Dish
+  soap — in the cart" (or "— to buy" / "— ordered online") with "OK"
+  (nothing changes) and "Add 1 more (now 2 pcs)" (to buy / in the cart;
+  the to-buy or in-cart entry when there are several; More options adds
+  the quantity typed when it is in the entry's unit or converts —
+  `convertQuantity`, with the HOME item's pack — e.g. "Add 3 more (now 4
+  pcs)") or, ordered online, "Add anyway" (a new entry to buy).
+- Groups (until 6D): "Use" on a variant → that variant's entry; "Use" on
+  the group → exactly as when its name is typed by hand (quick add links
+  the group as before; More options doesn't link it, as before).
+- The question scrolls into view once (the button may be lower down).
+
+**MONEY "Add expense"** (rows with Add to HOME on and not locked):
+
+- `moneyPurchase.similarAsk`: the question shows when typing pauses
+  (`hooks/useTypingPause.js`, the same 400 ms as `useLastPrice`) and
+  always after Save; Save is blocked while a row has one, the row is
+  highlighted and says "Choose “Use …” or “Create new” for this item."
+  (also next to Save).
+- Exact → the row is that item (as before) and says "In HOME: 2 pcs".
+  "Use …" → the row's name becomes the HOME item's name (unit, category,
+  group variant as for a typed HOME name). "Create new" → hint;
+  `row.similarAnswer` keeps the answered name (its exactKey), so a changed
+  name asks again.
+- SHOP entry texts: unchanged (found working, see above).
+
+**HOME add / edit** (`ItemEditor` with `homeItems`, from `PantryPage`;
+the Arrived dialog's editor passes none, unchanged):
+
+- Exact → not saved: "“cucumber” is already in HOME" + "Go to cucumber"
+  ("Go to Balloons (finished 1×)").
+- Similar → not saved: "Similar item in HOME:" + up to 3 "Go to Fresh
+  Pumpkin" + "Create new “Pumpkin”" (same hint; a changed name asks
+  again).
+- "Go to …" closes the form without saving anything (a stock typed there
+  is not used) and opens the existing item's editor (`key` per item).
+- An edited item is checked only when its name changes (exactKey), and
+  never against itself.
+
+**Not built: decision 7** ("Create new" names offered again for the text
+typed then). It needs a record kept for all devices ("Pumpkin" →
+"Frozen Pumpkin Cubes"): there is no table for it (no SQL / column
+allowed), browser storage is excluded, `category_memory` would change the
+category suggestions and `household_settings` is a settings table with no
+store in the app. In SHOP the new item doesn't even exist in HOME yet
+when "Create new" is pressed. Best done with the aliases of round 6D.
+
+**Deviations / open points** (open questions in the round summary):
+quick add with nothing alike still adds the first suggestion under the box
+("mil" → Milk, but also "Chicken" → Chicken Feet Snack), as before; "Add 1
+more" on a gr / ml / kg / L entry adds one step of the + button (100 gr,
+100 ml, 0.5 kg, 0.5 L: "Add 100 more (now 600 gr)"); MONEY counts an entry
+without a HOME item only by the same name (it may be closed), SHOP also by
+a similar one; the quick-add suggestion label "on list · +1" is now "on
+list" (tapping asks).
+
+**Analysis of the 253 live names (25/10).** Single words that still match
+more than 3 items: frozen (5: Frozen Shrimp, Broccoli, Cauliflower,
+Mushroom, Pumpkin), hair (4: hair oil, hair water, Hair Conditioner, Hair
+Gel), powder (4: Electrolytes, Garlic, Onion, Turmeric Powder), sauce (7:
+BBQ, Fajita, Fish, Oyster, Soy, Teriyaki, Tomato Sauce). Pairs of HOME
+names that match each other (all "words"): Duck Eggs / Eggs, Milk /
+coconut milk, Chicken Sausage / Frozen Chinese Chicken Sausage, Soy Sauce
+/ Sweet Soy Sauce, Fontana Water Filter / Fontana Water Pump Filter. No
+exact or typo pairs.
+
+**Tests:** 1570 → 1615 (91 → 93 files). New `lib/similarItems.test.js`
+(every case of the brief, ordering, finished 1×, groups, durables, the SHOP
+entry rule, texts, "Add … more", the whole fixture) and
+`components/similarItems.render.test.jsx` (quick add: similar, Use, Create
+new, exact, finished 1×, in the cart OK / Add 1 more, ordered Add anyway,
+durable, nothing alike; More options: similar, Add 3 more, durable; MONEY:
+pause, Save blocked, Create new, Use, exact note, check 2 texts, Add to
+HOME off; HOME: exact + Go to, finished 1×, similar + Create new, rename).
+
+### iPhone checklist for round 9G
+
+1. SHOP quick add "Pumkin" (with Fresh/Frozen Pumpkin in HOME) → "Similar
+   item in HOME:" and the buttons; nothing added. "Use …" → added with the
+   HOME name and "in HOME: …".
+2. Again, "Create new “Pumkin”" → the hint; change the name to "Frozen
+   Pumpkin Cubes" → + → added.
+3. Quick add an item that is in the cart → "Already on your SHOP list: … —
+   in the cart"; "Add 1 more (now 2 pcs)" → its quantity is 2.
+4. More options → a similar name → asked; an item to buy with quantity 3
+   → "Add 3 more (now …)".
+5. MONEY → Add expense → "Pumkin", price → the question after a moment;
+   Save → "Choose “Use …” or “Create new” for this item."; answer → saved.
+6. MONEY → an item in HOME → "In HOME: 2 pcs"; on the list → "On your SHOP
+   list — it will leave the list."
+7. HOME → Add item "cucumber" (exists) → "“cucumber” is already in HOME" →
+   "Go to cucumber" opens it; nothing new in HOME.
+8. HOME → edit an item, rename it to an existing name → refused.
+9. Airplane mode: the same questions appear.
+10. 375 px: no sideways scroll; long names wrap in the buttons.
 
 ---
 

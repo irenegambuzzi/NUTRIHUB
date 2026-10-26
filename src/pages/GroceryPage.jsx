@@ -284,10 +284,19 @@ export function GroceryPage() {
     )
   }
 
+  // The similar-name safety net (plan 9G) compares with every HOME item and
+  // every open entry, those ordered online too.
+  const openEntries = [...items, ...onTheWay]
+  const orderedIds = new Set(onTheWay.map((e) => e.id))
+  const addMore = (entry, quantity) => updatePricing(entry, { quantity }, totalOf({ ...entry, quantity }))
+
   const quickAdd = (
     <QuickAdd
       items={items}
       pantryItems={pantryItems.filter((p) => !p.group_id)}
+      homeItems={pantryItems}
+      openEntries={openEntries}
+      orderedIds={orderedIds}
       parents={parents}
       subsByParent={subsByParent}
       categoryName={categoryName}
@@ -403,7 +412,11 @@ export function GroceryPage() {
                 subsByParent={subsByParent}
                 categoryName={categoryName}
                 pantryByName={pantryByName}
+                homeItems={pantryItems}
+                openEntries={openEntries}
+                orderedIds={orderedIds}
                 onAdd={addItem}
+                onAddMore={addMore}
                 onAddCategory={addCategory}
                 onAddSubcategory={addSubcategory}
                 onAdded={() => setFullForm(null)}

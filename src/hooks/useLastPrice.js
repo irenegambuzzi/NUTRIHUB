@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchTripLines, lastPriceFor } from '../lib/lastPrice'
 import { normName } from '../lib/grocery'
 import { orderStore, pantryStore } from '../lib/stores'
+import { TYPING_PAUSE_MS } from './useTypingPause'
 
 // The last normal price and purchase unit for a typed name (see
 // lib/lastPrice.js), or null. HOME items and orders come from the phone's
@@ -19,7 +20,7 @@ export function useLastPrice(name) {
     const timer = setTimeout(async () => {
       const lines = await fetchTripLines(name)
       if (!stale) setTrip({ key, lines })
-    }, 400)
+    }, TYPING_PAUSE_MS)
     return () => {
       stale = true
       clearTimeout(timer)

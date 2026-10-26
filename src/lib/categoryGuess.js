@@ -6,8 +6,17 @@ import { CATEGORY_RULES } from '../data/categoryKeywords'
 // matching rules below.
 
 // Words that only describe the amount, dropped before matching.
-const AMOUNT = /\b\d+(?:[.,]\d+)?\s*(?:kg|g|gr|grammi|grams?|mg|ml|cl|dl|l|lt|litri|liters?|litres?|pz|pcs|pezzi|x|oz)?\b|\bx\s*\d+\b/g
+const AMOUNT_UNITS = 'kg|g|gr|grammi|grams?|mg|ml|cl|dl|l|lt|litri|liters?|litres?|pz|pcs|pezzi|x|oz'
+const AMOUNT = new RegExp(`\\b\\d+(?:[.,]\\d+)?\\s*(?:${AMOUNT_UNITS})?\\b|\\bx\\s*\\d+\\b`, 'g')
 const UNIT_WORDS = new Set(['pcs', 'pz', 'pezzi', 'pack', 'conf', 'confezione', 'kg', 'gr', 'ml', 'lt', 'x'])
+
+// The same unit words for one word of a cleaned name (lib/similarItems.js
+// reads names the same way): "kg", "ml", "pack"… and an amount on its own,
+// "500", "1l", "500ml", "x2".
+const UNIT_WORD = new RegExp(`^(?:${AMOUNT_UNITS})$`)
+const AMOUNT_WORD = new RegExp(`^(?:\\d+(?:${AMOUNT_UNITS}|${[...UNIT_WORDS].join('|')})?|x\\d+)$`)
+export const isUnitWord = (word) => UNIT_WORDS.has(word) || UNIT_WORD.test(word)
+export const isAmountWord = (word) => AMOUNT_WORD.test(word)
 
 // "Ice-Cream 500g" → "ice cream": lower case, no accents, punctuation and
 // amounts removed, single spaces. (Also the key of a remembered name.)

@@ -405,6 +405,7 @@ export function PantryPage() {
 
       {editor && (
         <ItemEditor
+          key={editor.item?.id ?? 'new'}
           item={editor.item}
           asGroup={Boolean(editor.asGroup)}
           group={editor.group}
@@ -417,6 +418,8 @@ export function PantryPage() {
           onAddSubcategory={addSubcategory}
           onSave={handleSave}
           onClose={() => setEditor(null)}
+          homeItems={items}
+          onGoTo={(existing) => setEditor({ item: existing })}
         />
       )}
     </div>

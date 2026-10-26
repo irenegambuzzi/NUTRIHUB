@@ -8,6 +8,7 @@ import { budgetCategoryFor } from './budgetMap'
 import { durableLock, isPurposeBudget, lockNote } from './durable'
 import { packSizePatch, purchasedQuantity } from './purchase'
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
+import { exactKey, matchHomeItems, sameItemName } from './similarItems'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -21,6 +22,8 @@ const round2 = (n) => Math.round(n * 100) / 100
 // A new, empty item row. `key` only tells rows apart on screen.
 //   addToHome   null = follow the default (see addsToHome), else the choice
 //   variantId   undefined = not chosen yet (the first variant at 0 is taken)
+//   similarAnswer  the name (its exactKey) "Create new" was pressed for in
+//               the similar-name question (plan 9G); another name asks again
 //   priceEdited / autoFilled   the price, quantity and unit were typed by hand
 //               / filled in from the last purchase of that name
 export function emptyRow(key) {
@@ -47,17 +50,34 @@ export function emptyRow(key) {
     packSizeText: '',
     discountKind: 'percent',
     discountText: '',
+    similarAnswer: '',
   }
 }
 
 // The HOME item a typed name stands for: a normal item with that name (a
 // finished 1× item too: buying it again brings it back), else a group with
 // that name (its stock then goes to one of its variants, never the group).
+// The same name ignoring capitals and spaces first, then apart from
+// accents, punctuation and a plural too ("cucumbers" is "Cucumber", plan 9G).
 export function homeItemFor(name, pantryItems) {
   const key = normName(name)
   if (!key) return null
-  return pantryItems.find((p) => !p.is_group && normName(p.name) === key) ?? pantryItems.find((p) => p.is_group && normName(p.name) === key) ?? null
+  const by = (same) => pantryItems.find((p) => !p.is_group && same(p.name)) ?? pantryItems.find((p) => p.is_group && same(p.name))
+  return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? null
 }
+
+// The similar-name question of a row (plan 9G): the HOME items like its
+// name ({ item, kind }, up to 3), or null when there is nothing to ask —
+// the row isn't added to HOME (off or locked), its name is a HOME item, or
+// "Create new" was pressed for this very name.
+export function similarAsk(line, pantryItems) {
+  const { row } = line
+  if (!line.home || line.known || !row.name.trim() || row.similarAnswer === exactKey(row.name)) return null
+  const { exact, similar } = matchHomeItems(row.name, pantryItems)
+  return exact || !similar.length ? null : similar
+}
+
+export const SIMILAR_PROBLEM = 'Choose “Use …” or “Create new” for this item.'
 
 // "Add to HOME" as chosen: on by default when the row has a HOME item
 // category, off otherwise; the user can switch it (unless it is locked).
@@ -178,11 +198,13 @@ export function pricedLines(lines, coupon = null) {
 //   'in-cart'  in a cart in SHOP: never closed from here
 //   'ordered'  ordered online and on the way: never closed from here
 // The entries of the HOME item (`target`), or for a new item the open ones
-// typed with the same name and no HOME item. null = not on the list.
+// typed with the same name and no HOME item (capitals, accents and a plural
+// ignored; never only a similar name: this entry may be closed). null = not
+// on the list.
 export function listEntryFor(name, target, groceryItems, orderedIds = new Set()) {
   const key = normName(name)
   if (!key && !target) return null
-  const open = groceryItems.filter((g) => !g.completed && ((target && g.pantry_item_id === target.id) || (!g.pantry_item_id && key && normName(g.name) === key)))
+  const open = groceryItems.filter((g) => !g.completed && ((target && g.pantry_item_id === target.id) || (!g.pantry_item_id && key && sameItemName(g.name, name))))
   const linked = (g) => (g.pantry_item_id ? 0 : 1)
   open.sort((a, b) => linked(a) - linked(b))
   const toBuy = open.find((g) => !g.in_cart && !orderedIds.has(g.id))

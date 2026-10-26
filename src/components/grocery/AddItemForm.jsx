@@ -19,6 +19,9 @@ import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { isOneTime } from '../../lib/oneTime'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { priceUnitOptions } from '../../lib/pricing'
+import { showToast } from '../../lib/feedback'
+import { addMore, addedMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
+import { AlreadyListed, CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
 
@@ -43,7 +46,11 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
 // (from the quick-add box) starts it filled in. The category is suggested
 // from the name, or left empty for the user to pick; a pick by hand is
 // remembered for that name on both phones.
-export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, onAdd, onAddCategory, onAddSubcategory, initialName = '', onAdded }) {
+// "Add to list" runs the similar-name safety net first (plan 9G, the same
+// checks as the quick-add box): `homeItems` every HOME item, `openEntries`
+// the open entries (ordered online too, `orderedIds`); `onAddMore(entry,
+// quantity)` sets the quantity of an entry already on the list.
+export function AddItemForm({ parents, subsByParent, categoryName, pantryByName, homeItems = [], openEntries = [], orderedIds = new Set(), onAdd, onAddMore, onAddCategory, onAddSubcategory, initialName = '', onAdded }) {
   const { suggest, suggestions, remember } = useCategorySuggestions({ parents, subsByParent })
   const [initial] = useState(() => (initialName ? fieldsFromName(initialName, suggest, pantryByName) : {}))
   const [name, setName] = useState(initialName)
@@ -59,6 +66,11 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   // One-time purchase (1×), for something not in HOME yet: Confirm
   // purchase makes its new HOME item one-time too.
   const [oneTime, setOneTime] = useState(false)
+  // The safety net's open question ({ kind: 'similar', options } or {
+  // kind: 'listed', found, item }) and the name "Create new" was pressed
+  // for (its exactKey).
+  const [question, setQuestion] = useState(null)
+  const [createNewKey, setCreateNewKey] = useState(null)
   // Bought before: the last normal price and the unit it was bought in fill
   // in until the price or unit is changed by hand (the store never is).
   const [priceEdited, setPriceEdited] = useState(false)
@@ -82,6 +94,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   // Suggest category/subcategory from the name until the user picks one.
   const handleNameChange = (value) => {
     setName(value)
+    setQuestion(null)
     if (categoryTouched) return
     const fields = fieldsFromName(value, suggest, pantryByName, priceDraft)
     setCategoryId(fields.categoryId)
@@ -98,15 +111,51 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const formPriceUnits = priceUnitOptions({ unit }, formPack)
   const formPriceUnit = formPriceUnits.includes(priceDraft.price_unit) ? priceDraft.price_unit : unit
 
+  // Checks in this order: a durable (its category in the Durables tree)
+  // skips the HOME check; the same name as a HOME item uses it; a similar
+  // name asks and nothing is added; then: already on the list?
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name.trim()) return
     if (firstDecimalProblem(quantity, priceDraft.price, priceDraft.price_qty)) return
-    const known = pantryByName.get(normName(name))
+    if (exactKey(name) !== createNewKey && !isDurable({ category_id: categoryId })) {
+      const { exact, similar } = matchHomeItems(name, homeItems)
+      if (exact) return listCheck(exact)
+      if (similar.length) {
+        const options = similar.map(({ item }) => ({ item, label: pickLabel(item, shopEntryFor({ item, name: item.name }, openEntries, { orderedIds })?.state) }))
+        return setQuestion({ kind: 'similar', options })
+      }
+    }
+    listCheck(null)
+  }
+
+  const listCheck = (item) => {
+    const found = shopEntryFor({ item, name: item?.name ?? name.trim() }, openEntries, { orderedIds })
+    if (found) return setQuestion({ kind: 'listed', found, item })
+    save(item)
+  }
+
+  // The quantity typed when it is in the entry's unit or converts to it,
+  // else one more of the entry's unit.
+  const moreFor = (found, item) => addMore(found.entry, { quantity: formQuantity, unit }, item ?? homeItems.find((p) => p.id === found.entry.pantry_item_id) ?? null)
+
+  const addToEntry = async ({ found, item }) => {
+    const { error } = await onAddMore(found.entry, moreFor(found, item).total)
+    if (!error) done()
+  }
+
+  // `item`: the HOME item used (the same name, or "Use …"): the entry takes
+  // its name, and its category unless one was picked by hand. A group is
+  // never linked from here, exactly as when its name is typed by hand.
+  const save = async (item = null) => {
+    const known = item ? (item.is_group ? null : item) : pantryByName.get(normName(name))
+    const fromItem = item && !categoryTouched && item.category_id
+    const pickedCategory = fromItem ? item.category_id : categoryId
+    const pickedSub = fromItem ? item.subcategory_id || '' : subcategoryId
     const { error } = await onAdd({
-      name: name.trim(),
-      categoryId: categoryId || null,
-      subcategoryId: categoryId ? subcategoryId || null : null,
+      name: item?.name ?? name.trim(),
+      categoryId: pickedCategory || null,
+      subcategoryId: pickedCategory ? pickedSub || null : null,
       price: parseDecimal(priceDraft.price) || 0,
       priceQty: parseDecimal(priceDraft.price) > 0 ? parseDecimal(priceDraft.price_qty) || 1 : null,
       priceUnit: parseDecimal(priceDraft.price) > 0 ? formPriceUnit : null,
@@ -114,11 +163,18 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
       unit,
       payer,
       pantryItemId: known?.id ?? null,
-      oneTime: !known && oneTime && !isDurable({ category_id: categoryId }),
+      oneTime: !known && oneTime && !isDurable({ category_id: pickedCategory }),
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
     if (categoryTouched && categoryId) remember(name, categoryId, subcategoryId || null, { chips })
+    if (item) showToast({ message: addedMessage(item) })
+    done()
+  }
+
+  const done = () => {
+    setQuestion(null)
+    setCreateNewKey(null)
     setName('')
     setCategoryId('')
     setSubcategoryId('')
@@ -135,7 +191,27 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   return (
     <form onSubmit={handleAdd} data-unsaved={name.trim() ? '' : undefined}>
       <Card className="space-y-3 rounded-3xl">
-        <Input placeholder="Item name (e.g. Olive oil)" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+        <Input placeholder="Item name (e.g. Olive oil)" aria-label="Item name" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+        {question?.kind === 'similar' && (
+          <SimilarItemsQuestion
+            name={name}
+            options={question.options}
+            onPick={listCheck}
+            onCreateNew={() => {
+              setCreateNewKey(exactKey(name))
+              setQuestion(null)
+            }}
+          />
+        )}
+        {question?.kind === 'listed' && (
+          <AlreadyListed
+            found={question.found}
+            onOk={done}
+            actionLabel={question.found.state === 'ordered' ? 'Add anyway' : moreFor(question.found, question.item).label}
+            onAction={() => (question.found.state === 'ordered' ? save(question.item) : addToEntry(question))}
+          />
+        )}
+        {createNewKey && !question && <CreateNewHint />}
         <CategoryChips
           mode="home"
           name={name}

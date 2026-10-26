@@ -36,12 +36,17 @@ import {
   rowLine,
   rowProblem,
   savesAsPlainExpense,
+  similarAsk,
+  SIMILAR_PROBLEM,
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
+import { exactKey, inHomeNote, pickLabel, shopEntryFor } from '../../lib/similarItems'
+import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { useLastPrice } from '../../hooks/useLastPrice'
+import { useTypingPause } from '../../hooks/useTypingPause'
 import { recordMoneyPurchase } from '../../hooks/usePurchase'
 import { addExpenseOnce } from '../../hooks/useExpenses'
 import { useShops } from '../../hooks/useShops'
@@ -92,7 +97,12 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx)), coupon), [rows, pantryItems, budgetCtx, coupon])
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
-  const problems = lines.map((line) => rowProblem(line, { plain }))
+  // The similar-name safety net (plan 9G), for rows added to HOME: a name
+  // like a HOME item's must be answered ("Use …" or "Create new") before
+  // the form can be saved. Worked out from the name as it is now, so Save
+  // checks again whatever the row shows.
+  const asks = lines.map((line) => similarAsk(line, pantryItems))
+  const problems = lines.map((line, i) => (asks[i] ? SIMILAR_PROBLEM : rowProblem(line, { plain })))
   const total = purchaseTotal(lines)
   const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem
 
@@ -225,6 +235,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               index={index}
               line={line}
               listEntry={entryOf(line)}
+              ask={asks[index]}
+              tried={tried}
+              optionLabel={(item) => pickLabel(item, shopEntryFor({ item, name: item.name }, groceryItems, { orderedIds })?.state)}
               problem={tried ? problems[index] : ''}
               single={rows.length === 1}
               budgetId={budgetOf(line.row, budgetCtx)}
@@ -286,7 +299,7 @@ function pickPatch(pick, home) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, ask, tried, optionLabel, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
   const { row } = line
   // Durable (by its HOME or its budget category): never HOME stock, so
   // "Add to HOME" is off and can't be turned on, and there is no 1×.
@@ -300,6 +313,13 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, autoBudget
   // nor the HOME mapping (with Add to HOME on only a purpose category, or
   // a row without a HOME category, uses it; lib/moneyPurchase.js budgetOf).
   const budgetSuggested = autoBudget && !row.budgetTouched && budgetId === row.autoBudgetId
+  // The similar-name question shows once the typing pauses (or after Save
+  // was pressed); "Use …" takes the HOME item's name, so the row is that
+  // item; "Create new" keeps the name (a changed name asks again).
+  const settledName = useTypingPause(row.name)
+  const showAsk = Boolean(ask) && (tried || settledName === row.name)
+  const createdNew = home && row.name.trim() && row.similarAnswer === exactKey(row.name)
+  const homeItem = home ? line.target ?? line.known : null
 
   // Bought before: the last normal price and the unit it was bought in fill
   // in (until the price, quantity or unit is edited by hand). The store is
@@ -327,6 +347,17 @@ function ItemRow({ index, line, listEntry, problem, single, budgetId, autoBudget
           </button>
         )}
       </div>
+      {showAsk && (
+        <SimilarItemsQuestion
+          name={row.name}
+          options={ask.map(({ item }) => ({ item, label: optionLabel(item) }))}
+          onPick={(item) => onName(item.name)}
+          onCreateNew={() => onChange({ similarAnswer: exactKey(row.name) })}
+          scroll={false}
+        />
+      )}
+      {createdNew && <CreateNewHint />}
+      {homeItem && <p className="text-[11px] text-[var(--color-text-muted)]">{inHomeNote(homeItem)}</p>}
 
       <CategoryChips
         mode={home ? 'home' : 'budget'}

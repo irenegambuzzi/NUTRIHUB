@@ -20,6 +20,8 @@ import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { durableLookalike } from '../../lib/durable'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
+import { exactKey, goToLabel, matchHomeItems } from '../../lib/similarItems'
+import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 function initialState(item, group, prefill) {
   const perPack = Number(item?.quantity_per_pack) || ''
@@ -56,7 +58,10 @@ function initialState(item, group, prefill) {
 // that starts with this name and the category suggested for it.
 // `allParents`: every HOME main, the Durables tree too (HOME itself offers
 // only `parents`), so a name that looks durable can be pointed out.
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null }) {
+// `homeItems` (every HOME item) turns on the similar-name safety net (plan
+// 9G): a new name, or a renamed one, that is already in HOME is not saved
+// ("Go to …" opens that item instead, `onGoTo`); a similar one asks first.
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
@@ -73,6 +78,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [unitNote, setUnitNote] = useState('')
   const [expiryValid, setExpiryValid] = useState(true)
   const [groupNote, setGroupNote] = useState('')
+  // The safety net's open question ({ kind: 'exact', item } or { kind:
+  // 'similar', options }) and the name "Create new" was pressed for.
+  const [question, setQuestion] = useState(null)
+  const [createNewKey, setCreateNewKey] = useState(null)
   // "Usually bought at" (supabase/021): for items and groups, not variants
   // (their group's store counts).
   const flow = useFlow()
@@ -83,6 +92,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
   // Until a category is picked, it follows the name's suggestion.
   const changeName = (name) => {
+    setQuestion(null)
     if (categoryTouched) return setForm((f) => ({ ...f, name }))
     const pick = suggest(name)
     setForm((f) => ({ ...f, name, category_id: pick?.categoryId ?? '', subcategory_id: pick?.subcategoryId ?? '' }))
@@ -192,6 +202,14 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
     if (!expiryValid) return setError('Fix the expiry date first (DD/MM/YYYY), or remove it.')
     if (batchDateError) return setError(batchDateError)
+    // A new name (or a rename) is compared with the other HOME items; the
+    // item being edited never with itself, and an unchanged name not at all.
+    const renamed = !item || exactKey(form.name) !== exactKey(item.name)
+    if (homeItems && renamed && exactKey(form.name) !== createNewKey) {
+      const { exact, similar } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
+      if (exact) return setQuestion({ kind: 'exact', item: exact })
+      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: goToLabel(m.item) })) })
+    }
     setSaving(true)
     setError('')
 
@@ -248,6 +266,30 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         <div>
           <Label>Name</Label>
           <Input autoFocus placeholder={isGroup ? 'e.g. Chips & Snacks' : group ? 'Name or brand, e.g. Lays paprika' : 'e.g. Rice, Dish soap, Paracetamol'} value={form.name} onChange={(e) => changeName(e.target.value)} />
+          {/* "Go to …" closes this form without saving anything (a stock
+              typed here is not used) and opens the existing item. */}
+          {question?.kind === 'exact' && (
+            <SimilarItemsQuestion
+              name={form.name}
+              title={`“${question.item.name}” is already in HOME`}
+              options={[{ item: question.item, label: goToLabel(question.item) }]}
+              onPick={onGoTo}
+              className="mt-1.5"
+            />
+          )}
+          {question?.kind === 'similar' && (
+            <SimilarItemsQuestion
+              name={form.name}
+              options={question.options}
+              onPick={onGoTo}
+              onCreateNew={() => {
+                setCreateNewKey(exactKey(form.name))
+                setQuestion(null)
+              }}
+              className="mt-1.5"
+            />
+          )}
+          {createNewKey && !question && <CreateNewHint className="mt-1" />}
           {durablePath && (
             <p className="text-[11px] text-yellow-300 flex items-start gap-1.5 mt-1">
               <AlertTriangle size={12} className="mt-0.5 shrink-0" /> “{form.name.trim()}” looks like a durable item ({durablePath}). Durable items don't go into HOME stock — record it in MONEY instead.
