@@ -4,8 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { PAID_BY_OPTIONS } from '../data/constants'
 
 // The similar-name safety net on the screens (plan 9G and its follow-up of
-// 26/10): Shop mode's quick add, the SHOP "Add to SHOP list" form, MONEY
-// "Add expense" rows, the HOME item editor.
+// 26/10 and 27/10): the SHOP "Add to SHOP list" form (List view and Shop
+// mode), MONEY "Add expense" rows, the HOME item editor.
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
@@ -74,7 +74,6 @@ const recordMoneyPurchase = vi.fn(async () => ({ error: null }))
 vi.mock('../hooks/usePurchase', () => ({ recordMoneyPurchase: (...args) => recordMoneyPurchase(...args) }))
 vi.mock('../hooks/useExpenses', () => ({ addExpenseOnce: vi.fn(async () => ({ error: null })) }))
 
-const { QuickAdd } = await import('./grocery/QuickAdd')
 const { AddItemForm } = await import('./grocery/AddItemForm')
 const { PurchaseForm } = await import('./expenses/PurchaseForm')
 const { ItemEditor } = await import('./inventory/ItemEditor')
@@ -89,150 +88,6 @@ afterEach(() => {
 const parents = [{ id: 'fresh', name: 'Fresh' }, { id: 'cleaning', name: 'Cleaning' }, { id: 'appliances', name: 'Durables' }]
 const subsByParent = new Map(parents.map((p) => [p.id, []]))
 const entry = (extra) => ({ id: 'g1', name: 'Dish soap', quantity: 1, unit: 'pcs', pantry_item_id: 'soap', completed: false, in_cart: false, created_at: '2026-10-26T08:00:00Z', ...extra })
-
-describe('SHOP quick add (Shop mode)', () => {
-  // `listed`: what the suggestion list under the box is built from.
-  const quickAdd = ({ entries = [], orderedIds = new Set(), homeItems = data.pantry, listed = homeItems } = {}) => {
-    const addItem = vi.fn(async () => ({ error: null }))
-    const onGoToCard = vi.fn()
-    const open = entries.filter((e) => !orderedIds.has(e.id))
-    render(
-      <QuickAdd
-        items={open}
-        pantryItems={listed}
-        homeItems={homeItems}
-        openEntries={entries}
-        orderedIds={orderedIds}
-        parents={parents}
-        subsByParent={subsByParent}
-        categoryName={(id) => id}
-        addItem={addItem}
-        onGoToCard={onGoToCard}
-        onMoreOptions={vi.fn()}
-      />
-    )
-    return { addItem, onGoToCard }
-  }
-  const typeIn = (text) => fireEvent.change(screen.getByLabelText('Add an item'), { target: { value: text } })
-  const press = () => fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-
-  it('a similar name saves nothing and asks; "Use …" adds the HOME item with its name', async () => {
-    const { addItem } = quickAdd()
-    typeIn('Pumkin')
-    press()
-    expect(screen.getByText('Similar item in HOME:')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Create new “Pumkin”' })).toBeTruthy()
-    expect(addItem).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Use Fresh Pumpkin · 2 pcs at home' }))
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Fresh Pumpkin', pantryItemId: 'pumpkin' })
-    expect(toast).toHaveBeenCalledWith({ message: 'Added “Fresh Pumpkin” · in HOME: 2 pcs' })
-  })
-
-  it('"Create new" keeps the name with a hint; the next press adds it; a changed name is checked again; typing closes a question', async () => {
-    const { addItem } = quickAdd()
-    typeIn('Pumkin')
-    press()
-    fireEvent.click(screen.getByRole('button', { name: 'Create new “Pumkin”' }))
-    expect(screen.getByText('Similar names can mix up later — make it clearer, e.g. “Frozen Pumpkin Cubes”.')).toBeTruthy()
-    typeIn('Pumpkin')
-    press()
-    expect(screen.getByText('Similar item in HOME:')).toBeTruthy()
-    typeIn('Pumpkin!')
-    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
-    typeIn('Frozen Pumpkin Cubes')
-    press()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Frozen Pumpkin Cubes', pantryItemId: null })
-  })
-
-  it('"Create new" then the same name: added as typed, not linked', async () => {
-    const { addItem } = quickAdd()
-    typeIn('Pumkin')
-    press()
-    fireEvent.click(screen.getByRole('button', { name: 'Create new “Pumkin”' }))
-    press()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Pumkin', pantryItemId: null })
-  })
-
-  it('the same name as a HOME item uses it without a question', async () => {
-    const { addItem } = quickAdd()
-    typeIn('Cucumbers')
-    press()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'cucumber', pantryItemId: 'cucumber', categoryId: 'fresh' })
-    expect(toast).toHaveBeenCalledWith({ message: 'Added “cucumber” · in HOME: 2 pcs' })
-    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
-  })
-
-  it('nothing alike: as before, the first suggestion listed under the box is added ("mil" → Milk)', async () => {
-    const milk = { ...data.cucumber, id: 'milk', name: 'Milk', unit: 'btl' }
-    const { addItem } = quickAdd({ homeItems: [milk] })
-    typeIn('mil')
-    press()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Milk', pantryItemId: 'milk' })
-  })
-
-  it('a finished 1× item: "· finished 1× item, it comes back"', async () => {
-    const { addItem } = quickAdd()
-    typeIn('balloons')
-    press()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(toast).toHaveBeenCalledWith({ message: 'Added “Balloons” · finished 1× item, it comes back' })
-  })
-
-  it('already in the cart: no second entry; "OK" changes nothing, "Go to card" shows the card; no "Add 1 more"', () => {
-    const inCart = entry({ in_cart: true })
-    const { addItem, onGoToCard } = quickAdd({ entries: [inCart] })
-    typeIn('dish soap')
-    press()
-    expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
-    expect(screen.getByText('Change the quantity or price on its card.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /more \(now/ })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
-    expect(screen.queryByText(/Already on your SHOP list/)).toBeNull()
-    typeIn('dish soap')
-    press()
-    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
-    expect(onGoToCard).toHaveBeenCalledWith(inCart)
-    expect(screen.queryByText(/Already on your SHOP list/)).toBeNull()
-    expect(screen.getByLabelText('Add an item').value).toBe('')
-    expect(addItem).not.toHaveBeenCalled()
-  })
-
-  it('ordered online: "Add anyway" makes a new entry to buy', async () => {
-    const ordered = entry()
-    const { addItem } = quickAdd({ entries: [ordered], orderedIds: new Set([ordered.id]) })
-    typeIn('Dish soap')
-    press()
-    expect(screen.getByText('Already on your SHOP list: Dish soap — ordered online')).toBeTruthy()
-    expect(screen.queryByText('Change the quantity or price on its card.')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Go to card' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }))
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Dish soap', pantryItemId: 'soap' })
-  })
-
-  it('a similar item already on the list says so on its button', () => {
-    quickAdd({ entries: [entry({ id: 'g2', name: 'Fresh Pumpkin', pantry_item_id: 'pumpkin' })] })
-    typeIn('Pumpkin')
-    press()
-    expect(screen.getByRole('button', { name: 'Use Fresh Pumpkin · 2 pcs at home · already to buy' })).toBeTruthy()
-  })
-
-  it('a durable (its category in the Durables tree) skips the HOME check; the SHOP list is still checked', async () => {
-    // (Not in the suggestion list here: a suggestion picked by Enter would
-    // be added as before.)
-    const { addItem } = quickAdd({ homeItems: [{ ...data.pumpkin, id: 'shade', name: 'Lamp Shade' }], listed: [] })
-    typeIn('Lamp')
-    press()
-    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
-    await waitFor(() => expect(addItem).toHaveBeenCalledTimes(1))
-    expect(addItem.mock.calls[0][0]).toMatchObject({ name: 'Lamp', categoryId: 'appliances', pantryItemId: null })
-  })
-})
 
 describe('SHOP "Add to SHOP list" form', () => {
   const form = ({ entries = [], orderedIds = new Set(), homeItems = data.pantry } = {}) => {
@@ -274,6 +129,69 @@ describe('SHOP "Add to SHOP list" form', () => {
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Fresh Pumpkin', pantryItemId: 'pumpkin', categoryId: 'fresh' })
     expect(toast).toHaveBeenCalledWith({ message: 'Added “Fresh Pumpkin” · in HOME: 2 pcs' })
     expect(onAdded).toHaveBeenCalledTimes(1)
+  })
+
+  it('"Create new" keeps the name with a hint; the next press saves it; a changed name is checked again; typing closes a question', async () => {
+    const { onAdd } = form()
+    typeName('Pumkin')
+    press()
+    expect(screen.getByRole('button', { name: 'Create new “Pumkin”' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Create new “Pumkin”' }))
+    expect(screen.getByText('Similar names can mix up later — make it clearer, e.g. “Frozen Pumpkin Cubes”.')).toBeTruthy()
+    typeName('Pumpkin')
+    press()
+    expect(screen.getByText('Similar item in HOME:')).toBeTruthy()
+    typeName('Pumpkin!')
+    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
+    typeName('Frozen Pumpkin Cubes')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Frozen Pumpkin Cubes', pantryItemId: null })
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Frozen Pumpkin Cubes”' })
+  })
+
+  it('"Create new" then the same name: saved as typed, not linked', async () => {
+    const { onAdd } = form()
+    typeName('Pumkin')
+    press()
+    fireEvent.click(screen.getByRole('button', { name: 'Create new “Pumkin”' }))
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Pumkin', pantryItemId: null })
+  })
+
+  it('the same name as a HOME item uses it without a question; the toast gives its HOME stock', async () => {
+    const { onAdd } = form()
+    typeName('Cucumbers')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText('Similar item in HOME:')).toBeNull()
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'cucumber', pantryItemId: 'cucumber', categoryId: 'fresh' })
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “cucumber” · in HOME: 2 pcs' })
+  })
+
+  it('a finished 1× item: "· finished 1× item, it comes back"', async () => {
+    const { onAdd } = form()
+    typeName('balloons')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Balloons” · finished 1× item, it comes back' })
+  })
+
+  it('a similar item already on the list says so on its button', () => {
+    form({ entries: [entry({ id: 'g2', name: 'Fresh Pumpkin', pantry_item_id: 'pumpkin' })] })
+    typeName('Pumpkin')
+    press()
+    expect(screen.getByRole('button', { name: 'Use Fresh Pumpkin · 2 pcs at home · already to buy' })).toBeTruthy()
+  })
+
+  it('a new name not in HOME: toast "Added “Napkins”" after "Save"', async () => {
+    const { onAdd } = form()
+    typeName('Napkins')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(toast).toHaveBeenCalledTimes(1)
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Napkins”' })
   })
 
   it('suggestions while typing come from HOME items (variants and groups too) and open SHOP cards, never from this phone’s history', () => {
@@ -325,6 +243,7 @@ describe('SHOP "Add to SHOP list" form', () => {
     pressAgain()
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Paper towels', quantity: 3, unit: 'pack', payer: payer.value })
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Paper towels”' })
     expect(onAdded).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Item name').value).toBe('')
     expect(screen.getByLabelText('Quantity').value).toBe('1')
@@ -334,7 +253,18 @@ describe('SHOP "Add to SHOP list" form', () => {
     press()
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(2))
     expect(onAdd.mock.calls[1][0]).toMatchObject({ name: 'Napkins', payer: payer.value })
+    expect(toast).toHaveBeenLastCalledWith({ message: 'Added “Napkins”' })
     expect(onAdded).toHaveBeenCalledTimes(1)
+  })
+
+  it('"Save & add another" with a HOME item: the toast gives its HOME stock and the form stays open', async () => {
+    const { onAdd, onAdded } = form()
+    typeName('cucumber')
+    pressAgain()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “cucumber” · in HOME: 2 pcs' })
+    expect(onAdded).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Item name').value).toBe('')
   })
 
   it('"Save & add another" asks the same questions; "OK" saves nothing and keeps the form open, emptied', () => {
@@ -345,17 +275,19 @@ describe('SHOP "Add to SHOP list" form', () => {
     expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'OK' }))
     expect(onAdd).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
     expect(onAdded).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Item name').value).toBe('')
   })
 
-  it('"OK" after "Save" closes the form, nothing saved', () => {
+  it('"OK" after "Save" closes the form, nothing saved, no toast', () => {
     const { onAdd, onAdded } = form({ entries: [entry()] })
     typeName('Dish soap')
     press()
     expect(screen.getByText('Already on your SHOP list: Dish soap — to buy')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'OK' }))
     expect(onAdd).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
     expect(onAdded).toHaveBeenCalledTimes(1)
   })
 
@@ -370,6 +302,7 @@ describe('SHOP "Add to SHOP list" form', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
     expect(onGoToCard).toHaveBeenCalledWith(inCart)
     expect(onAdd).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
   })
 
   it('ordered online: "Add anyway" saves a new card to buy with what the form says (quantity, unit, price, payer)', async () => {
@@ -385,6 +318,7 @@ describe('SHOP "Add to SHOP list" form', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }))
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Paper kites', quantity: 4, unit: 'pcs', price: 2.5, payer: payer.value, pantryItemId: null })
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Paper kites”' })
     expect(onAdded).toHaveBeenCalledTimes(1)
   })
 

@@ -1,30 +1,7 @@
 import { normName } from './grocery'
 
-// Suggestions for the quick-add box: everything bought or listed before,
-// with what to fill in when it's picked.
-
-const HISTORY_KEY = 'nutrihub-quick-add-history'
-const HISTORY_LIMIT = 100
-
-// What was quick-added on this phone, newest first — keeps names that
-// never reach the pantry (appliances) after the list is cleared.
-export function readHistory() {
-  try {
-    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
-    return Array.isArray(list) ? list : []
-  } catch {
-    return []
-  }
-}
-
-export function rememberAdded(entry) {
-  const list = [entry, ...readHistory().filter((e) => normName(e.name) !== normName(entry.name))].slice(0, HISTORY_LIMIT)
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list))
-  } catch {
-    // Not remembered; suggestions still come from the pantry and list.
-  }
-}
+// Name suggestions for the "Add to SHOP list" form: HOME items and open
+// SHOP cards, with what to fill in when one is picked.
 
 // What a pantry item (source 'pantry') or a SHOP entry ('list') fills in.
 export const suggestionFrom = (row, source) => ({
@@ -41,9 +18,8 @@ export const suggestionFrom = (row, source) => ({
 })
 
 // One suggestion per name. The pantry item wins (it has the last price,
-// unit and payer), then the newest grocery entry, then this phone's
-// history.
-export function buildSuggestions(pantryItems, groceryItems, history = []) {
+// unit and payer), then the newest grocery entry.
+export function buildSuggestions(pantryItems, groceryItems) {
   const byName = new Map()
   const add = (s) => {
     const key = normName(s.name)
@@ -51,7 +27,6 @@ export function buildSuggestions(pantryItems, groceryItems, history = []) {
   }
   pantryItems.forEach((p) => add(suggestionFrom(p, 'pantry')))
   ;[...groceryItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).forEach((g) => add(suggestionFrom(g, 'list')))
-  history.forEach((h) => add({ ...h, source: 'history' }))
   return [...byName.values()]
 }
 

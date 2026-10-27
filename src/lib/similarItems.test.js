@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('./supabaseClient', () => ({ supabase: {} }))
 const {
   addedMessage,
+  addedNameMessage,
   alreadyListedText,
   countedWords,
   exactKey,
@@ -189,6 +190,7 @@ describe('texts', () => {
     expect(addedMessage(item('cucumber'))).toBe('Added “cucumber” · in HOME: 2 pcs')
     expect(addedMessage(item('cucumber', { current_stock: 0 }))).toBe('Added “cucumber” · out of stock')
     expect(addedMessage(item('Balloons', { one_time: true, current_stock: 0 }))).toBe('Added “Balloons” · finished 1× item, it comes back')
+    expect(addedNameMessage(' Napkins ')).toBe('Added “Napkins”')
     expect(inHomeNote(item('Rice', { unit: 'kg', current_stock: 1.5 }))).toBe('In HOME: 1.5 kg')
     expect(goToLabel(item('Balloons', { one_time: true, current_stock: 0 }))).toBe('Go to Balloons (finished 1×)')
     expect(alreadyListedText({ entry: { name: 'Dish soap' }, state: 'in-cart' })).toBe('Already on your SHOP list: Dish soap — in the cart')

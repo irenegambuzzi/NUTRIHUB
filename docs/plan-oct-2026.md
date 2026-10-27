@@ -2262,6 +2262,8 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
 3. Round 6D (section 9D).
 4. Later: a "Kids" durable sub under Durables when the household has a
    child (baby bottles, pacifiers… today Baby › Feeding).
+5. Later (not scheduled): adding to the SHOP list while offline needs a
+   new offline queue; not built.
 
 ### 9G. Similar-name safety net (decided 26/10, as built)
 
@@ -2564,8 +2566,76 @@ locked row); `lib/similarItems.test.js` (`more`, the new texts); the
 7. MONEY → Add expense → a name like a SHOP card typed by hand (not in
    HOME) → "Similar on your SHOP list: … — it stays there."; after saving
    the card is still on the list.
-8. Shop mode: the quick-add box is still there.
+8. Shop mode: the quick-add box is still there. (Changed 27/10: Shop mode
+   has "+ Add to SHOP list" too, see below.)
 9. 375 px: no sideways scroll; both Save buttons fit.
+
+### Follow-up 27/10 (as built)
+
+Code and tests only (no SQL, no new column, no browser storage).
+
+1. **Shop mode: the same "+ Add to SHOP list"; quick add removed
+   everywhere.** Shop mode's quick-add box and its "More options" are
+   gone. In their place, above the Shop-mode cards, the same button "+ Add
+   to SHOP list" opens the same form (`AddItemForm`, title "Add to SHOP
+   list"), shown in Shop mode itself — no switch to the List view
+   (`GroceryPage` builds the button and form once, `addSection`, and shows
+   it in both views). Everything works as on the List view: the name
+   suggestions (HOME items with group variants and groups, open SHOP
+   cards; never picked by themselves), the whole safety net (exact match,
+   "Similar item in HOME:", "Create new “…”" with its hint, "… more — type
+   more of the name", "Already on your SHOP list: …" with "Change the
+   quantity or price on its card.", "OK" / "Go to card", "Add anyway" for
+   ordered online), "Save" and "Save & add another" (the form stays open,
+   every field emptied except "Paid by"). "Go to card" in Shop mode closes
+   the form without saving, scrolls to the Shop-mode card and outlines it
+   for 3.5 s (a group variant: the group's card; arranging stops; a search
+   that hides it is cleared). Checked: every card "Go to card" can name (to
+   buy or in the cart, durables too) is shown in Shop mode, so there is no
+   case without a card. Deleted: `components/grocery/QuickAdd.jsx` and its
+   tests (`quickAdd.render.test.jsx`, the quick-add block of
+   `similarItems.render.test.jsx`, the quick-add render test in
+   `grocery.render.test.jsx`); the per-phone history (`readHistory`,
+   `rememberAdded`, the history source of `buildSuggestions`) — the key
+   `nutrihub-quick-add-history` already stored on the phones is left alone
+   and never read or written again; `NameSuggestions` lost the arrow-key
+   props only quick add used. `lib/quickAdd.js` (+ test) is now
+   `lib/nameSuggestions.js` (`suggestionFrom`, `buildSuggestions`,
+   `matchSuggestions`), used by the form only. Offline: as on the List
+   view — `addItem` refuses with the usual toast; nothing is queued.
+2. **A toast after every successful save** ("Save", "Save & add another",
+   "Add anyway"; List view and Shop mode): a HOME item (linked, or a group
+   used with "Use …", as before) → "Added “cucumber” · in HOME: 2 pcs" (or
+   "· out of stock" / "· finished 1× item, it comes back",
+   `similarItems.addedMessage`); a new name not in HOME → "Added “Napkins”"
+   (`similarItems.addedNameMessage`). No toast for "OK" or "Go to card"
+   (nothing is saved); no new Undo (adding never had one). On a failed save
+   only the error toast shows and the form keeps what was typed.
+
+**Tests:** 1634 → 1634 (94 → 93 files: `quickAdd.render.test.jsx` deleted;
+15 quick-add tests removed, 15 new). `pages/shopAdd.render.test.jsx`: Shop
+mode has no quick-add box and no "More options", the button opens the form
+in Shop mode, "Similar item in HOME:" + "Use …" with its toast, "Create new"
+hint, "Save & add another" with "Added “Napkins”", "OK" without a toast,
+"Go to card" for a card in the cart and a group variant, a search cleared.
+`components/similarItems.render.test.jsx` (form): "Create new" (a changed
+name asks again, the same name saves as typed), exact name, finished 1×, a
+similar item already on the list, the toast texts after "Save", "Save & add
+another" (linked and new) and "Add anyway", no toast after "OK" or "Go to
+card". `lib/similarItems.test.js`: `addedNameMessage`.
+
+### iPhone checklist for the 27/10 follow-up
+
+1. SHOP → Shop: no "Add an item…" box, no "More options"; "+ Add to SHOP
+   list" opens "Add to SHOP list" and you stay in Shop mode.
+2. In Shop mode type "Pumkin" → "Similar item in HOME:"; "Use …" → toast
+   "Added “…” · in HOME: …".
+3. In Shop mode an item in the cart → "Go to card" → the form closes, the
+   Shop-mode card is outlined.
+4. A new name (e.g. "Napkins") → "Save" → toast "Added “Napkins”"; "Save &
+   add another" → the same toast, the form stays open.
+5. "OK" → no toast.
+6. 375 px: no sideways scroll in Shop mode with the form open.
 
 ### iPhone checklist for round 9G
 

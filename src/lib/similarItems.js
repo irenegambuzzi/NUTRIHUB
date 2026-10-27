@@ -194,6 +194,8 @@ export const pickLabel = (item, state = null) => `Use ${item.name} · ${stockWor
 // "Added “cucumber” · in HOME: 2 pcs" (or "· out of stock", "· finished 1×
 // item, it comes back").
 export const addedMessage = (item) => `Added “${item.name}” · ${inStock(item) ? 'in HOME: ' : ''}${stockWords(item)}`
+// "Added “Napkins”": a new name, not linked to a HOME item.
+export const addedNameMessage = (name) => `Added “${String(name ?? '').trim()}”`
 
 // "In HOME: 2 pcs" under a MONEY row.
 export const inHomeNote = (item) => `In HOME: ${stockWords(item)}`

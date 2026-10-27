@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
 const { ShoppingMode } = await import('./ShoppingMode')
-const { QuickAdd } = await import('./QuickAdd')
 const { AddItemForm } = await import('./AddItemForm')
 const { ReceiptsView } = await import('./ReceiptsView')
 const { PriceCheck } = await import('./PriceCheck')
@@ -83,22 +82,6 @@ describe('grocery components render', () => {
     expect(html).toContain('Throw them away')
     expect(html).toContain('Answer the 2 questions above to confirm.')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Confirm purchase · €4\.20/)
-  })
-
-  it('quick add', () => {
-    const html = renderToStaticMarkup(
-      <QuickAdd
-        items={items}
-        pantryItems={[]}
-        parents={parents}
-        subsByParent={new Map()}
-        categoryName={categoryName}
-        addItem={async () => ({})}
-        onMoreOptions={() => {}}
-      />
-    )
-    expect(html).toContain('Add an item')
-    expect(html).toContain('More options')
   })
 
   it('the full form starts from a typed name, with the guessed category', () => {

@@ -10,7 +10,6 @@ import { BudgetCard } from '../components/grocery/BudgetCard'
 import { GroceryItemTile } from '../components/grocery/GroceryItemTile'
 import { GroupShopCard } from '../components/grocery/GroupShopCard'
 import { ReceiptsView } from '../components/grocery/ReceiptsView'
-import { QuickAdd } from '../components/grocery/QuickAdd'
 import { ShoppingMode } from '../components/grocery/ShoppingMode'
 import { ConfirmPurchase } from '../components/grocery/ConfirmPurchase'
 import { cn } from '../lib/cn'
@@ -114,7 +113,8 @@ export function GroceryPage() {
   const { parents, subsByParent, shopOrder, categoryName, addCategory, addSubcategory } = useInventoryCategories()
 
   const [view, setViewState] = useState(readView)
-  const [fullForm, setFullForm] = useState(null) // null | name to start the "Add to SHOP list" form with
+  // The "Add to SHOP list" form is open (List view or Shop mode).
+  const [adding, setAdding] = useState(false)
   // "Go to card": the entry whose card is scrolled to and outlined for a
   // moment ({ id }, a new object each time so the same card can be shown
   // again).
@@ -201,11 +201,11 @@ export function GroceryPage() {
     ? (i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))
     : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   // "Go to card" (the safety net's "Already on your SHOP list"): the form
-  // closes without saving and the list shows the card that is already
-  // there — to buy or in the cart, a group's card for a variant. A search
-  // or category filter that hides it is cleared first.
+  // closes without saving and the List view or Shop mode shows the card
+  // that is already there — to buy or in the cart, a group's card for a
+  // variant. A search or category filter that hides it is cleared first.
   const goToCard = (entry) => {
-    setFullForm(null)
+    setAdding(false)
     if (!inCategory(entry)) {
       setSearch('')
       setSelectedCategory('All')
@@ -318,22 +318,35 @@ export function GroceryPage() {
   const openEntries = [...items, ...onTheWay]
   const orderedIds = new Set(onTheWay.map((e) => e.id))
 
-  // Shop mode keeps its quick-add box; the list has "+ Add to SHOP list".
-  // (Its "More options" opens the form, which is shown on the list.)
-  const quickAdd = (
-    <QuickAdd
-      items={items}
-      pantryItems={pantryItems.filter((p) => !p.group_id)}
-      homeItems={pantryItems}
-      openEntries={openEntries}
-      orderedIds={orderedIds}
-      parents={parents}
-      subsByParent={subsByParent}
-      categoryName={categoryName}
-      addItem={addItem}
-      onGoToCard={goToCard}
-      onMoreOptions={setFullForm}
-    />
+  // One button "+ Add to SHOP list" and its form, the same on the List
+  // view and in Shop mode (plan 9G, follow-ups of 26/10 and 27/10).
+  const addSection = !adding ? (
+    <Button variant="ghost" onClick={() => setAdding(true)} className="w-full min-h-9 text-xs">
+      <Plus size={14} /> Add to SHOP list
+    </Button>
+  ) : (
+    <div className="space-y-1">
+      <div className="flex justify-between items-center px-1">
+        <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add to SHOP list</p>
+        <button onClick={() => setAdding(false)} aria-label="Close the form" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] w-9 h-9 flex items-center justify-center -mr-2">
+          <X size={14} />
+        </button>
+      </div>
+      <AddItemForm
+        parents={parents}
+        subsByParent={subsByParent}
+        categoryName={categoryName}
+        pantryByName={pantryByName}
+        homeItems={pantryItems}
+        openEntries={openEntries}
+        orderedIds={orderedIds}
+        onAdd={addItem}
+        onAddCategory={addCategory}
+        onAddSubcategory={addSubcategory}
+        onAdded={() => setAdding(false)}
+        onGoToCard={goToCard}
+      />
+    </div>
   )
 
   return (
@@ -425,36 +438,7 @@ export function GroceryPage() {
             })}
           </div>
 
-          {fullForm === null ? (
-            <Button variant="ghost" onClick={() => setFullForm('')} className="w-full min-h-9 text-xs">
-              <Plus size={14} /> Add to SHOP list
-            </Button>
-          ) : (
-            <div className="space-y-1">
-              <div className="flex justify-between items-center px-1">
-                <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Add to SHOP list</p>
-                <button onClick={() => setFullForm(null)} aria-label="Close the form" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] w-9 h-9 flex items-center justify-center -mr-2">
-                  <X size={14} />
-                </button>
-              </div>
-              <AddItemForm
-                key={fullForm}
-                initialName={fullForm}
-                parents={parents}
-                subsByParent={subsByParent}
-                categoryName={categoryName}
-                pantryByName={pantryByName}
-                homeItems={pantryItems}
-                openEntries={openEntries}
-                orderedIds={orderedIds}
-                onAdd={addItem}
-                onAddCategory={addCategory}
-                onAddSubcategory={addSubcategory}
-                onAdded={() => setFullForm(null)}
-                onGoToCard={goToCard}
-              />
-            </div>
-          )}
+          {addSection}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             {budgetActive ? (
@@ -549,7 +533,7 @@ export function GroceryPage() {
         </>
       ) : view === 'shop' ? (
         <>
-          {quickAdd}
+          {addSection}
           <ShoppingMode
             items={items}
             shopOrder={shopOrder}

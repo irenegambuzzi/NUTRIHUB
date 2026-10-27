@@ -21,8 +21,8 @@ import { isOneTime } from '../../lib/oneTime'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { priceUnitOptions } from '../../lib/pricing'
 import { showToast } from '../../lib/feedback'
-import { buildSuggestions, matchSuggestions } from '../../lib/quickAdd'
-import { addedMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
+import { buildSuggestions, matchSuggestions } from '../../lib/nameSuggestions'
+import { addedMessage, addedNameMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
 import { AlreadyListed, CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
@@ -44,8 +44,8 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
   return fields
 }
 
-// The "Add to SHOP list" form. `initialName` (from Shop mode's quick-add
-// box) starts it filled in. The category is suggested from the name, or
+// The "Add to SHOP list" form, the same on the List view and in Shop mode.
+// `initialName` starts it filled in. The category is suggested from the name, or
 // left empty for the user to pick; a pick by hand is remembered for that
 // name on both phones.
 // While typing, the names of the HOME items (variants and groups too) and
@@ -53,8 +53,8 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
 // fills the name as if it had been typed. One is never picked by itself:
 // Enter and the buttons use the name as typed.
 // "Save" and "Save & add another" run the similar-name safety net first
-// (plan 9G, the same checks as the quick-add box): `homeItems` every HOME
-// item, `openEntries` the open entries (ordered online too, `orderedIds`).
+// (plan 9G): `homeItems` every HOME item, `openEntries` the open entries
+// (ordered online too, `orderedIds`).
 // When it ends — saved, or "OK" with nothing saved — "Save" closes the
 // form (`onAdded`), "Save & add another" empties it for the next item,
 // keeping "Paid by". "Go to card" (`onGoToCard(entry)`) closes it without
@@ -85,7 +85,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const [saving, setSaving] = useState(false)
   const nameRef = useRef(null)
   // The names offered under the field: HOME items (durables are not HOME
-  // stock) and open SHOP cards — never this phone's quick-add history.
+  // stock) and open SHOP cards.
   // Shown while typing, hidden once one is tapped.
   const [listOpen, setListOpen] = useState(false)
   const suggestionList = useMemo(() => buildSuggestions(homeItems.filter((p) => !isDurable(p)), openEntries), [homeItems, openEntries])
@@ -187,7 +187,10 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
     if (categoryTouched && categoryId) remember(name, categoryId, subcategoryId || null, { chips })
-    if (item) showToast({ message: addedMessage(item) })
+    // Every save says what was added (also "Save & add another" and "Add
+    // anyway"): with its HOME stock when it is a HOME item, else its name.
+    const home = item ?? known
+    showToast({ message: home ? addedMessage(home) : addedNameMessage(name) })
     done()
   }
 

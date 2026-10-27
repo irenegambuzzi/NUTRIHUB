@@ -79,7 +79,7 @@ export function worthRemembering(name, categoryId, subcategoryId, memory, availa
 
 // ── Chips: a few suggestions at once ────────────────────────────────
 //
-// ONE door for every form (SHOP add, QuickAdd, MONEY purchase rows). Same
+// ONE door for every form (SHOP add, MONEY purchase rows). Same
 // result shape always, whoever answered:
 //   { categoryId, subcategoryId, expenseCategoryId, source, label }
 // HOME mode (a HOME category, the budget category follows its mapping):

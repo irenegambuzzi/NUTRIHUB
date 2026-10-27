@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSuggestions, matchSuggestions } from './quickAdd'
+import { buildSuggestions, matchSuggestions } from './nameSuggestions'
 
 const pantry = [
   { id: 'p1', name: 'Milk', category_id: 'beverages', subcategory_id: 'beverages:milk', unit: 'btl', price: 1.2, price_qty: 1, price_unit: 'btl', payer: 'akbar' },
@@ -33,11 +33,6 @@ describe('buildSuggestions', () => {
 
   it('falls back to "shared" and no price', () => {
     expect(buildSuggestions(pantry, []).find((s) => s.name === 'Oat milk')).toMatchObject({ payer: 'shared', price: 0, priceQty: null })
-  })
-
-  it('adds names from this phone’s history last', () => {
-    const history = [{ name: 'Light bulbs', categoryId: 'household', unit: 'pcs', price: 0, payer: 'shared' }]
-    expect(buildSuggestions([], [], history)[0]).toMatchObject({ name: 'Light bulbs', source: 'history' })
   })
 })
 

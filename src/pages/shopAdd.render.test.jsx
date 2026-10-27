@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-// The SHOP list page after the 26/10 follow-up of plan 9G: one button
-// "+ Add to SHOP list" instead of the quick-add box and "More options",
-// and "Go to card" showing the card already on the list.
+// The SHOP page after the follow-ups of plan 9G (26/10 and 27/10): one
+// button "+ Add to SHOP list" instead of the quick-add box and "More
+// options", on the List view and in Shop mode, and "Go to card" showing
+// the card already on the list.
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
 vi.mock('../hooks/useFlow', () => ({ FLOW_NOTICE: '', useFlow: () => ({ ready: false, missing: false, mapRows: [] }) }))
+const toast = vi.hoisted(() => vi.fn())
+vi.mock('../lib/feedback', async (original) => ({ ...(await original()), showToast: toast }))
 
 const fake = (rows) => ({ useRows: () => ({ rows, loaded: true }), getSnapshot: () => ({ rows, loaded: true }) })
 vi.mock('../lib/stores', async (original) => ({
@@ -114,6 +117,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   scrolled.mockClear()
+  toast.mockReset()
   localStorage.clear()
 })
 
@@ -127,6 +131,7 @@ const openForm = () => fireEvent.click(screen.getByRole('button', { name: 'Add t
 const typeName = (text) => fireEvent.change(screen.getByLabelText('Item name'), { target: { value: text } })
 const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 const spotOf = (text) => screen.getByText(text).closest('[data-spot]')
+const shopMode = () => fireEvent.click(screen.getByRole('button', { name: 'Shop' }))
 
 describe('SHOP list: "+ Add to SHOP list"', () => {
   it('no quick-add box and no "More options"; the button opens the form "Add to SHOP list" with "Save" and "Save & add another"', () => {
@@ -180,13 +185,113 @@ describe('SHOP list: "+ Add to SHOP list"', () => {
     expect(spotOf('Dish soap')).toBeTruthy()
   })
 
-  it('Shop mode keeps its quick-add box; its "Go to card" outlines the Shop-mode card', () => {
+})
+
+describe('Shop mode: the same "+ Add to SHOP list"', () => {
+  it('no quick-add box and no "More options"; the button opens the form "Add to SHOP list" in Shop mode', () => {
     page()
-    fireEvent.click(screen.getByRole('button', { name: 'Shop' }))
-    fireEvent.change(screen.getByLabelText('Add an item'), { target: { value: 'Dish soap' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    shopMode()
+    expect(screen.queryByLabelText('Add an item')).toBeNull()
+    expect(screen.queryByText(/More options/)).toBeNull()
+    expect(screen.queryByLabelText('Item name')).toBeNull()
+    openForm()
+    expect(screen.getByText('Add to SHOP list', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByLabelText('Item name')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save & add another' })).toBeTruthy()
+    // Still Shop mode: its order switch is on screen, the List view's sort is not.
+    expect(screen.getByRole('group', { name: 'Order' })).toBeTruthy()
+    expect(screen.queryByLabelText('Sort')).toBeNull()
+  })
+
+  it('the safety net asks the same questions: "Similar item in HOME:", "Use …" saves the HOME item with a toast', async () => {
+    page()
+    shopMode()
+    openForm()
+    typeName('Tuc craker')
+    save()
+    expect(screen.getByText('Similar item in HOME:')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create new “Tuc craker”' })).toBeTruthy()
     expect(data.addItem).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Use Tuc crackers · 2 pcs at home' }))
+    await waitFor(() => expect(data.addItem).toHaveBeenCalledTimes(1))
+    expect(data.addItem.mock.calls[0][0]).toMatchObject({ name: 'Tuc crackers', pantryItemId: 'tuc' })
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Tuc crackers” · in HOME: 2 pcs' })
+    expect(screen.queryByLabelText('Item name')).toBeNull()
+  })
+
+  it('"Create new" shows its hint in Shop mode', () => {
+    page()
+    shopMode()
+    openForm()
+    typeName('Tuc craker')
+    save()
+    fireEvent.click(screen.getByRole('button', { name: 'Create new “Tuc craker”' }))
+    expect(screen.getByText('Similar names can mix up later — make it clearer, e.g. “Frozen Pumpkin Cubes”.')).toBeTruthy()
+  })
+
+  it('"Save & add another" for a new name: toast "Added “Napkins”", the form stays open in Shop mode', async () => {
+    page()
+    shopMode()
+    openForm()
+    typeName('Napkins')
+    fireEvent.click(screen.getByRole('button', { name: 'Save & add another' }))
+    await waitFor(() => expect(data.addItem).toHaveBeenCalledTimes(1))
+    expect(toast).toHaveBeenCalledWith({ message: 'Added “Napkins”' })
+    expect(screen.getByLabelText('Item name').value).toBe('')
+    expect(screen.getByRole('group', { name: 'Order' })).toBeTruthy()
+  })
+
+  it('"Already on your SHOP list" and "OK": nothing saved, no toast', () => {
+    page()
+    shopMode()
+    openForm()
+    typeName('Dish soap')
+    save()
+    expect(screen.getByText('Already on your SHOP list: Dish soap — in the cart')).toBeTruthy()
+    expect(screen.getByText('Change the quantity or price on its card.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+    expect(data.addItem).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('"Go to card" (in the cart) closes the form without saving and outlines the Shop-mode card', () => {
+    page()
+    shopMode()
+    expect(spotOf('Dish soap')).toBeNull()
+    openForm()
+    typeName('Dish soap')
+    save()
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    expect(screen.queryByLabelText('Item name')).toBeNull()
+    expect(data.addItem).not.toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
+    expect(spotOf('Dish soap')).toBeTruthy()
+    expect(scrolled).toHaveBeenCalled()
+    expect(screen.getByRole('group', { name: 'Order' })).toBeTruthy()
+  })
+
+  it('a group variant: "Go to card" outlines the group’s Shop-mode card', () => {
+    page()
+    shopMode()
+    openForm()
+    typeName('Lays chips')
+    save()
+    expect(screen.getByText('Already on your SHOP list: Lays chips — to buy')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
+    expect(card.hasAttribute('data-spot')).toBe(true)
+  })
+
+  it('a search that hides the card is cleared first', () => {
+    page()
+    shopMode()
+    fireEvent.change(screen.getByPlaceholderText('Search the list and the cart…'), { target: { value: 'tuc' } })
+    expect(screen.queryByText('Dish soap')).toBeNull()
+    openForm()
+    typeName('Dish soap')
+    save()
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
     expect(spotOf('Dish soap')).toBeTruthy()
   })
 })
