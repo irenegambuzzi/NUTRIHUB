@@ -16,7 +16,7 @@ import { useExpenses } from '../hooks/useExpenses'
 import { useIncome } from '../hooks/useIncome'
 import { useCategoryColors } from '../hooks/useCategoryColors'
 import { useShops } from '../hooks/useShops'
-import { incomeCategoryColorStore, orderStore, tripItemStore, tripStore } from '../lib/stores'
+import { incomeCategoryColorStore, orderStore, pantryStore, tripItemStore, tripStore } from '../lib/stores'
 import { bundleTrips, categoryTree, groupPurchases, purchasePart, tripShopId } from '../lib/moneyList'
 import { askUndoPurchase, reopenTrip } from '../hooks/usePurchase'
 import { splitPurchase } from '../hooks/useMerge'
@@ -62,6 +62,10 @@ export function ExpensesPage() {
   const { rows: orders } = orderStore.useRows()
   const tripById = useMemo(() => new Map(trips.map((t) => [t.id, t])), [trips])
   const lineByExpense = useMemo(() => new Map(tripLines.filter((l) => l.expense_id).map((l) => [l.expense_id, l])), [tripLines])
+  // The HOME item a purchase line went into: its stock unit says "2 box ·
+  // 30 pcs each · 60 pcs" (plan 9H).
+  const { rows: pantryRows } = pantryStore.useRows()
+  const pantryById = useMemo(() => new Map(pantryRows.map((p) => [p.id, p])), [pantryRows])
   const orderByExpense = useMemo(() => ordersByExpense(orders), [orders])
   const discountNote = (expense) => expenseDiscountNote(expense, (id) => orderByExpense.get(id))
   const orderExpenseIds = useMemo(() => new Set(orders.map((o) => o.expense_id).filter(Boolean)), [orders])
@@ -201,6 +205,7 @@ export function ExpensesPage() {
           subName={(categoryId) => (categoryId && mainOf(categoryId)?.id !== categoryId ? categories.find((c) => c.id === categoryId)?.name : null)}
           styleFor={styleFor}
           lineOf={(e) => lineByExpense.get(e.id) ?? null}
+          itemOf={(line) => pantryById.get(line.pantry_item_id) ?? null}
           onEdit={setEditingExpense}
           onDelete={removeExpense}
           onChangeStore={setTripStoreFor}

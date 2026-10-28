@@ -84,6 +84,7 @@ export function OrderOnlineDialog({ entry, pantry, total, onClose }) {
           prefill={prefill}
           units={pantry || entry.unit ? orderUnits(entry, pantry) : null}
           linkNote={linkNote}
+          packItem={durable || service ? null : pantry}
           submitLabel="Save order"
           onCancel={onClose}
           categories={categories}

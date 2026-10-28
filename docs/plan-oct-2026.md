@@ -25,6 +25,7 @@ Contents
    - 9E. Data fix 025 (Action 17/10/2026)
    - 9F. Durable lock (decided 25/10, as built)
    - 9G. Similar-name safety net (decided 26/10, as built)
+   - 9H. Pack size per purchase (decided 27–28/10, as built)
 10. Risks and decisions
 
 ---
@@ -1905,6 +1906,13 @@ many names":**
 - Also in 6D (moved from 9G, decision 7): a name made with "Create new"
   stays linked to what was typed then ("Pumpkin" → "Frozen Pumpkin
   Cubes"), as one of the item's names (aliases), for all devices.
+- Pack size (decided 27–28/10, section 9H): every name line under one item
+  gets its own pack field ("pcs per box"), exactly as a purchase line does
+  since 9H. "Cat Wet Food" is ONE HOME item: different brands are names
+  under it, not separate items. Two packages of different sizes on one
+  item (e.g. 1 box of 24 and 1 pack of 4 bought together) are solved
+  there, as two name lines; until 6D the user types the total in the
+  stock unit.
 
 ### 9E. Data fix 025 (Action 17/10/2026)
 
@@ -2244,8 +2252,9 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    MONEY (Add to HOME on), warn "Similar item in HOME: …" / "Already on
    your SHOP list" and offer to use the existing item, even when its stock
    is high.~~ **Done 26/10 — section 9G.**
-2. Small round: pack size per purchase (e.g. 1 box = 40 pcs for this
-   purchase only, without changing the item's usual 48). Today (checked
+2. ~~Small round: pack size per purchase (e.g. 1 box = 40 pcs for this
+   purchase only, without changing the item's usual 48).~~ **Done 28/10 —
+   section 9H.** (What follows is the report of 26/10, before 9H.) Today (checked
    26/10, see 9G "Follow-up 26/10", step 8): the pack size lives only on
    the HOME item (`pantry_items.packaging_unit` + `quantity_per_pack`, set
    in the HOME editor's multipack fields). Buying in that unit always uses
@@ -2657,6 +2666,213 @@ card". `lib/similarItems.test.js`: `addedNameMessage`.
 8. HOME → edit an item, rename it to an existing name → refused.
 9. Airplane mode: the same questions appear.
 10. 375 px: no sideways scroll; long names wrap in the buttons.
+
+### 9H. Pack size per purchase (decided 27–28/10, as built)
+
+Round of 9F "Next rounds" item 2 (and 9G "Follow-up 26/10", step 8). One
+SQL file, `supabase/027_order_pack_size.sql` (not run yet; Irene runs it
+after review). The app is deployed before it and works before and after.
+No new browser storage, no new offline queue, no database function
+changed.
+
+**The goal.** For EVERY item bought in a package (box, pack, case…), the
+number of stock units in 1 package can differ per purchase (an emergency
+store, an offer, another brand). The user types it for THIS purchase only
+(any positive number, comma or dot, `parseDecimal`) without changing the
+item's usual size — except the first time. "Usual size" = `pantry_items.
+packaging_unit` + `quantity_per_pack` (the HOME editor's multipack fields,
+the only place where it is changed). "Pack field" = the new per-purchase
+field.
+
+**Checked first (27–28/10, nothing changed there).**
+
+- Purchases need no SQL: `confirm_shopping_trip` (023) writes
+  `packaging_unit` / `quantity_per_pack` only when the line sends them
+  (`coalesce`), so the first-time rule lives in the app
+  (`packSize.firstTimePatch`, which replaces `purchase.packSizePatch`;
+  that one could overwrite a usual size). Reopen / Undo purchase / the
+  Undo toast remove exactly `stock_added` and put the usual size back
+  from `pantry_before` (tested again, block "027").
+- A new HOME item made by a purchase takes the line's unit as its stock
+  unit, so it never gets the field.
+- Orders: `arrive_order` adds the stock the app sends (already the pack
+  field × quantity); "Put back on the way" (`unarrive_order`) removes
+  exactly `stock_added`. Neither needs a change.
+- The gap: "Put back on the way" could not undo a first-time save of an
+  Arrived, because nothing kept the item's usual size from before. **Zidane
+  chose solution A**: a second nullable column on orders,
+  `arrival_pack_before`, like `pantry_before` on purchase lines. Why: the
+  undo stays exact and local to the order, without changing a database
+  function (B — a function doing arrive + save in one step — would have
+  needed a new or replaced function; C — never saving at Arrived — breaks
+  the first-time rule for things that are only ever ordered).
+
+**Where the field is** (`components/ui/PackSizeField.jsx`, one component):
+SHOP Confirm purchase (every line that adds stock, group variant lines
+too), MONEY "Add expense" rows with Add to HOME on and not locked, the
+order form (SHOP "Order online" and MONEY Orders, creating and editing,
+only for an order linked to a HOME item and not durable / service), and
+Arrived (`LinkedArrivedDialog` → `RestockForm` with `packs`, and
+`ArrivedDialog` for orders not linked to HOME; `GroceryPage.arrive` and
+`OrdersSection.arrive` only open these). Not in "Add to SHOP list", not in
+HOME's own restock (+ / `RestockForm` without `packs`), never for durable
+or service rows and orders (durable Arrived still has no dialog, 9F). It
+replaces the old inline question "How many pcs are in 1 pack?" in Confirm
+and MONEY: one way everywhere.
+
+**When** (`packSize.hasPackField`): the line's unit is not the item's stock
+unit and does not convert by measure (kg ↔ gr, L ↔ ml). Same-unit and
+measure-convertible lines never get it; a line without a HOME item neither.
+
+**Start value** (`packStartText`, `packTextFor`): the line's unit is the
+item's `packaging_unit` and `quantity_per_pack` is set → that number,
+editable; otherwise empty. What was typed is kept for the unit it was typed
+for: another unit starts the field again. Required (saving blocked, as the
+other row problems) everywhere except Order online. Arrived starts with
+the order's own `pack_size` (for the order's unit), else the usual-size
+rule; required. `RestockForm` (Arrived) also offers the order's unit when
+it is such a package (e.g. ordered "1 pack" of an item usually bought by
+the box, or a box with no usual size yet).
+
+**Texts** ({s} = the item's stock unit, {u} = the line's unit):
+
+| When | Text |
+|---|---|
+| Field label | "{s} per {u}" ("pcs per box") |
+| Under it, with a value | "= {total} {s}" ("= 60 pcs" for 2 box × 30) |
+| Value differs from the usual size | "This purchase only — usual: {usual} {s} per {u}." |
+| Empty and required | "Type how many {s} are in 1 {u}." (also the MONEY row problem next to Save) |
+| Order online, empty | "You can fill this in when it arrives." |
+| First-time save, before saving | "It will be saved as the usual size for next time." |
+
+**Stock, money, usual size.**
+
+- Stock added = quantity × pack field, in the stock unit
+  (`purchase.purchasedQuantity`, used by Confirm and MONEY; `RestockForm`
+  for Arrived). The expense is always the typed price (`line_total`, the
+  order's price); discounts, coupons and "Last price" unchanged.
+- First-time rule (`packSize.savesUsualSize`): saved as the usual size only
+  while the item has none — `packaging_unit` and `quantity_per_pack` both
+  empty, or `packaging_unit` = this unit and no size. Never over an
+  existing usual size, never on an item whose packaging unit is another
+  unit, never for a measure unit. Saved when stock is really added
+  (Confirm, MONEY save, Arrived), never at Order online. A line that
+  counts with an old group-level entry (group) never saves one on the
+  variant (`canSave` only when the item restocked is the item itself).
+- Arrived (`useOrders.rememberArrivalPack`, after `arrive_order` added the
+  stock): the order keeps the value (`pack_size`); a first-time save writes
+  `arrival_pack_before = { packaging_unit, quantity_per_pack, saved: {
+  packaging_unit, quantity_per_pack } }` (what the item had, and what this
+  arrival wrote), then the item, guarded (`quantity_per_pack is null` and
+  the same `packaging_unit` as before); if that guard finds the item
+  already has a usual size, `arrival_pack_before` is emptied again. Only
+  for an item (not a group) and only when the order shows the 027 columns
+  (`orders.packColumnsReady`: every order is read with all its columns).
+  A failure here is a follow-up toast with Retry; the arrival stays.
+
+**Undo is exact.** Reopen purchase / Undo purchase / the MONEY Undo toast:
+exactly `stock_added`, usual size from `pantry_before` (unchanged, tested).
+"Put back on the way" (`useOrders.unarriveOrder` → `restoreArrivalPack`):
+`unarrive_order` removes exactly `stock_added`; then, when that arrival
+saved a first-time size, the item gets back the values in
+`arrival_pack_before` — only while it still has exactly `saved` (changed
+meanwhile, e.g. in the HOME editor: left as it is) — and
+`arrival_pack_before` is emptied. `pack_size` stays (the next Arrived
+starts with it); a later Arrived follows the first-time rule again.
+Orders not linked to HOME (`ArrivedDialog`) still have no Arrived undo, so
+they never save a usual size.
+
+**Before 027 is run.** Saving or editing an order with a pack size: the
+database answers PGRST204 / 42703 for the column (`orders.
+missingPackColumn`), the row is written again without it
+(`useOrders.writeOrderRow`), no error toast. Arrived: the right stock, no
+first-time save (no `arrival_pack_before` to undo it with), nothing else
+written.
+
+**History.** HOME stock history unchanged ("+30 pcs"). MONEY opened
+purchase row and Receipts, for a line bought in packages
+(`packSize.purchasedPackLabel`, from `shopping_trip_items.quantity` /
+`unit` / `stock_added` and the HOME item's stock unit): "1 box · 30 pcs",
+"2 box · 30 pcs each · 60 pcs"; an old line (no quantity, no stock added)
+or a deleted HOME item shows as before. Order cards (MONEY Orders card,
+SHOP "On the way") with a pack size: "1 box · 24 pcs" (same format,
+`orderPackLabel`).
+
+**Not changed.** Two packages of different sizes on ONE card: the user
+types the total in the stock unit (round 6D solves it with name lines).
+Offline: unchanged (no new queue). Safety net, durable lock, categories:
+unchanged.
+
+**SQL `supabase/027_order_pack_size.sql`.** Only `alter table orders add
+column if not exists pack_size numeric check (pack_size > 0)` and `…
+arrival_pack_before jsonb`; safe to run twice; no function, policy, grant
+or data change, nothing for anon. Ends with one check SELECT (3 rows: the
+two columns and the check, each "ok").
+
+**Files.** New: `src/lib/packSize.js` (+ test), `src/components/ui/
+PackSizeField.jsx`. Changed: `lib/purchase.js` (`purchasedQuantity`,
+`purchaseLine.pack`, `confirmationPayload`; `packSizePatch` removed),
+`lib/moneyPurchase.js` (`emptyRow.packUnit`, `rowLine.pack`,
+`rowProblem`, payload), `lib/orders.js` (`missingPackColumn`,
+`withoutPackColumns`, `packColumnsReady`), `hooks/useOrders.js`
+(`orderRowFrom.pack_size`, `writeOrderRow`, `arriveLinkedOrder`,
+`rememberArrivalPack`, `unarriveOrder`, `restoreArrivalPack`),
+`grocery/ConfirmPurchase.jsx`, `expenses/PurchaseForm.jsx`,
+`expenses/OrderForm.jsx` (`packItem`), `grocery/OrderOnlineDialog.jsx`,
+`expenses/OrdersSection.jsx`, `inventory/RestockForm.jsx` (`packs`,
+`canSaveUsual`), `expenses/LinkedArrivedDialog.jsx`,
+`expenses/ArrivedDialog.jsx`, `expenses/ExpenseGroup.jsx` (`itemOf`),
+`pages/ExpensesPage.jsx`, `grocery/ReceiptsView.jsx`,
+`expenses/OrderCard.jsx`, `grocery/OnTheWay.jsx`.
+
+**Open (asked in the round summary, not decided here).** (1) A line in
+pcs or in a measure unit for an item whose stock unit can't take it (an
+item in gr bought "2 pcs", an item in pcs bought "1 kg") had the old
+question; it now gets the same pack field so it can still be saved (a
+measure unit is never saved as the usual size; "pcs" for a gr item may be,
+as the HOME editor allows it). (2) Groups: counted with the group's size,
+never a first-time save (until 6D).
+
+**Tests:** 1634 → 1714 (93 → 98 files). New `lib/packSize.test.js` (the
+rules, every text, labels, Confirm and MONEY payloads: box 48 typed 30,
+2 × 30, no usual size typed 12 then prefilled 12, usual box bought 1 pack
+typed 5, pcs / kg / durable / new item → no field, groups, order rows and
+the missing column), `hooks/orderPackSave.test.js` (order save and edit
+before and after 027, Arrived with and without a first-time save, the
+guard, groups, before 027; "Put back on the way" restore, "box" without a
+size, nothing saved, before 027), `components/packSize.render.test.jsx`
+(Confirm, MONEY, the order form creating and editing, Arrived: empty →
+required → 20; 24 → 22; an old order; before 027; pcs; ArrivedDialog),
+`components/packSizeUndo.render.test.jsx` ("Back on the way" on the
+Orders card: −12 and usual empty again; usual changed to 15 → stays 15;
+nothing saved; the card labels), `components/packSizeHistory.render.test.jsx`
+(MONEY purchase row, deleted item, Receipts) and `supabase/migrations.test.js`
+block "027" (only two columns, before 027, run twice with every check ok,
+the check constraint, MONEY purchases with the app's own payloads and
+Undo: +30 / +60 with usual 48, +12 saved then undone, 2 pack × 5 = +10;
+Arrived / unarrive with the app's guarded writes: −12 and usual empty
+again, usual changed to 15 kept, 2 × 30 = +60 −60). Changed: the old pack
+question in `purchase.test.js`, `moneyPurchase.test.js`,
+`grocery.render.test.jsx`.
+
+### iPhone checklist for round 9H
+
+1. SHOP → Confirm purchase with Cat Wet Food (usual box 48) "1 box":
+   "pcs per box" shows 48; type 30 → "= 30 pcs" and "This purchase only —
+   usual: 48 pcs per box."; Confirm → HOME +30, the usual size is still 48.
+2. An item with no usual size bought "1 box": empty field, "Type how many
+   pcs are in 1 box.", Confirm locked; type 12 → "It will be saved as the
+   usual size for next time."; next purchase starts at 12.
+3. MONEY → Add expense, the same two cases; Undo in the toast → stock back.
+4. SHOP → Order online in box: field may stay empty ("You can fill this in
+   when it arrives."); Arrived asks it; type 20 → +20.
+5. Order online 24 → Arrived starts at 24; change to 22 → +22. The cards
+   say "1 box · 24 pcs".
+6. (After 027) an item with no usual size: Arrived 1 box typed 12 → usual
+   box 12; "Back on the way" → −12, usual empty again.
+7. MONEY → open a purchase bought in packages: "2 box · 30 pcs each · 60
+   pcs"; Receipts the same.
+8. 375 px: no sideways scroll with the field open.
 
 ---
 

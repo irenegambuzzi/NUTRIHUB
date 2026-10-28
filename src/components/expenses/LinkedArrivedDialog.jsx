@@ -7,12 +7,18 @@ import { arriveLinkedOrder } from '../../hooks/useOrders'
 import { showToast } from '../../lib/feedback'
 import { newVariantFields } from '../../lib/groups'
 import { formatPurchaseQuantity } from '../../lib/inventory'
+import { packColumnsReady } from '../../lib/orders'
 import { localDateString } from '../../lib/week'
 
 // "Arrived" on an order linked to a HOME item (ordered from the SHOP
 // list): a simple check of the quantity that arrived — in the item's
 // purchase unit or stock unit, started with what was ordered — and, for a
-// group, which variant gets it (or a new one). Confirming marks the order
+// group, which variant gets it (or a new one). Bought in a package, it asks
+// how many stock units are in 1 package of this arrival (plan 9H: started
+// with the order's own size, else the item's usual one); a first-time size
+// becomes the item's usual size only for an item (not a group) and only
+// once the database can remember the size it had before (supabase/027),
+// so "Put back on the way" undoes it exactly. Confirming marks the order
 // arrived and adds the stock in one step; only the first confirmation
 // adds anything, on whichever phone. Never an expense: that was made when
 // ordering.
@@ -29,10 +35,10 @@ export function LinkedArrivedDialog({ order, item, onClose }) {
     return result
   }
 
-  const submit = async ({ delta, variantId: chosen, newName }) => {
+  const submit = async ({ delta, variantId: chosen, newName, pack = null }) => {
     const newVariant = item.is_group && !chosen ? { id: variantId.current, fields: newVariantFields(item, newName, { packaging_unit: item.packaging_unit ?? null, quantity_per_pack: item.quantity_per_pack ?? null }) } : null
     const target = item.is_group ? chosen : item.id
-    const result = await arriveLinkedOrder(order, { itemId: target, delta, newVariant, date: localDateString() })
+    const result = await arriveLinkedOrder(order, { itemId: target, delta, newVariant, date: localDateString(), pack, packItem: item.is_group ? null : item })
     const where = item.is_group ? (newVariant ? `a new variant of "${item.name}"` : `"${variants.find((v) => v.id === chosen)?.name}"`) : `"${item.name}"`
     return finish(result, `Arrived — added ${formatPurchaseQuantity(delta, item.unit, item)} to ${where}`)
   }
@@ -68,7 +74,9 @@ export function LinkedArrivedDialog({ order, item, onClose }) {
         <RestockForm
           item={item}
           variants={variants}
-          initial={{ quantity: Number(order.quantity) || 1, unit: order.unit || null }}
+          initial={{ quantity: Number(order.quantity) || 1, unit: order.unit || null, packSize: order.pack_size ?? null }}
+          packs
+          canSaveUsual={!item.is_group && packColumnsReady(order)}
           submitLabel="Arrived — add to HOME"
           onSubmit={submit}
           onClose={onClose}

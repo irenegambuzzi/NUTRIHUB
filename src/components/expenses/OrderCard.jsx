@@ -2,6 +2,7 @@ import { Check, ChevronDown, ExternalLink, Link2, Pencil, Trash2, Undo2, X } fro
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderDiscount, orderState } from '../../lib/orders'
+import { orderPackLabel } from '../../lib/packSize'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
 
@@ -58,7 +59,7 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
           {linkedItem && (
             <span className="mt-0.5 flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)]">
               <Link2 size={10} /> HOME: {linkedItem.name}
-              {Number(order.quantity) > 0 ? ` · ${Number(order.quantity)} ${order.unit ?? ''}` : ''}
+              {orderPackLabel(order, linkedItem.unit) ? ` · ${orderPackLabel(order, linkedItem.unit)}` : Number(order.quantity) > 0 ? ` · ${Number(order.quantity)} ${order.unit ?? ''}` : ''}
             </span>
           )}
           {onTheWay ? (

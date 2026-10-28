@@ -218,6 +218,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
               {...formProps}
               initial={editing}
               units={editing.pantry_item_id && linkedItemOf(editing, pantryRows) ? linkedOrderUnits(editing, linkedItemOf(editing, pantryRows)) : null}
+              packItem={orderLock(editing, { expenseCategories: categories, groceryItems }) ? null : linkedItemOf(editing, pantryRows)}
               submitLabel="Save"
               onCancel={() => setEditing(null)}
               onSubmit={async (values) => {

@@ -25,7 +25,7 @@ describe('purchaseLine', () => {
   it('asks for the pack size until it is given', () => {
     const rice = item({ name: 'Rice', quantity: 2, unit: 'pack' })
     expect(purchaseLine(rice, pantry)).toMatchObject({ needsPackSize: true, ready: false })
-    expect(purchaseLine(rice, pantry, { packSize: 500 })).toMatchObject({ add: 1000, ready: true })
+    expect(purchaseLine(rice, pantry, { pack: { text: '500', unit: 'pack' } })).toMatchObject({ add: 1000, ready: true })
   })
 
   it('asks what to do with expired stock until it is answered', () => {
@@ -56,7 +56,7 @@ describe('confirmationPayload', () => {
       item({ name: 'Kettle', category_id: 'appliances' }),
       item({ name: 'Avocado', quantity: 2 }),
     ]
-    const answers = { Milk: { discard: true, expiryDate: '2026-10-20' }, Rice: { packSize: 500 } }
+    const answers = { Milk: { discard: true, expiryDate: '2026-10-20' }, Rice: { pack: { text: '500', unit: 'pack' } } }
     const lines = cart.map((i) => purchaseLine(i, pantry, answers[i.id]))
     const payload = confirmationPayload({
       id: 'trip-1',

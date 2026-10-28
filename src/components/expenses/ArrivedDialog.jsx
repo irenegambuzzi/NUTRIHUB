@@ -20,8 +20,11 @@ const CHOICES = [
 // Asked once an order has arrived: should it go into HOME? Stock goes to
 // an existing item, to a variant of an item group, or into a new item; the
 // quantity can be given in the item's purchase unit or its stock unit
-// (the same conversion as the + button in HOME). "Don't add to HOME" just
-// closes. Only HOME's stock is touched here — never an expense.
+// (the same conversion as the + button in HOME; in a package, with the pack
+// field of plan 9H, for this arrival only: such an order has no Undo of
+// its arrival, so nothing is saved as the item's usual size here). "Don't
+// add to HOME" just closes. Only HOME's stock is touched here — never an
+// expense.
 export function ArrivedDialog({ order, onClose }) {
   const { items, addItem, adjustStock } = usePantryItems()
   const { pantryParents: parents, subsByParent, addCategory, addSubcategory } = useInventoryCategories()
@@ -148,7 +151,7 @@ export function ArrivedDialog({ order, onClose }) {
                 ))}
               </Select>
             </div>
-            {item && <RestockForm key={item.id} item={item} onSubmit={restockItem} onClose={back} />}
+            {item && <RestockForm key={item.id} item={item} onSubmit={restockItem} onClose={back} packs />}
           </div>
         )}
 
@@ -172,7 +175,7 @@ export function ArrivedDialog({ order, onClose }) {
                     ))}
                   </Select>
                 </div>
-                {group && <RestockForm key={group.id} item={group} variants={variants} onSubmit={restockGroup} onClose={back} />}
+                {group && <RestockForm key={group.id} item={group} variants={variants} onSubmit={restockGroup} onClose={back} packs />}
               </>
             )}
           </div>

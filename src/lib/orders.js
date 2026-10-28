@@ -175,6 +175,22 @@ export function expensePatchForOrder(before, after, shopsAvailable = true) {
   return patch
 }
 
+// The database has no pack size for orders yet (supabase/027 not run):
+// PostgREST answers PGRST204 ("Could not find the 'pack_size' column…"),
+// Postgres 42703 (column does not exist).
+export const missingPackColumn = (error) => ['PGRST204', '42703'].includes(error?.code) && /pack_size|arrival_pack_before/.test(String(error?.message ?? ''))
+
+// An order row without the two pack-size columns of supabase/027.
+export function withoutPackColumns(row) {
+  const { pack_size: _size, arrival_pack_before: _before, ...rest } = row
+  return rest
+}
+
+// Whether the database has the two pack-size columns of supabase/027: an
+// order read from it carries them (every order is read with all its
+// columns), also when they are empty.
+export const packColumnsReady = (order) => Boolean(order) && 'pack_size' in order && 'arrival_pack_before' in order
+
 // The units an order for a SHOP list entry can be counted in: the entry's
 // own unit, its HOME item's purchase unit and its stock unit.
 export function orderUnits(entry, pantry) {

@@ -121,8 +121,8 @@ describe('which HOME item a row is', () => {
   it('asks the pack size when the units do not convert', () => {
     const line = rowLine(row({ name: 'Rice', priceText: '3', quantityText: '2', unit: 'pack', categoryId: 'pantry-staples' }), pantry)
     expect(line).toMatchObject({ needsPackSize: true, add: null })
-    expect(rowProblem(line)).toBe('Say how many gr are in 1 pack.')
-    const answered = rowLine(row({ name: 'Rice', priceText: '3', quantityText: '2', unit: 'pack', categoryId: 'pantry-staples', packSizeText: '500' }), pantry)
+    expect(rowProblem(line)).toBe('Type how many gr are in 1 pack.')
+    const answered = rowLine(row({ name: 'Rice', priceText: '3', quantityText: '2', unit: 'pack', categoryId: 'pantry-staples', packSizeText: '500', packUnit: 'pack' }), pantry)
     expect(answered).toMatchObject({ needsPackSize: false, add: 1000 })
   })
 
@@ -224,7 +224,7 @@ describe('the payload for confirm_shopping_trip', () => {
   })
 
   it('keeps a pack size given for an existing item', () => {
-    const line = rowLine(row({ name: 'Rice', priceText: '3', quantityText: '2', unit: 'pack', categoryId: 'pantry-staples', packSizeText: '500' }), pantry)
+    const line = rowLine(row({ name: 'Rice', priceText: '3', quantityText: '2', unit: 'pack', categoryId: 'pantry-staples', packSizeText: '500', packUnit: 'pack' }), pantry)
     const [item] = moneyPurchasePayload({ id: 't', date: 'd', paidBy: 'shared', lines: [line], budgetFor: () => 'g' }).items
     expect(item).toMatchObject({ add: 1000, packaging_unit: 'pack', quantity_per_pack: 500 })
   })

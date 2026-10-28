@@ -8,6 +8,7 @@ import { cn } from '../../lib/cn'
 import { purchaseSections } from '../../lib/moneyList'
 import { purchaseUndo } from '../../lib/trips'
 import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
+import { purchasedPackLabel } from '../../lib/packSize'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 
@@ -125,7 +126,9 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf =
 }
 
 const shortDate = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
-const quantityLabel = (line) => (line && Number(line.quantity) > 0 ? `${Math.round(Number(line.quantity) * 100) / 100} ${line.unit || 'pcs'}` : null)
+// What was bought: "2 box · 30 pcs each · 60 pcs" for a line bought in
+// packages (plan 9H, from what really went into HOME), else "2 pcs".
+const quantityLabel = (line, item) => purchasedPackLabel(line, item) ?? (line && Number(line.quantity) > 0 ? `${Math.round(Number(line.quantity) * 100) / 100} ${line.unit || 'pcs'}` : null)
 
 // One purchase (a SHOP trip, a MONEY purchase or merged expenses — they
 // look and work the same). Collapsed: store · date · total, one dot per
@@ -138,9 +141,10 @@ const quantityLabel = (line) => (line && Number(line.quantity) > 0 ? `${Math.rou
 //   fullTotal    the whole purchase, when only a part is shown
 //   mainOf(categoryId), subName(categoryId), styleFor(categoryId)
 //   lineOf(expense) → its purchase line (quantity, unit), if any
+//   itemOf(line) → the HOME item it went into (for its stock unit), if any
 //   onUndo(trip, items) → Reopen / Undo purchase / Split
 //   onSplitMerged(trip) → only the merged expenses out (SHOP/MONEY purchase)
-export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, subName, styleFor, lineOf = () => null, onEdit, onDelete, onChangeStore = null, onUndo = null, onSplitMerged = null }) {
+export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, subName, styleFor, lineOf = () => null, itemOf = () => null, onEdit, onDelete, onChangeStore = null, onUndo = null, onSplitMerged = null }) {
   const [open, setOpen] = useState(false)
   const { items, total } = group
   const date = trip?.trip_date ?? group.date
@@ -194,7 +198,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
               {section.items.map((e) => {
                 const sub = subName(e.category_id)
                 const line = lineOf(e)
-                const quantity = quantityLabel(line)
+                const quantity = quantityLabel(line, line ? itemOf(line) : null)
                 const history = lineHistory(line)
                 return (
                   <div key={e.id} className="flex justify-between items-center gap-2 py-1 pl-2 border-l-2 border-[var(--color-border)]">

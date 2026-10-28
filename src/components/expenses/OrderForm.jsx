@@ -5,6 +5,7 @@ import { DateField } from '../ui/DateField'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes } from '../ui/DiscountField'
+import { PackSizeField } from '../ui/PackSizeField'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
@@ -15,6 +16,7 @@ import { chooseTotalPrice, chooseUnitPrice, changeQuantity, emptyPrice, orderTot
 import { useFlow } from '../../hooks/useFlow'
 import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { priceLines } from '../../lib/discounts'
+import { packField, packStartText, packTextFor } from '../../lib/packSize'
 
 // The order fields, for a new order or an existing one (`initial`).
 // onSubmit(values, ids) resolves to { error }; on failure the form keeps
@@ -26,6 +28,11 @@ import { priceLines } from '../../lib/discounts'
 // unit }); `units`: the units the quantity can be given in (a simple list
 // when not given; for an order linked to a HOME item its purchase unit
 // comes first); `linkNote` says what it is linked to.
+// `packItem`: the HOME item (or group) the order is for. Bought in a
+// package that isn't its stock unit, the order asks how many of its stock
+// units are in 1 package (plan 9H): started with the item's usual size, or
+// the order's own when editing; it may stay empty until Arrived. It never
+// changes the item's usual size (only Arrived may, the first time).
 //
 // The price is a unit price and a total price, like on the SHOP list (see
 // orderPricing.js): the NORMAL price. An order may have a discount of its
@@ -38,6 +45,7 @@ export function OrderForm({
   prefill = null,
   units: unitOptions = null,
   linkNote = null,
+  packItem = null,
   submitLabel = 'Add order',
   onSubmit,
   onCancel,
@@ -68,6 +76,9 @@ export function OrderForm({
   const [quantity, setQuantity] = useState(String(Number(initial?.quantity) > 0 ? Number(initial.quantity) : start?.quantity > 0 ? Number(start.quantity) : 1))
   const unitList = useMemo(() => [...new Set([...(unitOptions ?? ORDER_UNITS), initial?.unit].filter(Boolean))], [unitOptions, initial])
   const [unit, setUnit] = useState(initial?.unit ?? start?.unit ?? unitList[0])
+  // The pack field as typed, for the unit it was typed for; an order
+  // being edited starts with its own.
+  const [packTyped, setPackTyped] = useState(() => (Number(initial?.pack_size) > 0 && initial.unit ? { text: String(Number(initial.pack_size)), unit: initial.unit } : null))
   const [price, setPrice] = useState(() =>
     initial ? savedPrice(initial.list_price ?? initial.price, quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
   )
@@ -86,6 +97,7 @@ export function OrderForm({
     setSubId(sub)
   }
 
+  const pack = withQuantity && packItem ? packField({ item: packItem, unit, quantity: parseDecimal(quantity), text: packTextFor(packTyped, unit, packStartText(packItem, unit)), required: false, canSave: false }) : null
   const mismatch = withQuantity ? priceMismatch(price, quantity, unit) : null
   const normalTotal = orderTotal(price)
   const priced = priceLines([{ list: normalTotal > 0 ? normalTotal : NaN, discount: { kind: discountKind, text: discountText } }]).lines[0]
@@ -96,6 +108,7 @@ export function OrderForm({
     if (withQuantity && decimalProblem(price.unit)) return `Unit price: ${decimalProblem(price.unit)}`
     if (withQuantity && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
     if (withQuantity && !(parseDecimal(quantity) > 0)) return 'Enter how many you ordered (more than 0).'
+    if (pack && decimalProblem(pack.text)) return `${pack.stockUnit} per ${pack.unit}: ${decimalProblem(pack.text)}`
     if (mismatch) return "The unit price and the total price don't match: choose which one is right."
     if (priced.problem) return priced.problem
     if (!(orderTotal(price) > 0)) return withQuantity ? 'Enter the total price or the unit price (more than 0).' : 'Enter the total price (more than 0).'
@@ -131,6 +144,7 @@ export function OrderForm({
         expectedUntil,
         url,
         ...(withQuantity ? { quantity: parseDecimal(quantity), unit } : {}),
+        ...(withQuantity && packItem ? { packSize: pack?.value ?? null } : {}),
       },
       ids
     )
@@ -144,6 +158,7 @@ export function OrderForm({
       setPrice(emptyPrice)
       setDiscountText('')
       setQuantity('1')
+      setPackTyped(null)
       setExpectedDate('')
       setExpectedUntil('')
       setUrl('')
@@ -208,6 +223,11 @@ export function OrderForm({
               </Select>
             </div>
             <DecimalHint value={quantity} />
+            {pack && (
+              <div className="mt-2">
+                <PackSizeField pack={pack} later onChange={(text) => setPackTyped({ text, unit: pack.unit })} />
+              </div>
+            )}
           </div>
         )}
 

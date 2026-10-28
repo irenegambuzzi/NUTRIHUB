@@ -4,6 +4,7 @@ import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
+import { PackSizeField } from '../ui/PackSizeField'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { FixCategory } from './FixCategory'
@@ -356,7 +357,7 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
 
   // A typed number that isn't one is kept as typed (and refused when
   // confirming), never swapped for the old value.
-  const numbersBad = Boolean(decimalProblem(quantityText) || decimalProblem(totalText) || decimalProblem(answer.packSizeText))
+  const numbersBad = Boolean(decimalProblem(quantityText) || decimalProblem(totalText) || decimalProblem(answer.pack?.text))
   useEffect(() => {
     onNumberValidity(item.id, !numbersBad)
     return () => onNumberValidity(item.id, true)
@@ -487,7 +488,7 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
       <DecimalHint value={[quantityText, totalText].find((t) => decimalProblem(t)) ?? ''} />
       <DiscountField kind={discount.kind} text={discount.text} onChange={onDiscount} label={`Discount for ${item.name}`} problem={priced?.problem ?? ''} />
       <LineDiscountNotes priced={priced} />
-      {pantry && add > 0 && item.unit !== pantry.unit && (
+      {pantry && add > 0 && item.unit !== pantry.unit && !line.pack && (
         <p className="text-[10px] text-[var(--color-text-muted)]">
           = {add} {pantry.unit} added to the stock
         </p>
@@ -523,22 +524,8 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
         </div>
       )}
 
-      {needsPackSize && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-2 space-y-1">
-          <p className="text-[11px] text-amber-200">
-            "{pantry.name}" is counted in {pantry.unit} in the pantry. How many {pantry.unit} are in 1 {item.unit}?
-          </p>
-          <div className="flex items-center gap-1">
-            <DecimalInput
-              value={answer.packSizeText ?? ''}
-              onChange={(e) => onAnswer({ packSizeText: e.target.value, packSize: parseDecimal(e.target.value) })}
-              aria-label={`${pantry.unit} in 1 ${item.unit}`}
-              className="w-24 text-sm p-2"
-            />
-            <span className="text-xs text-[var(--color-text-muted)]">{pantry.unit}</span>
-          </div>
-          <DecimalHint value={answer.packSizeText} />
-        </div>
+      {line.pack && (
+        <PackSizeField pack={line.pack} onChange={(text) => onAnswer({ pack: { text, unit: line.pack.unit } })} ariaLabel={`${line.pack.stockUnit} per ${line.pack.unit} for ${item.name}`} />
       )}
 
       {expired && (

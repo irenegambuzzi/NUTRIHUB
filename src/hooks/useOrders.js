@@ -4,7 +4,7 @@ import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { normalizeItem, syncShoppingForItem } from '../lib/inventory'
 import { allExpenseStores, groceryStore, orderStore, pantryStore, shopStore } from '../lib/stores'
-import { expensePatchForOrder, expenseRowForOrder, normalizeUrl } from '../lib/orders'
+import { expensePatchForOrder, expenseRowForOrder, missingPackColumn, normalizeUrl, packColumnsReady, withoutPackColumns } from '../lib/orders'
 import { shopsAvailable } from '../lib/shops'
 
 const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
@@ -16,7 +16,10 @@ const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => 
 // price; both come from the form (undefined = the caller doesn't know about
 // discounts: those columns are left alone).
 // The quantity and unit are only there for an order linked to a HOME item
-// (supabase/021), and only sent then.
+// (supabase/021), and only sent then. `packSize`: how many of the HOME
+// item's stock units are in 1 package of this order (plan 9H; null = not
+// typed yet; undefined = the form has no pack field: the column is left
+// alone).
 export function orderRowFrom(values) {
   return {
     item_name: values.itemName.trim(),
@@ -35,7 +38,22 @@ export function orderRowFrom(values) {
       ? { list_price: values.listPrice ?? null, discount_kind: values.discountKind ?? null, discount_value: values.discountValue ?? null }
       : {}),
     ...(values.quantity !== undefined ? { quantity: Number(values.quantity) > 0 ? Number(values.quantity) : null, unit: values.unit || null } : {}),
+    ...(values.packSize !== undefined ? { pack_size: Number(values.packSize) > 0 ? Number(values.packSize) : null } : {}),
   }
+}
+
+// Writes an order row (`write(row)` → the Supabase query). Before
+// supabase/027 the database has no pack size yet: the row is then written
+// again without it, so saving an order never fails or is blocked by it
+// (and no error is shown). → { rows, sent }: what came back and the row
+// really written.
+async function writeOrderRow(row, write) {
+  const result = await write(row)
+  if (result.error && 'pack_size' in row && missingPackColumn(result.error)) {
+    const sent = withoutPackColumns(row)
+    return { rows: must(await write(sent)), sent }
+  }
+  return { rows: must(result), sent: row }
 }
 
 // The database refused a second order on the way for one SHOP list entry
@@ -71,7 +89,7 @@ export function createOrder(values, { orderId, expenseId }, link = null) {
           }
           const expenseRows = must(await supabase.from('expenses').upsert([expense], { onConflict: 'id', ignoreDuplicates: true }).select())
           onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
-          const orderRows = must(await supabase.from('orders').upsert([row], { onConflict: 'id' }).select())
+          const { rows: orderRows } = await writeOrderRow(row, (r) => supabase.from('orders').upsert([r], { onConflict: 'id' }).select())
           // A retry finds the expense already there: nothing new to show.
           if (expenseRows.length) showExpenses(expenseRows)
           else await Promise.all(allExpenseStores().map((s) => s.refresh()))
@@ -97,8 +115,8 @@ export function editOrder(order, values) {
   return attempt(
     () =>
       inSteps(async (onFail) => {
-        const orderRows = must(await supabase.from('orders').update(row).eq('id', order.id).select())
-        onFail(async () => must(await supabase.from('orders').update(originalOf(order, row)).eq('id', order.id)))
+        const { rows: orderRows, sent } = await writeOrderRow(row, (r) => supabase.from('orders').update(r).eq('id', order.id).select())
+        onFail(async () => must(await supabase.from('orders').update(originalOf(order, sent)).eq('id', order.id)))
         if (order.expense_id) {
           if (row.item_name !== order.item_name) {
             const current = must(await supabase.from('expenses').select('description').eq('id', order.expense_id).maybeSingle())
@@ -160,8 +178,10 @@ export function syncListFor(order) {
 // adds anything, whichever phone presses it. `newVariant` ({ id, fields }):
 // a new variant of the group to make first, with an id fixed by the
 // dialog so pressing again never makes a second one. Never an expense.
+// `pack` ({ unit, value, firstTime }): the pack field of the arrival and
+// `packItem` the item it counts for (plan 9H, rememberArrivalPack).
 // Returns { error, added }.
-export async function arriveLinkedOrder(order, { itemId, delta, newVariant = null, date }) {
+export async function arriveLinkedOrder(order, { itemId, delta, newVariant = null, date, pack = null, packItem = null }) {
   let added = false
   const result = await attempt(
     async () => {
@@ -174,13 +194,44 @@ export async function arriveLinkedOrder(order, { itemId, delta, newVariant = nul
     { retry: false, onFail: refreshFlow }
   )
   if (result.error) return { ...result, added: false }
+  if (added && delta > 0) await rememberArrivalPack(order, packItem, pack)
   await refreshFlow()
   await syncListFor(order)
   return { ...result, added }
 }
 
+// After Arrived (plan 9H), once the stock is in: the order keeps the pack
+// size typed there (orders.pack_size), and a first-time size becomes the
+// item's usual size — only while the item still has none (the other phone
+// may have given it one meanwhile), and only with the usual size it had
+// before kept on the order (orders.arrival_pack_before, with `saved`: what
+// this arrival wrote), so "Put back on the way" can undo exactly that.
+// Before supabase/027 nothing is written here: the stock is right already,
+// and with nothing saved the undo stays exact. A failure here leaves the
+// arrival as it is (toast with Retry).
+async function rememberArrivalPack(order, item, pack) {
+  if (!(pack?.value > 0) || !packColumnsReady(order)) return true
+  const first = Boolean(pack.firstTime && item && !item.is_group)
+  const before = first ? { packaging_unit: item.packaging_unit ?? null, quantity_per_pack: item.quantity_per_pack ?? null } : null
+  const saved = { packaging_unit: pack.unit, quantity_per_pack: pack.value }
+  return followUp('the pack size', async () => {
+    orderStore.upsertLocal(must(await supabase.from('orders').update({ pack_size: pack.value, ...(first ? { arrival_pack_before: { ...before, saved } } : {}) }).eq('id', order.id).select()))
+    if (!first) return
+    let update = supabase.from('pantry_items').update(saved).eq('id', item.id).is('quantity_per_pack', null)
+    update = before.packaging_unit ? update.eq('packaging_unit', before.packaging_unit) : update.is('packaging_unit', null)
+    if (must(await update.select()).length) return
+    // Nothing was saved: the item has a usual size now. (Unless a first
+    // try already saved this one, and only its answer was lost.)
+    const now = must(await supabase.from('pantry_items').select('packaging_unit, quantity_per_pack').eq('id', item.id).maybeSingle())
+    if (now && now.packaging_unit === saved.packaging_unit && Number(now.quantity_per_pack) === saved.quantity_per_pack) return
+    orderStore.upsertLocal(must(await supabase.from('orders').update({ arrival_pack_before: null }).eq('id', order.id).select()))
+  })
+}
+
 // An arrived linked order goes back on the way: the stock its arrival
-// added comes out of HOME again (unarrive_order, supabase/021).
+// added comes out of HOME again (unarrive_order, supabase/021), exactly
+// `stock_added`, whatever pack size was typed; and a usual size that
+// arrival saved the first time is undone (restoreArrivalPack).
 export async function unarriveOrder(order) {
   const result = await attempt(
     async () => {
@@ -189,8 +240,36 @@ export async function unarriveOrder(order) {
     },
     { onFail: refreshFlow }
   )
-  if (!result.error) await refreshFlow()
+  if (!result.error) {
+    await restoreArrivalPack(order)
+    await refreshFlow()
+  }
   return result
+}
+
+// The item gets back the usual size it had before the arrival
+// (orders.arrival_pack_before) — only while it still has exactly what that
+// arrival saved; changed meanwhile (e.g. in the HOME editor), it is left as
+// it is. Either way the order forgets it, so a later Arrived follows the
+// first-time rule again. `order` is the order as it was arrived (its item).
+async function restoreArrivalPack(order) {
+  const before = order.arrival_pack_before
+  if (!before) return true
+  return followUp('the usual pack size', async () => {
+    const saved = before.saved
+    if (order.arrived_item_id && saved?.packaging_unit && Number(saved.quantity_per_pack) > 0) {
+      must(
+        await supabase
+          .from('pantry_items')
+          .update({ packaging_unit: before.packaging_unit ?? null, quantity_per_pack: before.quantity_per_pack ?? null })
+          .eq('id', order.arrived_item_id)
+          .eq('packaging_unit', saved.packaging_unit)
+          .eq('quantity_per_pack', saved.quantity_per_pack)
+          .select()
+      )
+    }
+    orderStore.upsertLocal(must(await supabase.from('orders').update({ arrival_pack_before: null }).eq('id', order.id).select()))
+  })
 }
 
 // Cancelled or returned, as of `today`: the order goes to History, and its

@@ -2,13 +2,12 @@ import { expiryState, isDurable, toBaseQuantity } from './inventory'
 import { normName } from './grocery'
 import { firstOutVariant } from './groups'
 import { couponFields, lineDiscountFields, priceLines } from './discounts'
+import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
 // size, expired stock); then the payload for confirm_shopping_trip
 // (supabase/014), which does everything at once.
-
-const MEASURE_UNITS = ['gr', 'kg', 'ml', 'L']
 
 // The pantry item a grocery entry restocks: its linked item, else the one
 // with the same name. A name never matches a group (stock is never added
@@ -18,26 +17,26 @@ export function pantryItemFor(item, pantryItems) {
 }
 
 // The entry's quantity in the pantry item's base unit, or null when the
-// units can't be converted and no pack size was given (e.g. 2 pack of an
-// item counted in gr).
+// pack size of this purchase is still missing. A line bought in a package
+// (lib/packSize.js hasPackField) counts with the pack size typed for this
+// purchase (`packSize`), never by itself with the item's usual size: that
+// only starts the field. Anything else converts as always (kg → gr).
 export function purchasedQuantity(pantry, item, packSize) {
   const quantity = Number(item.quantity) || 1
-  const base = toBaseQuantity(pantry, quantity, item.unit) ?? (packSize > 0 ? quantity * packSize : null)
+  const base = hasPackField(pantry, item.unit) ? (packSize > 0 ? quantity * packSize : null) : toBaseQuantity(pantry, quantity, item.unit)
   return base === null ? null : Math.round(base * 100) / 100
 }
 
-// A pack size given now is kept on the pantry item, unless the item
-// already has a different multipack or the unit is a measure (kg…).
-export function packSizePatch(pantry, unit, packSize) {
-  if (!(packSize > 0) || MEASURE_UNITS.includes(unit)) return {}
-  if (pantry.packaging_unit && pantry.packaging_unit !== unit) return {}
-  return { packaging_unit: unit, quantity_per_pack: packSize }
-}
-
-// One cart item, as the confirm screen shows it. answer: { packSize,
+// One cart item, as the confirm screen shows it. answer: { pack,
 // discard (true = throw the expired stock away, false = keep it),
-// expiryDate, variantId / newVariantName } from the user.
-//   needsPackSize   – the list unit can't be converted to the pantry's
+// expiryDate, variantId / newVariantName } from the user; `pack` is the
+// pack field as typed ({ text, unit }: the unit it was typed for).
+//   pack            – the line's pack field (lib/packSize.js), or null: how
+//                     many stock units are in 1 package for this purchase,
+//                     started with the item's usual size. A first-time
+//                     size is saved only on the item the line restocks
+//                     itself (not through a group's old group-level entry)
+//   needsPackSize   – that field is still empty
 //   needsVariant    – the entry is a group: which of its variants gets the
 //                     stock (or the name of a new one); the first out
 //                     variant is taken until the user chooses
@@ -59,7 +58,9 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
   const variantId = group && untouched ? firstOutVariant(group.variants)?.id : answer.variantId
   const chosen = group ? pantryItems.find((p) => p.id === variantId && p.group_id === group.id) ?? null : entry
   const newVariant = group && !chosen ? answer.newVariantName?.trim() || null : null
-  const add = entry ? purchasedQuantity(entry, item, answer.packSize) : durable ? 0 : Number(item.quantity) || 1
+  const quantity = Number(item.quantity) || 1
+  const pack = entry ? packField({ item: entry, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(entry, item.unit)), canSave: chosen?.id === entry.id }) : null
+  const add = entry ? purchasedQuantity(entry, item, pack?.value) : durable ? 0 : quantity
   const needsPackSize = Boolean(entry) && add === null
   const needsVariant = Boolean(group) && !chosen && !newVariant
   const expired = Boolean(chosen) && expiryState(chosen) === 'expired'
@@ -73,6 +74,7 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
     newVariant,
     durable,
     add,
+    pack,
     needsPackSize,
     needsVariant,
     expired,
@@ -115,7 +117,7 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
     photo_ids: photoIds,
     shop_id: shopId || null,
     paid_by: paidBy || null,
-    items: lines.map(({ item, target, durable, add, expired }) => {
+    items: lines.map(({ item, target, durable, add, expired, pack }) => {
       const answer = answers[item.id] ?? {}
       const priced = pricing?.byItem.get(item.id) ?? null
       const row = {
@@ -133,7 +135,8 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
         // A fresh purchase replaces the expired date (or clears it).
         row.expiry_date = answer.expiryDate || null
       }
-      if (target) Object.assign(row, packSizePatch(target, item.unit, answer.packSize))
+      // The item's usual size only the first time (it has none yet).
+      if (target) Object.assign(row, firstTimePatch(pack))
       return row
     }),
   }

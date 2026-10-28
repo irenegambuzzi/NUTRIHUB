@@ -8,6 +8,7 @@ import { CategoryChips } from '../ui/CategoryChips'
 import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
+import { PackSizeField } from '../ui/PackSizeField'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { UnitOptions } from '../grocery/shared'
@@ -309,7 +310,7 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
   const home = line.home
   const entryNote = listEntryNote(line, listEntry)
   const label = (what) => (single ? what : `${what} of item ${index + 1}`)
-  const badNumber = [row.priceText, row.quantityText, row.minText, row.packSizeText].find((t) => decimalProblem(t)) ?? ''
+  const badNumber = [row.priceText, row.quantityText, row.minText].find((t) => decimalProblem(t)) ?? ''
   const chips = chipsFor(row.name, home)
   // The budget category came from the first chip, not from a pick by hand
   // nor the HOME mapping (with Add to HOME on only a purpose category, or
@@ -458,17 +459,7 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
         </div>
       )}
 
-      {home && line.target && (line.needsPackSize || row.packSizeText) && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-2 space-y-1">
-          <p className="text-[11px] text-amber-200">
-            "{line.target.name}" is counted in {line.target.unit} in HOME. How many {line.target.unit} are in 1 {row.unit}?
-          </p>
-          <div className="flex items-center gap-1">
-            <DecimalInput value={row.packSizeText} onChange={(e) => onChange({ packSizeText: e.target.value })} aria-label={label(`${line.target.unit} in 1 ${row.unit}`)} className="w-24 text-sm p-2" />
-            <span className="text-xs text-[var(--color-text-muted)]">{line.target.unit}</span>
-          </div>
-        </div>
-      )}
+      {line.pack && <PackSizeField pack={line.pack} onChange={(text) => onChange({ packSizeText: text, packUnit: line.pack.unit })} ariaLabel={label(`${line.pack.stockUnit} per ${line.pack.unit}`)} />}
 
       {home && line.isNew && (
         <div className="space-y-1">

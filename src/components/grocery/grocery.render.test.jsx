@@ -77,7 +77,8 @@ describe('grocery components render', () => {
       />
     )
     expect(html).toContain('Shopping day')
-    expect(html).toContain('How many gr are in 1 pack?')
+    expect(html).toContain('gr per pack')
+    expect(html).toContain('Type how many gr are in 1 pack.')
     expect(html).toContain('have expired')
     expect(html).toContain('Throw them away')
     expect(html).toContain('Answer the 2 questions above to confirm.')

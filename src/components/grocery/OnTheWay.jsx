@@ -3,6 +3,7 @@ import { CategoryIcon } from '../ui/CategoryIcon'
 import { ShopTag } from '../ui/ShopIcon'
 import { expectedLabel, orderDiscount } from '../../lib/orders'
 import { formatPurchaseQuantity } from '../../lib/inventory'
+import { orderPackLabel } from '../../lib/packSize'
 import { money } from '../../lib/pricing'
 import { cn } from '../../lib/cn'
 import { parseLocalDate } from '../../lib/week'
@@ -35,7 +36,7 @@ export function OnTheWay({ entries, shopById, today, onArrived, onCancel }) {
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-[var(--color-text)] break-words">{entry.name}</p>
                 <p className="text-[11px] text-[var(--color-text-muted)]">
-                  {Number(order.quantity) > 0 ? `${formatPurchaseQuantity(Number(order.quantity), order.unit, pantry)} · ` : ''}
+                  {orderPackLabel(order, pantry?.unit) ? `${orderPackLabel(order, pantry.unit)} · ` : Number(order.quantity) > 0 ? `${formatPurchaseQuantity(Number(order.quantity), order.unit, pantry)} · ` : ''}
                   ordered {day(order.order_date)}
                   {shop && (
                     <>

@@ -6,7 +6,8 @@ import { expiryState, isDurable } from './inventory'
 import { isFinished } from './oneTime'
 import { budgetCategoryFor } from './budgetMap'
 import { durableLock, isPurposeBudget, lockNote } from './durable'
-import { packSizePatch, purchasedQuantity } from './purchase'
+import { purchasedQuantity } from './purchase'
+import { firstTimePatch, packField, packMissingText, packStartText, packTextFor } from './packSize'
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
 import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
 
@@ -26,6 +27,8 @@ const round2 = (n) => Math.round(n * 100) / 100
 //               the similar-name question (plan 9G); another name asks again
 //   priceEdited / autoFilled   the price, quantity and unit were typed by hand
 //               / filled in from the last purchase of that name
+//   packSizeText / packUnit   the pack field as typed, and the unit it was
+//               typed for (another unit starts the field again, plan 9H)
 export function emptyRow(key) {
   return {
     key,
@@ -48,6 +51,7 @@ export function emptyRow(key) {
     minText: '0',
     variantId: undefined,
     packSizeText: '',
+    packUnit: null,
     discountKind: 'percent',
     discountText: '',
     similarAnswer: '',
@@ -147,8 +151,10 @@ export const budgetOf = (row, ctx) => {
 //   group       that item is a group: `variants` to pick from, `target`
 //               the chosen one (the first at 0 until the user picks)
 //   target      the HOME item whose stock goes up (null = a new item)
-//   add         how much stock, in the target's unit (null = the units
-//               don't convert and the pack size is still missing)
+//   pack        the pack field (lib/packSize.js), or null: how many of the
+//               target's stock units are in 1 package for this purchase
+//   add         how much stock, in the target's unit (null = the pack
+//               size is still missing)
 //   isNew       a new HOME item is made (with 1× and Min)
 //   revives     a finished 1× item comes back
 export function rowLine(row, pantryItems, ctx) {
@@ -162,8 +168,9 @@ export function rowLine(row, pantryItems, ctx) {
   const variants = group ? variantOrder(group.variants ?? pantryItems.filter((p) => p.group_id === group.id)) : []
   const variantId = group ? (row.variantId === undefined ? (firstOutVariant(variants) ?? variants[0])?.id ?? null : row.variantId) : null
   const target = group ? variants.find((v) => v.id === variantId) ?? null : match
-  const packSize = parseDecimal(row.packSizeText)
-  const add = !home ? 0 : target ? purchasedQuantity(target, { quantity: quantity > 0 ? quantity : 1, unit: row.unit }, packSize) : quantity > 0 ? quantity : 1
+  const count = quantity > 0 ? quantity : 1
+  const pack = home && target ? packField({ item: target, unit: row.unit, quantity: count, text: packTextFor({ text: row.packSizeText, unit: row.packUnit }, row.unit, packStartText(target, row.unit)) }) : null
+  const add = !home ? 0 : target ? purchasedQuantity(target, { quantity: count, unit: row.unit }, pack?.value) : count
   const minStock = parseDecimal(row.minText)
   return {
     row,
@@ -177,7 +184,7 @@ export function rowLine(row, pantryItems, ctx) {
     variants,
     target,
     add,
-    packSize,
+    pack,
     isNew: home && !match,
     revives: Boolean(target) && isFinished(target),
     // MONEY doesn't ask what to do with expired stock (SHOP's Confirm
@@ -245,7 +252,7 @@ export function listEntryNote(line, listEntry) {
 export function rowProblem(line, { plain = false } = {}) {
   const { row } = line
   if (!plain && !row.name.trim()) return 'Type what you bought.'
-  if (decimalProblem(row.priceText) || decimalProblem(row.quantityText) || decimalProblem(row.minText) || decimalProblem(row.packSizeText)) return 'Fix the numbers in red.'
+  if (decimalProblem(row.priceText) || decimalProblem(row.quantityText) || decimalProblem(row.minText) || decimalProblem(line.pack?.text)) return 'Fix the numbers in red.'
   if (!row.priceText.trim()) return line.home ? 'Enter the price (0 if it was free).' : 'Enter the price.'
   if (!(line.total > 0) && !(line.home && line.total === 0)) return 'Enter a price above 0.'
   if (line.priced?.problem) return line.priced.problem
@@ -253,7 +260,7 @@ export function rowProblem(line, { plain = false } = {}) {
   if (!(paid > 0) && !(line.home && paid === 0)) return 'Nothing is paid after the discounts — lower the discount, or turn Add to HOME on.'
   if (!(parseDecimal(row.quantityText) > 0)) return 'Enter a quantity above 0.'
   if (line.needsVariant) return `Choose which variant of "${line.group.name}" gets the stock.`
-  if (line.needsPackSize) return `Say how many ${line.target.unit} are in 1 ${row.unit}.`
+  if (line.needsPackSize) return packMissingText(line.pack)
   if (line.isNew && !row.categoryId) return 'Pick a HOME item category, or turn Add to HOME off.'
   return ''
 }
@@ -318,7 +325,8 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
         item.one_time = Boolean(row.oneTime)
         item.min_stock = line.minStock
       }
-      if (line.target) Object.assign(item, packSizePatch(line.target, row.unit, line.packSize))
+      // The item's usual size only the first time (it has none yet).
+      if (line.target) Object.assign(item, firstTimePatch(line.pack))
       const listEntry = entryOf(line)
       if (closesEntry(line, listEntry)) item.list_entry_id = listEntry.entry.id
       return item

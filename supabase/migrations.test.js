@@ -2878,3 +2878,195 @@ describe('026: the durable lock — Durables tree, mapping rows by id, the Actio
     })
   })
 })
+
+describe('027: pack size per purchase — two columns on orders, nothing else', () => {
+  const file = '027_order_pack_size.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  let fx, groceries
+  const rows = async (text, params) => (await fx.query(text, params)).rows
+  const row = async (text, params) => (await rows(text, params))[0]
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  const fails = async (text, params) => {
+    try {
+      await fx.query(text, params)
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  async function as(role, userId, fn) {
+    await fx.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await fx.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await fx.exec('reset role')
+    }
+  }
+  const asMember = (fn) => as('authenticated', MEMBER, fn)
+  const item = (id) => row(`select current_stock::float as stock, packaging_unit, quantity_per_pack::float as per from pantry_items where id = $1`, [id])
+  const newItem = (name, packagingUnit = null, perPack = null) =>
+    row(`insert into pantry_items (name, unit, current_stock, category_id, packaging_unit, quantity_per_pack) values ($1, 'pcs', 5, 'misc', $2, $3) returning *`, [name, packagingUnit, perPack]).then((r) => ({ ...r, current_stock: Number(r.current_stock), quantity_per_pack: r.quantity_per_pack === null ? null : Number(r.quantity_per_pack) }))
+  // A purchase typed in MONEY, built by the app's own code (one row).
+  const buyInMoney = async (id, pantry, { quantityText, unit, packText }) => {
+    const r = { ...emptyRow(1), name: pantry.name, priceText: '9', quantityText, unit, unitTouched: true, categoryId: 'misc', addToHome: true, packSizeText: packText, packUnit: unit }
+    const { lines, priced } = pricedLines([rowLine(r, [pantry])])
+    const payload = moneyPurchasePayload({ id, date: '2026-10-28', at: '2026-10-28T10:00:00Z', paidBy: 'shared', lines, budgetFor: () => groceries, priced })
+    await asMember(() => fx.query(`select confirm_shopping_trip($1::jsonb)`, [payload]))
+    return { line: lines[0], payload }
+  }
+  const order = (pantryId, quantity, unit) =>
+    row(`insert into orders (item_name, price, pantry_item_id, quantity, unit) values ('Order', 20, $1, $2, $3) returning id`, [pantryId, quantity, unit]).then((r) => r.id)
+
+  beforeAll(async () => {
+    fx = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-3])_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+      await fx.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    }
+    groceries = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+  }, 120000)
+
+  it('only adds the two columns: no function, policy, grant, data or anything for anon', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    expect(code.match(/alter table orders add column if not exists/g)).toHaveLength(2)
+    expect(code).toMatch(/add column if not exists pack_size numeric check \(pack_size > 0\);/)
+    expect(code).toMatch(/add column if not exists arrival_pack_before jsonb;/)
+    expect(code).not.toMatch(/\b(drop|truncate|create|grant|revoke|policy|function|trigger|anon|insert|update|delete)\b/i)
+  })
+
+  it('before 027 (deployed first): orders have no pack columns, and Arrived / Put back on the way work as before', async () => {
+    const columns = (await rows(`select column_name from information_schema.columns where table_name = 'orders'`)).map((c) => c.column_name)
+    expect(columns).not.toContain('pack_size')
+    expect(columns).not.toContain('arrival_pack_before')
+    const cat = await newItem('Cat Wet Food before 027', 'box', 48)
+    const o = await order(cat.id, 1, 'box')
+    await asMember(() => fx.query(`select arrive_order($1, $2, 30, '2026-10-28')`, [o, cat.id]))
+    expect(await item(cat.id)).toEqual({ stock: 35, packaging_unit: 'box', per: 48 })
+    await asMember(() => fx.query(`select unarrive_order($1)`, [o]))
+    expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
+  })
+
+  it('run twice: the check says ok for every column, nothing else changes, orders stay locked to the household', async () => {
+    const before = await rows(`select * from orders order by id`)
+    const policies = await rows(`select policyname, cmd, roles::text, qual from pg_policies where tablename = 'orders' order by policyname`)
+    const first = await run()
+    const second = await run()
+    expect(first).toEqual([
+      { column: 'orders.pack_size', type: 'numeric', status: 'ok' },
+      { column: 'orders.arrival_pack_before', type: 'jsonb', status: 'ok' },
+      { column: 'orders.pack_size > 0', type: 'check', status: 'ok' },
+    ])
+    expect(second).toEqual(first)
+    const after = await rows(`select * from orders order by id`)
+    expect(after.every((o) => o.pack_size === null && o.arrival_pack_before === null)).toBe(true)
+    expect(after.map(({ pack_size: _size, arrival_pack_before: _before, ...rest }) => rest)).toEqual(before)
+    expect(await rows(`select policyname, cmd, roles::text, qual from pg_policies where tablename = 'orders' order by policyname`)).toEqual(policies)
+    expect(await as('anon', null, () => fails(`select pack_size from orders`))).toMatch(/permission denied/)
+  })
+
+  it('a pack size is a number above 0, or empty', async () => {
+    const cat = await newItem('Pack check')
+    const o = await order(cat.id, 1, 'box')
+    expect(await fails(`update orders set pack_size = 0 where id = $1`, [o])).toMatch(/check/)
+    expect(await fails(`update orders set pack_size = -2 where id = $1`, [o])).toMatch(/check/)
+    await fx.query(`update orders set pack_size = 24 where id = $1`, [o])
+    await fx.query(`update orders set pack_size = null where id = $1`, [o])
+    expect((await row(`select pack_size from orders where id = $1`, [o])).pack_size).toBeNull()
+  })
+
+  describe('purchases (no SQL needed): stock = quantity × the pack typed, the usual size only the first time, Undo exact', () => {
+    it('usual "box 48", 1 box typed 30: +30, usual stays 48; Undo purchase −30', async () => {
+      const cat = await newItem('Cat Wet Food', 'box', 48)
+      const { line, payload } = await buyInMoney('27000000-0000-4000-8000-000000000001', cat, { quantityText: '1', unit: 'box', packText: '30' })
+      expect(line.pack).toMatchObject({ value: 30, usual: 48, differs: true, firstTime: false })
+      expect(payload.items[0]).not.toHaveProperty('packaging_unit')
+      expect(await item(cat.id)).toEqual({ stock: 35, packaging_unit: 'box', per: 48 })
+      await asMember(() => fx.query(`select reopen_shopping_trip('27000000-0000-4000-8000-000000000001')`))
+      expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
+    })
+
+    it('2 box × 30 = +60 while the usual is 48; Undo −60', async () => {
+      const cat = await newItem('Cat Wet Food 2', 'box', 48)
+      await buyInMoney('27000000-0000-4000-8000-000000000002', cat, { quantityText: '2', unit: 'box', packText: '30' })
+      expect(await item(cat.id)).toEqual({ stock: 65, packaging_unit: 'box', per: 48 })
+      await asMember(() => fx.query(`select reopen_shopping_trip('27000000-0000-4000-8000-000000000002')`))
+      expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
+    })
+
+    it('no usual size, 1 box typed 12: +12 and box 12 becomes the usual; Undo puts the stock and the empty usual size back', async () => {
+      const tuna = await newItem('Tuna cans')
+      const { line, payload } = await buyInMoney('27000000-0000-4000-8000-000000000003', tuna, { quantityText: '1', unit: 'box', packText: '12' })
+      expect(line.pack).toMatchObject({ value: 12, usual: null, firstTime: true })
+      expect(payload.items[0]).toMatchObject({ add: 12, packaging_unit: 'box', quantity_per_pack: 12 })
+      expect(await item(tuna.id)).toEqual({ stock: 17, packaging_unit: 'box', per: 12 })
+      await asMember(() => fx.query(`select reopen_shopping_trip('27000000-0000-4000-8000-000000000003')`))
+      expect(await item(tuna.id)).toEqual({ stock: 5, packaging_unit: null, per: null })
+    })
+
+    it('usual "box", 2 pack typed 5: +10, nothing saved; Undo −10', async () => {
+      const cat = await newItem('Cat Wet Food 3', 'box', 48)
+      const { line, payload } = await buyInMoney('27000000-0000-4000-8000-000000000004', cat, { quantityText: '2', unit: 'pack', packText: '5' })
+      expect(line.pack).toMatchObject({ value: 5, usual: null, firstTime: false, total: 10 })
+      expect(payload.items[0]).toMatchObject({ add: 10 })
+      expect(payload.items[0]).not.toHaveProperty('packaging_unit')
+      expect(await item(cat.id)).toEqual({ stock: 15, packaging_unit: 'box', per: 48 })
+      await asMember(() => fx.query(`select reopen_shopping_trip('27000000-0000-4000-8000-000000000004')`))
+      expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
+    })
+  })
+
+  describe('Arrived and "Put back on the way" with 027 (the writes the app makes, lib/useOrders)', () => {
+    // What the app does after arrive_order when the arrival saved a
+    // first-time usual size, and what "Put back on the way" does after
+    // unarrive_order — the same guarded writes as hooks/useOrders.js.
+    const rememberFirstTime = async (o, id, unit, value) => {
+      const before = await row(`select packaging_unit, quantity_per_pack from pantry_items where id = $1`, [id])
+      await fx.query(`update orders set pack_size = $2, arrival_pack_before = $3 where id = $1`, [o, value, { ...before, saved: { packaging_unit: unit, quantity_per_pack: value } }])
+      return (await rows(`update pantry_items set packaging_unit = $2, quantity_per_pack = $3 where id = $1 and quantity_per_pack is null and packaging_unit is null returning id`, [id, unit, value])).length
+    }
+    const restore = async (o, id) => {
+      const { arrival_pack_before: before } = await row(`select arrival_pack_before from orders where id = $1`, [o])
+      if (before) {
+        await fx.query(`update pantry_items set packaging_unit = $2, quantity_per_pack = $3 where id = $1 and packaging_unit = $4 and quantity_per_pack = $5`, [id, before.packaging_unit, before.quantity_per_pack, before.saved.packaging_unit, before.saved.quantity_per_pack])
+      }
+      await fx.query(`update orders set arrival_pack_before = null where id = $1`, [o])
+    }
+
+    it('no usual size: Arrived 1 box typed 12 → +12, usual box 12; Put back on the way → −12, usual empty again', async () => {
+      const tuna = await newItem('Tuna arrived')
+      const o = await order(tuna.id, 1, 'box')
+      await asMember(() => fx.query(`select arrive_order($1, $2, 12, '2026-10-28')`, [o, tuna.id]))
+      expect(await rememberFirstTime(o, tuna.id, 'box', 12)).toBe(1)
+      expect(await item(tuna.id)).toEqual({ stock: 17, packaging_unit: 'box', per: 12 })
+      await asMember(() => fx.query(`select unarrive_order($1)`, [o]))
+      // unarrive_order never touches the new columns: the app restores.
+      expect((await row(`select arrival_pack_before from orders where id = $1`, [o])).arrival_pack_before).toMatchObject({ packaging_unit: null, quantity_per_pack: null })
+      await restore(o, tuna.id)
+      expect(await item(tuna.id)).toEqual({ stock: 5, packaging_unit: null, per: null })
+      expect(await row(`select status, stock_added::float as added, arrival_pack_before from orders where id = $1`, [o])).toEqual({ status: 'on_the_way', added: 0, arrival_pack_before: null })
+    })
+
+    it('the same, but the usual size changed to 15 in the HOME editor before Put back on the way: stock −12, usual stays 15', async () => {
+      const tuna = await newItem('Tuna edited')
+      const o = await order(tuna.id, 1, 'box')
+      await asMember(() => fx.query(`select arrive_order($1, $2, 12, '2026-10-28')`, [o, tuna.id]))
+      await rememberFirstTime(o, tuna.id, 'box', 12)
+      await fx.query(`update pantry_items set quantity_per_pack = 15 where id = $1`, [tuna.id])
+      await asMember(() => fx.query(`select unarrive_order($1)`, [o]))
+      await restore(o, tuna.id)
+      expect(await item(tuna.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 15 })
+      expect((await row(`select arrival_pack_before from orders where id = $1`, [o])).arrival_pack_before).toBeNull()
+    })
+
+    it('an existing usual size (box 48), Arrived 2 box typed 30: +60, nothing saved, Put back on the way −60', async () => {
+      const cat = await newItem('Cat arrived', 'box', 48)
+      const o = await order(cat.id, 2, 'box')
+      await asMember(() => fx.query(`select arrive_order($1, $2, 60, '2026-10-28')`, [o, cat.id]))
+      await fx.query(`update orders set pack_size = 30 where id = $1`, [o])
+      expect(await item(cat.id)).toEqual({ stock: 65, packaging_unit: 'box', per: 48 })
+      await asMember(() => fx.query(`select unarrive_order($1)`, [o]))
+      expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
+      expect((await row(`select pack_size::float as size from orders where id = $1`, [o])).size).toBe(30)
+    })
+  })
+})
