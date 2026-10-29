@@ -294,8 +294,9 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
 
 // "Group orders": how many orders are ticked and what can be done with
 // them — "Group as one order" (a new group; then its sheet opens, to type
-// the order discount), or "Add to {group}" instead when they match an
-// existing group — or why not. Every status can be grouped. When "Paid by" isn't on
+// the order discount), and beside it one "Add to {group}" for each existing
+// group of the same store, date and payer — or why not. Each button does
+// only what it says. Every status can be grouped. When "Paid by" isn't on
 // Everyone, it says that some orders may be hidden.
 function GroupOrdersBar({ selected, orders, person, shopName, onDone, onGrouped }) {
   const [id, setId] = useState(() => crypto.randomUUID())

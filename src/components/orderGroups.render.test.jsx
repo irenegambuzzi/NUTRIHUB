@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 // MONEY Expenses (K9) and "Group orders" — and nothing of it before
 // supabase/028.
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
-const data = vi.hoisted(() => ({ orders: [], groups: [], groupsReady: true }))
+const data = vi.hoisted(() => ({ orders: [], groups: [], groupsReady: true, groupOrders: null }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
 vi.mock('../lib/stores', async (original) => ({
   ...(await original()),
@@ -20,10 +20,15 @@ vi.mock('../lib/stores', async (original) => ({
   groceryStore: fake(() => []),
   budgetMapStore: fake(() => []),
 }))
-vi.mock('../hooks/useOrderGroups', async (original) => ({
-  ...(await original()),
-  useOrderGroups: () => ({ ready: data.groupsReady, groups: data.groups, orders: data.orders, byId: new Map(data.groups.map((g) => [g.id, g])) }),
-}))
+vi.mock('../hooks/useOrderGroups', async (original) => {
+  const real = await original()
+  return {
+    ...real,
+    useOrderGroups: () => ({ ready: data.groupsReady, groups: data.groups, orders: data.orders, byId: new Map(data.groups.map((g) => [g.id, g])) }),
+    // A test can watch what "Group orders" sends (data.groupOrders).
+    groupOrders: (...args) => (data.groupOrders ?? real.groupOrders)(...args),
+  }
+})
 const shops = new Map([
   ['amazon', { id: 'amazon', name: 'Amazon.it', is_online: true }],
   ['zal', { id: 'zal', name: 'Zalando', is_online: true }],
@@ -69,6 +74,7 @@ beforeEach(() => {
   data.orders = names.map((_, i) => member(i))
   data.groups = [GROUP]
   data.groupsReady = true
+  data.groupOrders = null
 })
 afterEach(cleanup)
 
@@ -149,6 +155,44 @@ describe('"Same order as" in the order form (K2)', () => {
     expect(screen.queryByText(/spread again/)).toBeNull()
     fireEvent.click(screen.getByLabelText(/Same order as: Cat Dry Food, Cat Wet Food, Hairs all Relief \+4 more \(Amazon\.it · /))
     expect(screen.getByText('The order discount will be spread again over 8 items.')).toBeTruthy()
+  })
+
+  it('two groups of the same store, date and payer (two checkouts): two offers, none ticked; saving unticked keeps it separate; ticking one joins only that one', async () => {
+    const zal = (id, item_name, price, group_id, i) => single(id, item_name, price, { shop_id: 'zal', order_date: today, paid_by: 'irene', group_id, created_at: `${today}T08:00:0${i}Z` })
+    data.orders = [zal('z1', 'Rain Jacket', 46.37, 'gA', 1), zal('z2', 'Wool Scarf', 18.48, 'gA', 2), zal('z3', 'Sneakers', 64.5, 'gB', 3), zal('z4', 'Socks', 12.5, 'gB', 4), zal('z5', 'Belt', 24, 'gB', 5)]
+    data.groups = [
+      { id: 'gA', shop_id: 'zal', order_date: today, paid_by: 'irene', discount_kind: 'amount', discount_value: 5, discount_total: 5 },
+      { id: 'gB', shop_id: 'zal', order_date: today, paid_by: 'irene', discount_kind: null, discount_value: null, discount_total: 0 },
+    ]
+    const onSubmit = vi.fn(async () => ({ error: 'stay open' }))
+    render(<OrderForm {...formProps} prefill={{ itemName: 'Beanie', shopId: 'zal', paidBy: 'irene' }} onSubmit={onSubmit} />)
+    const offer = screen.getByRole('group', { name: 'Same order' })
+    expect(within(offer).getAllByRole('checkbox').map((b) => b.checked)).toEqual([false, false])
+    expect(within(offer).getByText(/Tick one if it was part of the same order — otherwise it stays a separate order\./)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Total price'), { target: { value: '15,99' } })
+    fireEvent.click(screen.getByRole('button', { name: /Add order/ }))
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0][0].joinWith).toBeUndefined()
+    fireEvent.click(screen.getByLabelText(/Same order as: Sneakers, Socks, Belt \(Zalando · /))
+    expect(within(offer).getAllByRole('checkbox').map((b) => b.checked)).toEqual([false, true])
+    expect(screen.queryByText(/spread again/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Add order/ }))
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+    expect(onSubmit.mock.calls[1][0].joinWith).toEqual({ groupId: 'gB' })
+  })
+
+  it('a group and a single order on another store and day: two offers, none ticked', () => {
+    data.orders = [
+      single('z1', 'Rain Jacket', 46.37, { shop_id: 'zal', order_date: today, paid_by: 'irene', group_id: 'gA', created_at: '2026-10-22T08:00:01Z' }),
+      single('z2', 'Wool Scarf', 18.48, { shop_id: 'zal', order_date: today, paid_by: 'irene', group_id: 'gA', created_at: '2026-10-22T08:00:02Z' }),
+      single('z6', 'Gloves', 22.4, { shop_id: 'zal', order_date: today, paid_by: 'irene', created_at: '2026-10-22T08:00:06Z' }),
+    ]
+    data.groups = [{ id: 'gA', shop_id: 'zal', order_date: today, paid_by: 'irene', discount_kind: 'amount', discount_value: 5, discount_total: 5 }]
+    render(<OrderForm {...formProps} prefill={{ itemName: 'Beanie', shopId: 'zal', paidBy: 'irene' }} onSubmit={vi.fn()} />)
+    const boxes = within(screen.getByRole('group', { name: 'Same order' })).getAllByRole('checkbox')
+    expect(boxes.map((b) => b.checked)).toEqual([false, false])
+    expect(screen.getByLabelText(/Same order as: Rain Jacket, Wool Scarf \(Zalando · /)).toBeTruthy()
+    expect(screen.getByLabelText(/Same order as: Gloves \(Zalando · /)).toBeTruthy()
   })
 
   it('before 028: no offer', () => {
@@ -276,6 +320,61 @@ describe('"Group orders" in MONEY Orders', () => {
     expect(screen.getByRole('button', { name: /Add to Amazon\.it · 17\/10 \(7 items\)/ })).toBeTruthy()
     expect(screen.getByText('The order discount will be spread again over 8 items.')).toBeTruthy()
     expect(screen.getAllByText('Order: Amazon.it · 17/10 (7 items)').length).toBeGreaterThan(0)
+  })
+
+  it('two single orders that match a group: "Group as one order" AND "Add to …", each doing only its own thing', async () => {
+    data.orders = [...names.map((_, i) => member(i)), single('s1', 'Lamp', 20), single('s2', 'Bulb', 3.4)]
+    data.groupOrders = vi.fn(async () => ({ error: null }))
+    section()
+    fireEvent.click(screen.getByRole('button', { name: /Group orders/ }))
+    fireEvent.click(screen.getByLabelText('Select Lamp'))
+    expect(screen.queryByRole('button', { name: /Group as one order/ })).toBeNull()
+    fireEvent.click(screen.getByLabelText('Select Bulb'))
+    expect(screen.getByRole('button', { name: /Group as one order/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Add to Amazon\.it · 17\/10 \(7 items\)/ })).toBeTruthy()
+    expect(screen.getByText('The order discount will be spread again over 9 items.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Group as one order/ }))
+    await vi.waitFor(() => expect(data.groupOrders).toHaveBeenCalledTimes(1))
+    const sent = data.groupOrders.mock.calls[0][0]
+    expect(sent.target).toBeNull()
+    expect(sent.singles.map((o) => o.item_name)).toEqual(['Lamp', 'Bulb'])
+    // The new group's sheet opens at once.
+    await vi.waitFor(() => expect(screen.getByRole('dialog', { name: 'Order group' })).toBeTruthy())
+  })
+
+  it('"Add to …" sends only that group: the ticked orders join it, no new group', async () => {
+    data.orders = [...names.map((_, i) => member(i)), single('s1', 'Lamp', 20), single('s2', 'Bulb', 3.4)]
+    data.groupOrders = vi.fn(async () => ({ error: null }))
+    section()
+    fireEvent.click(screen.getByRole('button', { name: /Group orders/ }))
+    fireEvent.click(screen.getByLabelText('Select Lamp'))
+    fireEvent.click(screen.getByLabelText('Select Bulb'))
+    fireEvent.click(screen.getByRole('button', { name: /Add to Amazon\.it · 17\/10 \(7 items\)/ }))
+    await vi.waitFor(() => expect(data.groupOrders).toHaveBeenCalledTimes(1))
+    const sent = data.groupOrders.mock.calls[0][0]
+    expect(sent.target.groupId).toBe('g1')
+    expect(sent.target.members).toHaveLength(7)
+    expect(sent.singles.map((o) => o.item_name)).toEqual(['Lamp', 'Bulb'])
+    expect(screen.queryByRole('dialog', { name: 'Order group' })).toBeNull()
+  })
+
+  it('two groups of the same store, date and payer (two checkouts at Zalando on 22/10): one "Add to …" for each, and "Group as one order"', () => {
+    const zal = (id, item_name, price, group_id, i, group_share = 0) => single(id, item_name, price, { shop_id: 'zal', order_date: '2026-10-22', paid_by: 'irene', group_id, group_share, created_at: `2026-10-22T08:00:0${i}Z` })
+    data.orders = [zal('z1', 'Rain Jacket', 46.37, 'gA', 1, 3.58), zal('z2', 'Wool Scarf', 18.48, 'gA', 2, 1.42), zal('z3', 'Sneakers', 64.5, 'gB', 3), zal('z4', 'Socks', 12.5, 'gB', 4), zal('z5', 'Belt', 24, 'gB', 5), zal('z6', 'Beanie', 15.99, null, 6), zal('z7', 'Gloves', 22.4, null, 7)]
+    data.groups = [
+      { id: 'gA', shop_id: 'zal', order_date: '2026-10-22', paid_by: 'irene', discount_kind: 'amount', discount_value: 5, discount_total: 5 },
+      { id: 'gB', shop_id: 'zal', order_date: '2026-10-22', paid_by: 'irene', discount_kind: null, discount_value: null, discount_total: 0 },
+    ]
+    section()
+    fireEvent.click(screen.getByRole('button', { name: /Group orders/ }))
+    fireEvent.click(screen.getByLabelText('Select Gloves'))
+    expect(screen.queryByRole('button', { name: /Group as one order/ })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /^Add to / }).map((b) => b.textContent.trim())).toEqual(['Add to Zalando · 22/10 (2 items)', 'Add to Zalando · 22/10 (3 items)'])
+    fireEvent.click(screen.getByLabelText('Select Beanie'))
+    expect(screen.getByRole('button', { name: /Group as one order/ })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: /^Add to / })).toHaveLength(2)
+    // Only checkout A has a discount: only its button says it is spread again.
+    expect(screen.getAllByText(/spread again/).map((p) => p.textContent)).toEqual(['The order discount will be spread again over 4 items.'])
   })
 
   it('"Paid by" not on Everyone: a hint that some orders may be hidden', () => {

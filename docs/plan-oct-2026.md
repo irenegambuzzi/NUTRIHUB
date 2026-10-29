@@ -3001,9 +3001,9 @@ kept }`.
   It opens History and puts a tick box on every card (on the way and in
   History). The card "Group orders" says how many are ticked and offers
   "Group as one order" (a new group; its sheet then opens to type the
-  discount) or, when a group of the same store, date and payer exists,
-  only "Add to {store} · {dd/mm} ({N} items)" (with the re-spread note when
-  it has a discount). Refusals: "Tick at least two orders to group them as
+  discount) and, beside it, one "Add to {store} · {dd/mm} ({N} items)" for
+  each group of the same store, date and payer (with the re-spread note
+  when it has a discount) — changed in the 29/10 follow-up below. Refusals: "Tick at least two orders to group them as
   one order.", "Only orders of the same store can be one order — these are
   from A and B.", "… of the same order date … — these are on …", "… paid by
   the same person … — these are paid by … and …", "\"X\" has no store. Set
@@ -3092,6 +3092,90 @@ screen uses it.
 **Next round (small, right after this one).** An Undo on the toast after
 "Arrived", and stock added through the "It arrived!" dialog recorded on
 the order, so "Back on the way" removes it exactly.
+
+### Follow-up 29/10 to 9I (as built; code and tests only, no SQL)
+
+**Why.** The same store can have two separate orders on the same day (two
+Amazon checkouts, only one with a promotion). Before, when the ticked
+orders matched an existing group, "Group orders" offered only "Add to
+{group}": the second checkout could only join the first one, and its
+discount would be spread over orders that were not part of it.
+
+**"Group orders" as built now** (`groupingPlan` in `lib/orderGroups.js`,
+`GroupOrdersBar` in `expenses/OrdersSection.jsx`):
+
+- Two or more ticked orders in no group, of the same store, order date
+  and payer: "Group as one order" is ALWAYS offered (a new, separate
+  group; every existing group stays exactly as it is), and beside it one
+  "Add to {store} · {dd/mm} ({N} items)" for EACH existing group of the
+  same store, order date and payer, oldest first. Nothing is chosen for
+  the user; each button does only what it says. The re-spread note is
+  under each "Add to" whose group has a discount.
+- One ticked order in no group: one "Add to …" for each such group (a new
+  group needs two); no group → "Tick at least two orders…".
+- One of a group's own orders ticked with single orders: only "Add to"
+  that group (unchanged).
+- The refusals are unchanged (fewer than 2 for a new group, different
+  store / date / payer, no store, an order already in another group,
+  "These orders are already one order.").
+- `save_order_group` (028) has no rule against two groups of the same
+  store, date and payer, so nothing in the database changes.
+
+**"Same order as: …" in the order form** (Money → Orders → "Add order",
+Shop → "Order online"; both use `OrderForm`): checked, already right, not
+changed. With two or more candidates (two groups, or a group and a single
+order) every tick box starts unticked, with "Same store, order date and
+payer as these. Tick one if it was part of the same order — otherwise it
+stays a separate order."; saving unticked keeps the order separate. Only
+one candidate: ticked, as before (K2).
+
+**Kept as built (Zidane decided 29/10).**
+
+- A group with one order left after "Take out of the group" stays a group
+  (its discount stays on that order); a group is removed only when it has
+  no orders left. "Ungroup" is there to end it.
+- The confirm dialogs before "Take out of the group" and "Ungroup" stay
+  (in addition to Undo).
+- After "Group as one order" the "Order group" sheet opens at once; its
+  "Order discount" starts on −€.
+- Changing store / date / payer on the group changes the members'
+  expenses' date / store / payer without a guard, exactly like "Edit
+  order".
+
+**Tests: 1796 → 1811 (101 files).** `lib/orderGroups.test.js`: the 17/10
+case now offers both; one single order beside a group; two Zalando
+checkouts on 22/10 paid by Irene (−€5.00 on one): two singles → "Group as
+one order" + one "Add to" per group; one single → one "Add to" per group;
+a member of checkout B ticked → only checkout B; the new group leaves both
+checkouts as they are; the form's four candidates; another day not
+offered. `hooks/orderGroups.test.js`: the same two checkouts against the
+fake `save_order_group`: a new group touches only the ticked orders (+
+Undo); "Add to" checkout B leaves checkout A and its −€5.00; "Add to"
+checkout A spreads its −€5.00 over four. `components/orderGroups.render
+.test.jsx`: both buttons shown and each sends only its own thing (the
+sheet opens only after "Group as one order"); two groups → two "Add to"
+buttons; the form with two groups, and with a group and a single order →
+nothing ticked, saving unticked sends no join.
+
+**The flaky test of round 9I.** In round 9I one full `npm test` run had 1
+failing test that could not be repeated (its name was not recorded). On
+29/10 the full suite ran 11 times (once before the change: 1796 / 1796;
+10 times after it, one after the other: 1811 / 1811 each, logs kept per
+run): every run green, no failure to trace, so nothing was changed for
+it. If it shows again, record the test name and the error.
+
+**Open (ask Zidane).**
+
+- Two groups of the same store and date with the same number of items
+  have the same label ("Add to Zalando · 22/10 (2 items)", and the same
+  card tag "Order: …"), so their buttons can't be told apart. Not
+  changed: e.g. the item names under each "Add to" button would tell them
+  apart.
+- A toast with the same text as one still on screen is not shown again
+  (`showToast` in `lib/feedback.js`), so grouping two new groups within
+  10 seconds shows only the first "2 orders grouped as one order", and its
+  Undo undoes the FIRST group. The same for any two equal Undo toasts.
+  App code, not changed.
 
 ### iPhone checklist for round 9I
 

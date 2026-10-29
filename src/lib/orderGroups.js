@@ -167,10 +167,12 @@ export const respreadNote = (count) => `The order discount will be spread again 
 // the phone in `orders`):
 //   { problem }                          — why nothing can be done
 //   { newGroup: bool, targets: [{ groupId, members }], singles }
-// A new group needs two or more orders not in a group. When a group of the
-// same store, date and payer exists, the ticked orders can only be added to
-// it ("Add to …"; the group's own ticked orders are simply part of it).
-// Every status counts.
+// A new group needs two or more orders not in a group; it is always
+// offered then, even when groups of the same store, date and payer exist
+// (the same store can have two orders on one day, e.g. two checkouts).
+// Each such group is offered beside it ("Add to …"); nothing is chosen for
+// the user. When one of a group's own orders is ticked, the others can
+// only be added to that group. Every status counts.
 export function groupingPlan(selected, orders, shopName = () => null) {
   if (selected.length === 0) return { problem: 'Tick at least two orders to group them as one order.' }
   const noStore = selected.find((o) => !o.shop_id)
@@ -195,7 +197,7 @@ export function groupingPlan(selected, orders, shopName = () => null) {
   const targets = joinCandidates(orders, { shopId, orderDate, paidBy })
     .filter((c) => c.groupId)
     .map((c) => ({ groupId: c.groupId, members: c.orders }))
-  const newGroup = singles.length >= 2 && targets.length === 0
+  const newGroup = singles.length >= 2
   if (!newGroup && targets.length === 0) return { problem: 'Tick at least two orders to group them as one order.' }
   return { newGroup, targets, singles }
 }

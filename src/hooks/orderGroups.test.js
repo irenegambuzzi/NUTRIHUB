@@ -224,6 +224,72 @@ describe('"Group orders", the discount, and Undo', () => {
   })
 })
 
+describe('two separate orders at the same store on the same day (two checkouts)', () => {
+  // Zalando, 22/10, paid by Irene: checkout A (2 items, −€5.00) and
+  // checkout B (2 items, no discount), then two more single orders.
+  const ZAL = 'zal'
+  const place = { shop_id: ZAL, order_date: '2026-10-22', paid_by: 'irene' }
+  const zal = (i, name, price) => {
+    const o = seed(i, name, price, { ...place, created_at: `2026-10-22T08:00:0${i}Z` })
+    Object.assign(db.expenses.get(`x${i}`), { expense_date: place.order_date, paid_by: place.paid_by, shop_id: ZAL })
+    return o
+  }
+  const members = (id) => orderStore.getSnapshot().rows.filter((o) => o.group_id === id)
+  const zalName = () => 'Zalando'
+
+  async function twoCheckouts() {
+    const a = [zal(1, 'Rain Jacket', 49.95), zal(2, 'Wool Scarf', 19.9)]
+    const b = [zal(3, 'Sneakers', 64.5), zal(4, 'Socks', 12.5)]
+    sync()
+    await groupOrders({ id: 'gA', singles: a })
+    sync()
+    await saveGroupDetails(db.order_groups.get('gA'), members('gA'), { discount: { kind: 'amount', value: 5 }, place })
+    await groupOrders({ id: 'gB', singles: b })
+    const singles = [zal(5, 'Beanie', 15.99), zal(6, 'Gloves', 22.4)]
+    sync()
+    // The toasts of the two checkouts are closed (the same message isn't shown twice).
+    getToasts().forEach((t) => dismissToast(t.id))
+    return singles
+  }
+
+  it('"Group as one order": a new group of only the ticked orders; both checkouts stay exactly as they are', async () => {
+    const singles = await twoCheckouts()
+    const before = view().slice(0, 4)
+    const groupsBefore = [db.order_groups.get('gA'), db.order_groups.get('gB')].map((g) => ({ ...g }))
+    const { error } = await groupOrders({ id: 'gC', singles, shopName: zalName })
+    expect(error).toBeNull()
+    expect(rpcs.at(-1).args.payload.orders.map((o) => o.id)).toEqual(['o5', 'o6'])
+    expect(view()).toEqual([...before, ['Beanie', 15.99, 0, 'gC'], ['Gloves', 22.4, 0, 'gC']])
+    expect([db.order_groups.get('gA'), db.order_groups.get('gB')]).toEqual(groupsBefore)
+    expect(db.order_groups.get('gC')).toMatchObject({ ...place, discount_total: 0 })
+    expect(amounts()).toEqual([46.37, 18.48, 64.5, 12.5, 15.99, 22.4])
+    expect(lastToast().message).toBe('2 orders grouped as one order')
+    await runToastAction(lastToast().id)
+    expect(view()).toEqual([...before, ['Beanie', 15.99, 0, null], ['Gloves', 22.4, 0, null]])
+    expect(db.order_groups.has('gC')).toBe(false)
+  })
+
+  it('"Add to" checkout B: only checkout B and the ticked orders change; checkout A and its discount stay', async () => {
+    const singles = await twoCheckouts()
+    const checkoutA = view().slice(0, 2)
+    const { error } = await groupOrders({ singles, target: { groupId: 'gB', members: members('gB') }, shopName: zalName })
+    expect(error).toBeNull()
+    expect(rpcs.at(-1).args.payload).toMatchObject({ id: 'gB', discount_total: 0 })
+    expect(view()).toEqual([...checkoutA, ['Sneakers', 64.5, 0, 'gB'], ['Socks', 12.5, 0, 'gB'], ['Beanie', 15.99, 0, 'gB'], ['Gloves', 22.4, 0, 'gB']])
+    expect(db.order_groups.get('gA')).toMatchObject({ discount_kind: 'amount', discount_value: 5, discount_total: 5 })
+    expect(lastToast().message).toBe('2 orders added to the order Zalando · 22/10 (2 items)')
+  })
+
+  it('"Add to" checkout A: its −€5.00 is spread again over the four; checkout B stays', async () => {
+    const singles = await twoCheckouts()
+    const checkoutB = view().slice(2, 4)
+    await groupOrders({ singles, target: { groupId: 'gA', members: members('gA') }, shopName: zalName })
+    expect(view().slice(2, 4)).toEqual(checkoutB)
+    expect(view().filter((r) => r[3] === 'gA').map((r) => r[0])).toEqual(['Rain Jacket', 'Wool Scarf', 'Beanie', 'Gloves'])
+    expect(round2(view().filter((r) => r[3] === 'gA').reduce((s, r) => s + r[2], 0))).toBe(5)
+  })
+})
+
 describe('offline, and before 028', () => {
   it('offline: nothing is sent, the same message as merging', async () => {
     const a = seed(1, 'A', 30.79)

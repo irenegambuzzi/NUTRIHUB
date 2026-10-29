@@ -224,18 +224,85 @@ describe('"Group orders": what the ticked orders can do', () => {
     expect(groupingPlan([grouped[0], grouped[1]], all).problem).toBe('These orders are already one order.')
   })
 
-  it('two single orders: a new group; when a group of the same store, date and payer exists, only "Add to" it', () => {
+  it('two single orders: a new group; when a group of the same store, date and payer exists, "Group as one order" AND "Add to" it', () => {
     expect(groupingPlan([OCT17[3], OCT17[4]], OCT17.slice(3))).toMatchObject({ newGroup: true, targets: [] })
     const plan = groupingPlan([OCT17[3], OCT17[4]], all)
-    expect(plan.newGroup).toBe(false)
+    expect(plan.newGroup).toBe(true)
     expect(plan.targets.map((t) => [t.groupId, t.members.length])).toEqual([['g1', 3]])
     expect(plan.singles.map((o) => o.id)).toEqual(['o4', 'o5'])
+  })
+
+  it('one single order beside a group: only "Add to" it (a new group needs two)', () => {
+    const plan = groupingPlan([OCT17[6]], all)
+    expect(plan).toMatchObject({ newGroup: false, singles: [OCT17[6]] })
+    expect(plan.targets.map((t) => t.groupId)).toEqual(['g1'])
   })
 
   it('one single order with one of the group ticked: only "Add to" that group', () => {
     const plan = groupingPlan([grouped[0], OCT17[5]], all)
     expect(plan).toMatchObject({ newGroup: false, singles: [OCT17[5]] })
     expect(plan.targets[0].groupId).toBe('g1')
+  })
+})
+
+describe('two separate orders at the same store on the same day (two checkouts)', () => {
+  // Zalando, 22/10, paid by Irene: checkout A (2 items, −€5) and checkout
+  // B (3 items, no discount) are two groups; two more orders are single.
+  const zal = (i, item_name, price, extra = {}) => order(i, item_name, price, { shop_id: 'zal', order_date: '2026-10-22', paid_by: 'irene', created_at: `2026-10-22T08:0${i}:00Z`, ...extra })
+  const place = { shop_id: 'zal', order_date: '2026-10-22', paid_by: 'irene' }
+  const checkoutA = apply([zal(1, 'Rain Jacket', 49.95), zal(2, 'Wool Scarf', 19.9)], groupPayload({ id: 'gA', place, discount: { kind: 'amount', value: 5 }, members: [zal(1, 'Rain Jacket', 49.95), zal(2, 'Wool Scarf', 19.9)] }))
+  const checkoutB = apply([zal(3, 'Sneakers', 64.5), zal(4, 'Socks', 12.5), zal(5, 'Belt', 24)], groupPayload({ id: 'gB', place, members: [zal(3, 'Sneakers', 64.5), zal(4, 'Socks', 12.5), zal(5, 'Belt', 24)] }))
+  const hat = zal(6, 'Beanie', 15.99)
+  const gloves = zal(7, 'Gloves', 22.4)
+  const elsewhere = [zal(8, 'Coat', 120, { order_date: '2026-10-23' }), zal(9, 'Shirt', 30, { paid_by: 'akbar' }), order(10, 'Cable', 7.5, { order_date: '2026-10-22', paid_by: 'irene' })]
+  const all = [...checkoutA, ...checkoutB, hat, gloves, ...elsewhere]
+
+  it('two single orders: "Group as one order" and one "Add to" for EACH group of the same store, date and payer (oldest first)', () => {
+    const plan = groupingPlan([hat, gloves], all, shopName)
+    expect(plan.newGroup).toBe(true)
+    expect(plan.targets.map((t) => [t.groupId, t.members.map((o) => o.item_name)])).toEqual([
+      ['gA', ['Rain Jacket', 'Wool Scarf']],
+      ['gB', ['Sneakers', 'Socks', 'Belt']],
+    ])
+    expect(plan.targets.map((t) => groupLabel(t.members, shopName))).toEqual(['Zalando · 22/10 (2 items)', 'Zalando · 22/10 (3 items)'])
+    expect(plan.singles.map((o) => o.item_name)).toEqual(['Beanie', 'Gloves'])
+  })
+
+  it('one single order: an "Add to" for each group, no new group', () => {
+    const plan = groupingPlan([gloves], all, shopName)
+    expect(plan.newGroup).toBe(false)
+    expect(plan.targets.map((t) => t.groupId)).toEqual(['gA', 'gB'])
+  })
+
+  it('one order of checkout B ticked with a single one: only "Add to" checkout B', () => {
+    const plan = groupingPlan([checkoutB[1], hat], all, shopName)
+    expect(plan.newGroup).toBe(false)
+    expect(plan.targets.map((t) => t.groupId)).toEqual(['gB'])
+    expect(plan.singles).toEqual([hat])
+  })
+
+  it('a new group of the two leaves both checkouts exactly as they are', () => {
+    const payload = groupPayload({ id: 'gC', place, members: [hat, gloves] })
+    expect(payload.orders.map((o) => o.id)).toEqual(['o6', 'o7'])
+    expect(payload.leaving).toEqual([])
+    const after = apply(all, payload)
+    expect(after.filter((o) => o.group_id === 'gA').map((o) => [o.item_name, o.price, o.group_share])).toEqual(checkoutA.map((o) => [o.item_name, o.price, o.group_share]))
+    expect(after.filter((o) => o.group_id === 'gB').map((o) => o.item_name)).toEqual(['Sneakers', 'Socks', 'Belt'])
+    expect(after.filter((o) => o.group_id === 'gC').map((o) => o.item_name)).toEqual(['Beanie', 'Gloves'])
+  })
+
+  it('"Same order as" in the form: both checkouts and the single orders, oldest first', () => {
+    const c = joinCandidates(all, { shopId: 'zal', orderDate: '2026-10-22', paidBy: 'irene' })
+    expect(c.map((x) => [x.key, x.orders.length])).toEqual([['gA', 2], ['gB', 3], ['o6', 1], ['o7', 1]])
+    expect(candidateLabel(c[1], shopName)).toBe('Same order as: Sneakers, Socks, Belt (Zalando · 22/10)')
+  })
+
+  it('a group on another day, of another payer or store is not offered', () => {
+    const later = [zal(11, 'Boots', 89, { order_date: '2026-10-23' }), zal(12, 'Laces', 3.5, { order_date: '2026-10-23' })]
+    const otherDay = apply(later, groupPayload({ id: 'gD', place: { ...place, order_date: '2026-10-23' }, members: later }))
+    expect(otherDay.map((o) => [o.group_id, o.order_date])).toEqual([['gD', '2026-10-23'], ['gD', '2026-10-23']])
+    const plan = groupingPlan([hat, gloves], [...all, ...otherDay], shopName)
+    expect(plan.targets.map((t) => t.groupId)).toEqual(['gA', 'gB'])
   })
 })
 
