@@ -8,6 +8,8 @@ import { MemoryRouter } from 'react-router-dom'
 // SHOP Confirm purchase and More options, the SHOP durable section, and
 // "Arrived" of a durable order.
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
+// Order groups (supabase/028) not loaded here: the order form offers nothing.
+vi.mock('../hooks/useOrderGroups', async (original) => ({ ...(await original()), useOrderGroups: () => ({ ready: false, groups: [], orders: [], byId: new Map() }) }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
 
 const SHOPPING = '654a80a3-2e6f-4ada-b214-0486d91d869c'

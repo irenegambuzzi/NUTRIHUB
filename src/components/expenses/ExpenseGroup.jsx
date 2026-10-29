@@ -144,7 +144,30 @@ const quantityLabel = (line, item) => purchasedPackLabel(line, item) ?? (line &&
 //   itemOf(line) → the HOME item it went into (for its stock unit), if any
 //   onUndo(trip, items) → Reopen / Undo purchase / Split
 //   onSplitMerged(trip) → only the merged expenses out (SHOP/MONEY purchase)
-export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, subName, styleFor, lineOf = () => null, itemOf = () => null, onEdit, onDelete, onChangeStore = null, onUndo = null, onSplitMerged = null }) {
+// The expenses of an order group (plan 9I) use the same row, with no trip:
+// `icon` (instead of the cart), `note` (instead of the coupon, e.g.
+// "(order discount −€3.23)"), `noteOf(expense)` (each item's line instead
+// of its purchase line's history) and `extra` (its own button).
+export function PurchaseGroup({
+  group,
+  trip,
+  shop,
+  fullTotal = null,
+  mainOf,
+  subName,
+  styleFor,
+  lineOf = () => null,
+  itemOf = () => null,
+  onEdit,
+  onDelete,
+  onChangeStore = null,
+  onUndo = null,
+  onSplitMerged = null,
+  icon: Icon = ShoppingCart,
+  note = null,
+  noteOf = null,
+  extra = null,
+}) {
   const [open, setOpen] = useState(false)
   const { items, total } = group
   const date = trip?.trip_date ?? group.date
@@ -153,13 +176,13 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
   const undo = purchaseUndo(trip?.source)
   const hasMerged = items.some((e) => e.merged_at)
   const partial = fullTotal != null && Math.abs(fullTotal - total) > 0.004
-  const couponNote = purchaseCouponNote(trip)
+  const couponNote = note ?? purchaseCouponNote(trip)
 
   return (
-    <div data-purchase className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
+    <div {...(trip ? { 'data-purchase': '' } : { 'data-order-group': '' })} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full p-3 flex justify-between items-center gap-3 text-left">
         <div className="flex items-center gap-3 min-w-0">
-          <ShoppingCart size={14} className="shrink-0 text-[var(--color-primary)]" />
+          <Icon size={14} className="shrink-0 text-[var(--color-primary)]" />
           <div className="min-w-0">
             <p className="font-bold text-[var(--color-text)] truncate">
               {shop?.name ?? 'Purchase'} · {shortDate(date)}
@@ -199,7 +222,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
                 const sub = subName(e.category_id)
                 const line = lineOf(e)
                 const quantity = quantityLabel(line, line ? itemOf(line) : null)
-                const history = lineHistory(line)
+                const history = noteOf ? noteOf(e) : lineHistory(line)
                 return (
                   <div key={e.id} className="flex justify-between items-center gap-2 py-1 pl-2 border-l-2 border-[var(--color-border)]">
                     <div className="min-w-0">
@@ -246,6 +269,7 @@ export function PurchaseGroup({ group, trip, shop, fullTotal = null, mainOf, sub
             </div>
           ))}
           <div className="mt-2 flex flex-wrap gap-x-4">
+            {extra}
             {trip && onChangeStore && (
               <button type="button" onClick={() => onChangeStore(trip)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
                 <Store size={12} /> Change the store of the whole purchase

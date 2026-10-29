@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 vi.mock('../../lib/supabaseClient', () => ({ supabase: {} }))
+// Order groups (supabase/028) not loaded here: the order form offers nothing.
+vi.mock('../../hooks/useOrderGroups', async (original) => ({ ...(await original()), useOrderGroups: () => ({ ready: false, groups: [], orders: [], byId: new Map() }) }))
 const flow = vi.hoisted(() => ({ ready: true }))
 vi.mock('../../hooks/useFlow', () => ({ useFlow: () => flow }))
 vi.mock('../../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [] }) }))

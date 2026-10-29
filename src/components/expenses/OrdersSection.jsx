@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, History, Plus, X } from 'lucide-react'
+import { AlertTriangle, ChevronDown, History, Layers, Plus, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { OrderForm } from './OrderForm'
@@ -8,14 +8,18 @@ import { OrderCard } from './OrderCard'
 import { ArrivedDialog } from './ArrivedDialog'
 import { PersonSelector } from './PersonSelector'
 import { LinkedArrivedDialog } from './LinkedArrivedDialog'
+import { OrderGroupSheet } from './OrderGroupSheet'
 import { WhereToRecord } from '../ui/WhereToRecord'
 import { useOrders, createOrder, editOrder, linkedItemOf, markArrived, markDurableArrived } from '../../hooks/useOrders'
 import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/orderActions'
+import { groupOrders, useOrderGroups } from '../../hooks/useOrderGroups'
 import { useFlow } from '../../hooks/useFlow'
 import { groceryStore, pantryStore } from '../../lib/stores'
 import { orderLock } from '../../lib/durable'
 import { localDateString } from '../../lib/expensePeriods'
 import { linkedOrderUnits, splitOrders } from '../../lib/orders'
+import { groupLabel, groupMembers, groupingPlan, respreadNote } from '../../lib/orderGroups'
+import { personLabel } from '../../lib/personFilter'
 import { cn } from '../../lib/cn'
 
 export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/019_stores_and_orders.sql). Until then everything else works as before.'
@@ -25,6 +29,9 @@ export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/0
 // expected date, and a "History (N)" list of the arrived, cancelled
 // and returned ones. A new order makes its expense at once; Arrived never makes one.
 // `person` filters by who paid. Before supabase/019 it says so instead.
+// With supabase/028 (plan 9I) orders that were one order at the store can
+// be an order group: "Group orders" ticks them, each card of a group has a
+// tag that opens the "Order group" sheet (its discount, store, date, payer).
 export function OrdersSection({ person, onPerson, shopById, categories, mainCategories, subsOf, namesOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor }) {
   const { orders, ready, missing } = useOrders()
   const location = useLocation()
@@ -40,6 +47,12 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
   const [openIds, setOpenIds] = useState(() => new Set())
   const [highlight, setHighlight] = useState(null)
   const today = localDateString()
+  const groups = useOrderGroups()
+  const groupsOn = ready && groups.ready
+  const [grouping, setGrouping] = useState(false)
+  const [picked, setPicked] = useState(() => new Set())
+  const [sheet, setSheet] = useState(null) // an order group's id
+  const shopName = (id) => shopById.get(id)?.name ?? null
 
   const shown = useMemo(() => orders.filter((o) => person === 'all' || o.paid_by === person), [orders, person])
   const { onTheWay, history } = useMemo(() => splitOrders(shown), [shown])
@@ -103,6 +116,18 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
 
   const backOnTheWay = (order) => askBackOnTheWay(order, { unit: linkedItemOf(order, pantryRows)?.unit })
 
+  const pick = (order) =>
+    setPicked((ids) => {
+      const next = new Set(ids)
+      if (!next.delete(order.id)) next.add(order.id)
+      return next
+    })
+  const startGrouping = () => {
+    setGrouping(true)
+    setPicked(new Set())
+    setHistoryOpen(true)
+  }
+
   const card = (order) => (
     <OrderCard
       key={order.id}
@@ -119,6 +144,10 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       onEdit={setEditing}
       onDelete={askRemoveOrder}
       linkedItem={linkedItemOf(order, pantryRows)}
+      groupTag={order.group_id ? { label: groupLabel(groupMembers(order.group_id, orders), shopName), onOpen: () => setSheet(order.group_id) } : null}
+      selectable={grouping}
+      selected={picked.has(order.id)}
+      onSelect={pick}
     />
   )
 
@@ -132,6 +161,11 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
           <span className="text-xs font-mono font-bold text-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm whitespace-nowrap">
             {ready ? `${waiting.length} on the way` : '—'}
           </span>
+          {!adding && !grouping && groupsOn && (
+            <Button variant="ghost" onClick={startGrouping} className="px-3 py-1.5 text-xs whitespace-nowrap">
+              <Layers size={14} /> Group orders
+            </Button>
+          )}
           {!adding && ready && (
             <Button variant="ghost" onClick={() => setAdding(true)} className="px-3 py-1.5 text-xs whitespace-nowrap">
               <Plus size={14} /> Add order
@@ -146,6 +180,21 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
       {ready && (
         <>
           <PersonSelector value={person} onChange={onPerson} label="Paid by" />
+
+          {grouping && groupsOn && (
+            <GroupOrdersBar
+              selected={orders.filter((o) => picked.has(o.id))}
+              orders={orders}
+              person={person}
+              shopName={shopName}
+              onDone={() => setGrouping(false)}
+              onGrouped={(groupId) => {
+                setGrouping(false)
+                setPicked(new Set())
+                if (groupId) setSheet(groupId)
+              }}
+            />
+          )}
 
           {adding && (
             <Card className="space-y-3">
@@ -217,6 +266,11 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
             <OrderForm
               {...formProps}
               initial={editing}
+              group={
+                editing.group_id
+                  ? { count: groupMembers(editing.group_id, orders).length, discounted: groupMembers(editing.group_id, orders).some((o) => Number(o.group_share) > 0) }
+                  : null
+              }
               units={editing.pantry_item_id && linkedItemOf(editing, pantryRows) ? linkedOrderUnits(editing, linkedItemOf(editing, pantryRows)) : null}
               packItem={orderLock(editing, { expenseCategories: categories, groceryItems }) ? null : linkedItemOf(editing, pantryRows)}
               submitLabel="Save"
@@ -231,8 +285,69 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
         </div>
       )}
 
+      {sheet && <OrderGroupSheet groupId={sheet} shopById={shopById} onClose={() => setSheet(null)} />}
       {arrived && <ArrivedDialog order={arrived} onClose={() => setArrived(null)} />}
       {arrivedLinked && <LinkedArrivedDialog order={arrivedLinked.order} item={arrivedLinked.item} onClose={() => setArrivedLinked(null)} />}
     </section>
+  )
+}
+
+// "Group orders": how many orders are ticked and what can be done with
+// them — "Group as one order" (a new group; then its sheet opens, to type
+// the order discount), or "Add to {group}" instead when they match an
+// existing group — or why not. Every status can be grouped. When "Paid by" isn't on
+// Everyone, it says that some orders may be hidden.
+function GroupOrdersBar({ selected, orders, person, shopName, onDone, onGrouped }) {
+  const [id, setId] = useState(() => crypto.randomUUID())
+  const [busy, setBusy] = useState(false)
+  const plan = groupingPlan(selected, orders, shopName)
+  const run = async (target) => {
+    if (busy) return
+    setBusy(true)
+    const { error } = await groupOrders({ id, singles: plan.singles, target, shopName })
+    setBusy(false)
+    if (error) return
+    setId(crypto.randomUUID())
+    onGrouped(target ? null : id)
+  }
+  return (
+    <Card className="space-y-2" data-unsaved={selected.length ? '' : undefined}>
+      <div className="flex justify-between items-center gap-2">
+        <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Group orders</p>
+        <button type="button" onClick={onDone} aria-label="Stop grouping" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
+          <X size={16} />
+        </button>
+      </div>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        Tick orders of the same store, order date and payer that were one order at the store (on the way or in History). They stay separate orders; the order can then have one discount for all of them.
+      </p>
+      {person !== 'all' && (
+        <p className="text-[11px] text-amber-300">"Paid by" shows only {personLabel(person)}: some orders may be hidden. Choose Everyone to see them all.</p>
+      )}
+      <p className="text-xs text-[var(--color-text-soft)]">{selected.length} ticked</p>
+      {plan.problem ? (
+        selected.length > 0 && (
+          <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {plan.problem}
+          </p>
+        )
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {plan.newGroup && (
+            <Button type="button" onClick={() => run(null)} disabled={busy} className="px-3 py-1.5 text-xs">
+              <Layers size={14} /> Group as one order
+            </Button>
+          )}
+          {plan.targets.map((target) => (
+            <div key={target.groupId} className="space-y-1">
+              <Button type="button" onClick={() => run(target)} disabled={busy} className="px-3 py-1.5 text-xs">
+                <Plus size={14} /> Add to {groupLabel(target.members, shopName)}
+              </Button>
+              {target.members.some((o) => Number(o.group_share) > 0) && <p className="text-[11px] text-[var(--color-text-muted)]">{respreadNote(target.members.length + plan.singles.length)}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   )
 }

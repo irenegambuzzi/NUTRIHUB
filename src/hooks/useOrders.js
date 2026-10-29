@@ -3,9 +3,11 @@ import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { showToast } from '../lib/feedback'
 import { normalizeItem, syncShoppingForItem } from '../lib/inventory'
-import { allExpenseStores, groceryStore, orderStore, pantryStore, shopStore } from '../lib/stores'
-import { expensePatchForOrder, expenseRowForOrder, missingPackColumn, normalizeUrl, packColumnsReady, withoutPackColumns } from '../lib/orders'
+import { allExpenseStores, groceryStore, orderGroupStore, orderStore, pantryStore, shopStore } from '../lib/stores'
+import { expensePatchForOrder, expenseRowForOrder, missingPackColumn, normalizeUrl, orderBase, packColumnsReady, withoutPackColumns } from '../lib/orders'
+import { groupDiscount, groupMembers, groupPayload, placeOf, undoGroupPayload } from '../lib/orderGroups'
 import { shopsAvailable } from '../lib/shops'
+import { groupOf, saveOrderGroup, sayKept } from './useOrderGroups'
 
 const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
 const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => s.upsertLocal(rows))
@@ -64,13 +66,17 @@ const friendly = (error) => (error?.code === '23505' && String(error.message).in
 const originalOf = (order, row) => Object.fromEntries(Object.keys(row).map((k) => [k, order[k] ?? null]))
 
 // A new order and the expense it creates (the money is spent when
-// ordering), saved together or not at all. `ids` ({ orderId, expenseId })
-// are made once per form, so pressing Save again after a dropped
-// connection can't make a second expense or order. `link` ({ pantryItemId,
-// groceryItemId }), for "Order online" from the SHOP list: the order is
-// linked to the HOME item and the list entry, and the entry leaves the
-// cart. The database allows one order on the way per entry.
-export function createOrder(values, { orderId, expenseId }, link = null) {
+// ordering), saved together or not at all. `ids` ({ orderId, expenseId,
+// groupId }) are made once per form, so pressing Save again after a
+// dropped connection can't make a second expense, order or group. `link`
+// ({ pantryItemId, groceryItemId }), for "Order online" from the SHOP
+// list: the order is linked to the HOME item and the list entry, and the
+// entry leaves the cart. The database allows one order on the way per
+// entry. `values.joinWith` (plan 9I, K2): { groupId } or { orderId } — the
+// new order is the same order at the store as that group, or as that
+// single order (which makes a new group of the two); a group's discount
+// is then spread again over all its orders.
+export function createOrder(values, { orderId, expenseId, groupId = null }, link = null) {
   const row = {
     id: orderId,
     ...orderRowFrom(values),
@@ -79,10 +85,13 @@ export function createOrder(values, { orderId, expenseId }, link = null) {
     ...(link ? { pantry_item_id: link.pantryItemId ?? null, grocery_item_id: link.groceryItemId ?? null } : {}),
   }
   const expense = { id: expenseId, ...expenseRowForOrder(row, shopsAvailable(shopStore.getSnapshot())) }
+  const join = values.joinWith ?? null
   return attempt(
     () =>
       inSteps(async (onFail) => {
         try {
+          // Saved already, joined and all, and only the answer was lost.
+          if (join && must(await supabase.from('orders').select('id, group_id').eq('id', orderId)).some((o) => o.group_id)) return Promise.all([refreshOrdersAndExpenses(), orderGroupStore.refresh()])
           if (link?.groceryItemId) {
             const open = must(await supabase.from('orders').select('id').eq('grocery_item_id', link.groceryItemId).eq('status', 'on_the_way').neq('id', orderId))
             if (open.length) throw Object.assign(new Error(ALREADY_ORDERED), { rolledBack: true })
@@ -90,10 +99,14 @@ export function createOrder(values, { orderId, expenseId }, link = null) {
           const expenseRows = must(await supabase.from('expenses').upsert([expense], { onConflict: 'id', ignoreDuplicates: true }).select())
           onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
           const { rows: orderRows } = await writeOrderRow(row, (r) => supabase.from('orders').upsert([r], { onConflict: 'id' }).select())
+          if (join) {
+            onFail(async () => must(await supabase.from('orders').delete().eq('id', orderId)))
+            await joinGroup(orderRows[0], join, groupId)
+          }
           // A retry finds the expense already there: nothing new to show.
-          if (expenseRows.length) showExpenses(expenseRows)
+          if (expenseRows.length && !join) showExpenses(expenseRows)
           else await Promise.all(allExpenseStores().map((s) => s.refresh()))
-          orderStore.upsertLocal(orderRows)
+          if (!join) orderStore.upsertLocal(orderRows)
           if (link?.groceryItemId) {
             must(await supabase.from('grocery_items').update({ in_cart: false }).eq('id', link.groceryItemId))
             groceryStore.patchLocal([link.groceryItemId], { in_cart: false })
@@ -106,10 +119,27 @@ export function createOrder(values, { orderId, expenseId }, link = null) {
   )
 }
 
+// A new order (just saved, `order`) joins a group, or a single order as a
+// new group (`newGroupId`), with the group's discount spread again over
+// every order of it (save_order_group, supabase/028). Throws when refused.
+async function joinGroup(order, join, newGroupId) {
+  const orders = orderStore.getSnapshot().rows
+  if (join.groupId) {
+    const group = orderGroupStore.getSnapshot().rows.find((g) => g.id === join.groupId)
+    if (!group) throw Object.assign(new Error('That order group is still loading — try again in a moment.'), { rolledBack: true })
+    const members = [...groupMembers(group.id, orders).filter((o) => o.id !== order.id), order]
+    return sayKept(await saveOrderGroup(groupPayload({ id: group.id, place: placeOf(group), discount: groupDiscount(group), members })))
+  }
+  const other = orders.find((o) => o.id === join.orderId)
+  if (!other) throw Object.assign(new Error('That order was deleted meanwhile — open Orders again.'), { rolledBack: true })
+  return saveOrderGroup(groupPayload({ id: newGroupId ?? crypto.randomUUID(), place: placeOf(other), members: [other, order] }))
+}
+
 // Saves an edited order. The linked expense follows what changed in its
 // price, date, category, payer or store (and the name, when the expense
 // still carries the old one); nothing else of it is touched.
 export function editOrder(order, values) {
+  if (order.group_id) return editGroupMember(order, values)
   const row = orderRowFrom(values)
   const patch = order.expense_id ? expensePatchForOrder(order, { ...order, ...row }, shopsAvailable(shopStore.getSnapshot())) : {}
   return attempt(
@@ -127,6 +157,40 @@ export function editOrder(order, values) {
         orderStore.upsertLocal(orderRows)
       }),
     { retry: false, onFail: refreshOrdersAndExpenses }
+  )
+}
+
+// An order in an order group (plan 9I) is edited like any other, except
+// that its store, order date and payer belong to the group (K7: changed
+// there, for all its orders), and its price goes through the group: when
+// what it costs before the group discount changes (its price or its own
+// discount, K3), the group's discount is spread again over all its orders,
+// in the same step as their prices and expenses (save_order_group).
+function editGroupMember(order, values) {
+  const { shop_id: _shop, order_date: _date, paid_by: _payer, price: _price, ...row } = orderRowFrom(values)
+  const base = Math.round(Number(values.price) * 100) / 100
+  const patch = order.expense_id ? expensePatchForOrder(order, { ...order, ...row }, shopsAvailable(shopStore.getSnapshot())) : {}
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        const { rows: orderRows, sent } = await writeOrderRow(row, (r) => supabase.from('orders').update(r).eq('id', order.id).select())
+        onFail(async () => must(await supabase.from('orders').update(originalOf(order, sent)).eq('id', order.id)))
+        orderStore.upsertLocal(orderRows)
+        if (base !== orderBase(order)) {
+          const { group, members } = groupOf(order)
+          if (!group) throw Object.assign(new Error('That order group is still loading — try again in a moment.'), { rolledBack: true })
+          const answer = sayKept(await saveOrderGroup(groupPayload({ id: group.id, place: placeOf(group), discount: groupDiscount(group), members, bases: { [order.id]: base } })))
+          onFail(() => saveOrderGroup(undoGroupPayload({ id: group.id, groupBefore: group, before: members, now: answer.orders })))
+        }
+        if (order.expense_id) {
+          if (row.item_name !== order.item_name) {
+            const current = must(await supabase.from('expenses').select('description').eq('id', order.expense_id).maybeSingle())
+            if (current?.description === order.item_name) patch.description = row.item_name
+          }
+          if (Object.keys(patch).length) showExpenses(must(await supabase.from('expenses').update(patch).eq('id', order.expense_id).select()))
+        }
+      }),
+    { retry: false, onFail: () => Promise.all([refreshOrdersAndExpenses(), orderGroupStore.refresh()]) }
   )
 }
 
@@ -339,6 +403,7 @@ export function putBackOnTheWay(order, { createExpense, expenseId = crypto.rando
 // Deletes right away; Undo puts the order (and its expense, if that was
 // deleted too) back exactly.
 export function removeOrder(order, { alsoExpense }) {
+  if (order.group_id) return removeGroupMember(order, { alsoExpense })
   return deleteWithUndo({
     message: alsoExpense && order.expense_id ? 'Order and its expense deleted' : 'Order deleted',
     remove: async () => {
@@ -357,6 +422,43 @@ export function removeOrder(order, { alsoExpense }) {
       await refreshOrdersAndExpenses()
     },
     onFail: refreshOrdersAndExpenses,
+  })
+}
+
+// Deleting an order of an order group (plan 9I, K5): first it leaves the
+// group — its share back to 0, its price (and its expense, if it still has
+// the old amount) back to before the discount, the discount spread again
+// over the others; the last one out removes the group — then it is
+// deleted (with its expense, if asked). Undo puts back the order, its
+// expense, and every share of the group exactly.
+function removeGroupMember(order, { alsoExpense }) {
+  const { group, members } = groupOf(order)
+  return deleteWithUndo({
+    message: alsoExpense && order.expense_id ? 'Order and its expense deleted' : 'Order deleted',
+    remove: () =>
+      inSteps(async (onFail) => {
+        if (!group) throw Object.assign(new Error('That order group is still loading — try again in a moment.'), { rolledBack: true })
+        const rest = members.filter((o) => o.id !== order.id)
+        const answer = sayKept(await saveOrderGroup(groupPayload({ id: group.id, place: placeOf(group), discount: groupDiscount(group), members: rest, leaving: [order] })))
+        onFail(() => saveOrderGroup(undoGroupPayload({ id: group.id, groupBefore: group, before: members, now: answer.orders })))
+        const out = answer.orders.find((o) => o.id === order.id) ?? order
+        const [row] = must(await supabase.from('orders').delete().eq('id', order.id).select())
+        orderStore.removeLocal([order.id])
+        let expense = null
+        if (alsoExpense && out.expense_id) {
+          expense = must(await supabase.from('expenses').delete().eq('id', out.expense_id).select())[0] ?? null
+          allExpenseStores().forEach((s) => s.removeLocal([out.expense_id]))
+        }
+        return { row, expense, now: answer.orders }
+      }),
+    restore: async ({ row, expense, now }) => {
+      if (expense) must(await supabase.from('expenses').upsert(expense))
+      if (row) must(await supabase.from('orders').upsert(row))
+      const current = now.map((o) => (o.id === order.id && row ? row : o))
+      await saveOrderGroup(undoGroupPayload({ id: group.id, groupBefore: group, before: members, now: current }))
+      await refreshOrdersAndExpenses()
+    },
+    onFail: () => Promise.all([refreshOrdersAndExpenses(), orderGroupStore.refresh()]),
   })
 }
 

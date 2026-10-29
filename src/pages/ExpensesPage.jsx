@@ -11,6 +11,7 @@ import { CategoryTotals } from '../components/expenses/CategoryTotals'
 import { IncomeSection } from '../components/expenses/IncomeSection'
 import { MoneySummary } from '../components/expenses/MoneySummary'
 import { OrdersSection } from '../components/expenses/OrdersSection'
+import { OrderGroupSheet } from '../components/expenses/OrderGroupSheet'
 import { PeriodPicker } from '../components/expenses/PeriodPicker'
 import { useExpenses } from '../hooks/useExpenses'
 import { useIncome } from '../hooks/useIncome'
@@ -22,6 +23,7 @@ import { askUndoPurchase, reopenTrip } from '../hooks/usePurchase'
 import { splitPurchase } from '../hooks/useMerge'
 import { askDialog } from '../lib/feedback'
 import { expenseDiscountNote, ordersByExpense } from '../lib/orders'
+import { groupDiscountNote, groupMembers } from '../lib/orderGroups'
 import { PersonSelector } from '../components/expenses/PersonSelector'
 import { Button } from '../components/ui/Button'
 import { usePersonFilter } from '../lib/personFilter'
@@ -29,7 +31,7 @@ import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
-import { ListChecks, Plus, Store, X } from 'lucide-react'
+import { Layers, ListChecks, Plus, Store, X } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
 
@@ -69,6 +71,16 @@ export function ExpensesPage() {
   const orderByExpense = useMemo(() => ordersByExpense(orders), [orders])
   const discountNote = (expense) => expenseDiscountNote(expense, (id) => orderByExpense.get(id))
   const orderExpenseIds = useMemo(() => new Set(orders.map((o) => o.expense_id).filter(Boolean)), [orders])
+  // The expenses of an order group (plan 9I, supabase/028) are one row,
+  // like a purchase; its "Order group" sheet opens from there too.
+  const orderGroupOf = (expense) => orderByExpense.get(expense.id)?.group_id ?? null
+  const orderGroupExpenses = (groupId) => expenses.filter((e) => orderGroupOf(e) === groupId)
+  const [groupSheet, setGroupSheet] = useState(null)
+  const openGroupButton = (groupId) => (
+    <button type="button" onClick={() => setGroupSheet(groupId)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
+      <Layers size={12} /> Open the order group
+    </button>
+  )
   const [tripStoreFor, setTripStoreFor] = useState(null) // a trip
   const [bulkStore, setBulkStore] = useState(false)
   const [selecting, setSelecting] = useState(false)
@@ -176,7 +188,28 @@ export function ExpensesPage() {
   // shows only that category's part "of total €80".
   const subNameOf = (main) => (categoryId) => (categoryId && categoryId !== main?.id ? categories.find((c) => c.id === categoryId)?.name : null)
   const expenseGroups = (entries) =>
-    groupPurchases(entries, { mainOf, tripsOn: flow.ready }).map((g) => {
+    groupPurchases(entries, { mainOf, tripsOn: flow.ready, orderGroupOf }).map((g) => {
+      if (g.orderGroupId) {
+        const members = groupMembers(g.orderGroupId, orders)
+        return (
+          <PurchaseGroup
+            key={g.key}
+            group={g}
+            trip={null}
+            shop={shopOf(members[0]?.shop_id ?? g.items[0].shop_id)}
+            fullTotal={purchasePart(g.items, orderGroupExpenses(g.orderGroupId)).fullTotal}
+            mainOf={mainOf}
+            subName={(categoryId) => (categoryId && mainOf(categoryId)?.id !== categoryId ? categories.find((c) => c.id === categoryId)?.name : null)}
+            styleFor={styleFor}
+            onEdit={setEditingExpense}
+            onDelete={removeExpense}
+            icon={Layers}
+            note={groupDiscountNote(members) || null}
+            noteOf={discountNote}
+            extra={openGroupButton(g.orderGroupId)}
+          />
+        )
+      }
       if (!g.tripId) {
         return (
           <ExpenseGroup
@@ -329,9 +362,21 @@ export function ExpensesPage() {
             renderEntries={
               flow.ready
                 ? (items) =>
-                    bundleTrips(items).map((part) =>
+                    bundleTrips(items, orderGroupOf).map((part) =>
                       part.entry ? (
                         renderExpense(part.entry)
+                      ) : part.orderGroupId ? (
+                        <TripRow
+                          key={part.key}
+                          part={part}
+                          trip={null}
+                          shop={shopOf(groupMembers(part.orderGroupId, orders)[0]?.shop_id ?? part.items[0].shop_id)}
+                          fullTotal={purchasePart(part.items, orderGroupExpenses(part.orderGroupId)).fullTotal}
+                          renderEntry={renderExpense}
+                          icon={Layers}
+                          note={groupDiscountNote(groupMembers(part.orderGroupId, orders)) || null}
+                          extra={openGroupButton(part.orderGroupId)}
+                        />
                       ) : (
                         <TripRow
                           key={part.key}
@@ -358,6 +403,7 @@ export function ExpensesPage() {
             onClose={() => setTripStoreFor(null)}
           />
         )}
+        {groupSheet && <OrderGroupSheet groupId={groupSheet} shopById={shopById} onClose={() => setGroupSheet(null)} />}
         {bulkStore && <BulkStoreDialog expenses={filteredExpenses} shopOf={shopOf} names={namesOf} onClose={() => setBulkStore(false)} />}
 
         {editingExpense && (

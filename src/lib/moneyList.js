@@ -121,19 +121,24 @@ export function splitCategory(id, mainCategories, subsOf) {
 // A list of expenses with the ones from the same shopping trip together:
 // [{ key, entry }] for an expense on its own, [{ key, tripId, items,
 // total }] for two or more expenses of one trip, placed where the trip's
-// first expense was (so a newest-first list stays newest first).
-export function bundleTrips(entries) {
+// first expense was (so a newest-first list stays newest first). The
+// expenses of one order group (plan 9I; `orderGroupOf(expense)` → its
+// group id, or null) are put together the same way: [{ key, orderGroupId,
+// items, total }].
+export function bundleTrips(entries, orderGroupOf = () => null) {
   const parts = []
   const byTrip = new Map()
   for (const e of entries) {
-    if (!e.trip_id) {
+    const orderGroupId = e.trip_id ? null : orderGroupOf(e)
+    if (!e.trip_id && !orderGroupId) {
       parts.push({ key: e.id, entry: e })
       continue
     }
-    let part = byTrip.get(e.trip_id)
+    const key = e.trip_id ? `trip:${e.trip_id}` : `order:${orderGroupId}`
+    let part = byTrip.get(key)
     if (!part) {
-      part = { key: `trip:${e.trip_id}`, tripId: e.trip_id, items: [], total: 0 }
-      byTrip.set(e.trip_id, part)
+      part = e.trip_id ? { key, tripId: e.trip_id, items: [], total: 0 } : { key, orderGroupId, items: [], total: 0 }
+      byTrip.set(key, part)
       parts.push(part)
     }
     part.items.push(e)
@@ -153,18 +158,21 @@ export function tripShopId(items, trip) {
 const round2 = (n) => Math.round(n * 100) / 100
 
 // The plain expense list: one group per purchase (SHOP trip, MONEY
-// purchase or merged expenses alike, when `tripsOn`), and the other
-// expenses one group per day and main category. The group with the most
-// recent expense comes first; inside a group the newest first.
-//   → [{ key, date, main, items, total, tripId }]  (main: null for a purchase)
-export function groupPurchases(entries, { mainOf, tripsOn = true }) {
+// purchase or merged expenses alike, when `tripsOn`), one per order group
+// (plan 9I: the expenses of its orders; `orderGroupOf(expense)` → its
+// group id, or null), and the other expenses one group per day and main
+// category. The group with the most recent expense comes first; inside a
+// group the newest first.
+//   → [{ key, date, main, items, total, tripId, orderGroupId }]  (main: null for a purchase or an order group)
+export function groupPurchases(entries, { mainOf, tripsOn = true, orderGroupOf = () => null }) {
   const dateOf = (e) => e.expense_date
   const map = new Map()
   for (const e of [...entries].sort(newestFirst(dateOf))) {
     const tripId = tripsOn && e.trip_id ? e.trip_id : null
-    const main = tripId ? null : mainOf(e.category_id)
-    const key = tripId ? `trip|${tripId}` : `${e.expense_date}|${main?.id ?? 'none'}`
-    if (!map.has(key)) map.set(key, { key, date: e.expense_date, main, items: [], total: 0, tripId })
+    const orderGroupId = tripId || e.trip_id ? null : orderGroupOf(e)
+    const main = tripId || orderGroupId ? null : mainOf(e.category_id)
+    const key = tripId ? `trip|${tripId}` : orderGroupId ? `order|${orderGroupId}` : `${e.expense_date}|${main?.id ?? 'none'}`
+    if (!map.has(key)) map.set(key, { key, date: e.expense_date, main, items: [], total: 0, tripId, orderGroupId })
     const g = map.get(key)
     g.items.push(e)
     g.total = round2(g.total + amountOf(e))

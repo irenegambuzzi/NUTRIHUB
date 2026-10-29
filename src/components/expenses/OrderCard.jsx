@@ -1,7 +1,7 @@
-import { Check, ChevronDown, ExternalLink, Link2, Pencil, Trash2, Undo2, X } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, Layers, Link2, Pencil, Trash2, Undo2, X } from 'lucide-react'
 import { ShopTag } from '../ui/ShopIcon'
 import { PAID_BY_OPTIONS } from '../../data/constants'
-import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderDiscount, orderState } from '../../lib/orders'
+import { ORDER_STATUS, agoLabel, orderAmountLabel, expectedLabel, expenseOutcomeLabel, normalizeUrl, orderNormalPrice, orderPriceNote, orderState } from '../../lib/orders'
 import { orderPackLabel } from '../../lib/packSize'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
@@ -26,13 +26,18 @@ const TONE = {
 // and it can go back on the way.
 // `linkedItem`: the HOME item (or group) it was ordered for from the SHOP
 // list, shown as a tag; Arrived then adds its stock.
-export function OrderCard({ order, shop, names, today, open, highlighted, onToggle, onArrived, onCancelled, onBackOnTheWay, onEdit, onDelete, linkedItem = null }) {
+// `groupTag` ({ label, onOpen }): the order is part of an order group
+// (plan 9I) — a small tag "Order: Amazon.it · 17/10 (7 items)" that opens
+// the "Order group" sheet. `selectable`: "Group orders" is on — a tick box
+// (`selected`, `onSelect`).
+export function OrderCard({ order, shop, names, today, open, highlighted, onToggle, onArrived, onCancelled, onBackOnTheWay, onEdit, onDelete, linkedItem = null, groupTag = null, selectable = false, selected = false, onSelect = () => {} }) {
   const onTheWay = order.status === 'on_the_way'
   const state = onTheWay ? orderState(order, today) : null
   const overdue = state === 'overdue'
   const { main, sub } = names(order.category_id)
   const link = normalizeUrl(order.order_url)
-  const discount = orderDiscount(order)
+  const note = orderPriceNote(order)
+  const normal = orderNormalPrice(order)
 
   return (
     <div
@@ -44,7 +49,13 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
         !onTheWay && 'opacity-90'
       )}
     >
-      <button type="button" onClick={onToggle} aria-expanded={open} className="w-full p-3 flex justify-between items-start gap-3 text-left">
+      <div className="flex items-start">
+      {selectable && (
+        <label className="pl-3 pt-3 min-h-9 flex items-start cursor-pointer">
+          <input type="checkbox" checked={selected} onChange={() => onSelect(order)} aria-label={`Select ${order.item_name}`} className="w-4 h-4 mt-0.5 accent-[var(--color-primary)]" />
+        </label>
+      )}
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex-1 min-w-0 p-3 flex justify-between items-start gap-3 text-left">
         <div className="min-w-0">
           <p className="font-bold text-[var(--color-text)] break-words">{order.item_name}</p>
           <span className="text-[10px] text-[var(--color-text-muted)] block">
@@ -74,16 +85,30 @@ export function OrderCard({ order, shop, names, today, open, highlighted, onTogg
               {expenseOutcomeLabel(order) && <span className="font-normal text-[var(--color-text-muted)]"> · {expenseOutcomeLabel(order)}</span>}
             </span>
           )}
-          {discount && <span className="text-[11px] font-bold block mt-0.5 text-emerald-300 break-words">{discount.label}</span>}
+          {note && <span className="text-[11px] font-bold block mt-0.5 text-emerald-300 break-words">{note}</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-right">
             <span className="font-mono font-bold text-[var(--color-accent)] block">{orderAmountLabel(order)}</span>
-            {discount && <span className="font-mono text-[10px] text-[var(--color-text-muted)] line-through block">€{discount.list.toFixed(2)}</span>}
+            {normal != null && <span className="font-mono text-[10px] text-[var(--color-text-muted)] line-through block">€{normal.toFixed(2)}</span>}
           </span>
           <ChevronDown size={14} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
         </div>
       </button>
+      </div>
+
+      {groupTag && (
+        <div className="px-3 -mt-1.5 pb-1">
+          <button
+            type="button"
+            onClick={groupTag.onOpen}
+            className="min-h-8 max-w-full px-2.5 rounded-full border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-[10px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"
+          >
+            <Layers size={11} className="shrink-0 text-[var(--color-primary)]" />
+            <span className="truncate">Order: {groupTag.label}</span>
+          </button>
+        </div>
+      )}
 
       {open && (
         <dl className="px-3 pb-2 space-y-1 text-[11px] border-t border-[var(--color-border)] pt-2">

@@ -237,6 +237,17 @@ export const orderStore = createTableStore({
   compare: newestFirst('order_date'),
 })
 
+// Order groups (supabase/028): online orders that were one order at the
+// store, with one discount for the whole order. Until 028 has been run the
+// table is missing and nothing of it shows. Not kept on the phone: the
+// orders (which are) carry what the cards show.
+export const orderGroupStore = createTableStore({
+  name: 'order_groups',
+  table: 'order_groups',
+  optional: true,
+  compare: (a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) || String(a.id).localeCompare(String(b.id)),
+})
+
 // Item category → budget category chosen by hand (supabase/021). Until it
 // has been run the table is missing: purchases are booked as before and
 // the new features say they need the update.

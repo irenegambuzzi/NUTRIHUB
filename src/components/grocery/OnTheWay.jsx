@@ -1,7 +1,7 @@
 import { Check, Truck, X } from 'lucide-react'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { ShopTag } from '../ui/ShopIcon'
-import { expectedLabel, orderDiscount } from '../../lib/orders'
+import { expectedLabel, orderNormalPrice, orderPriceNote } from '../../lib/orders'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { orderPackLabel } from '../../lib/packSize'
 import { money } from '../../lib/pricing'
@@ -28,7 +28,8 @@ export function OnTheWay({ entries, shopById, today, onArrived, onCancel }) {
       {entries.map(({ entry, order, pantry }) => {
         const shop = order.shop_id ? shopById.get(order.shop_id) : null
         const overdue = expectedLabel(order, today).startsWith('overdue')
-        const discount = orderDiscount(order)
+        const note = orderPriceNote(order)
+        const normal = orderNormalPrice(order)
         return (
           <div key={entry.id} className={cn('rounded-2xl border p-3 text-xs space-y-2', overdue ? 'border-red-400/60 bg-red-500/10' : 'border-[var(--color-border)] bg-[var(--color-surface)]')}>
             <div className="flex items-start gap-2.5">
@@ -46,11 +47,11 @@ export function OnTheWay({ entries, shopById, today, onArrived, onCancel }) {
                   )}
                 </p>
                 <p className={cn('text-[11px] font-bold', overdue ? 'text-red-400' : 'text-amber-300')}>{expectedLabel(order, today)}</p>
-                {discount && <p className="text-[11px] font-bold text-emerald-300 break-words">{discount.label}</p>}
+                {note && <p className="text-[11px] font-bold text-emerald-300 break-words">{note}</p>}
               </div>
               <span className="text-right shrink-0">
                 <span className="font-mono font-bold text-[var(--color-accent)] block">{money(Number(order.price))}</span>
-                {discount && <span className="font-mono text-[10px] text-[var(--color-text-muted)] line-through block">{money(discount.list)}</span>}
+                {normal != null && <span className="font-mono text-[10px] text-[var(--color-text-muted)] line-through block">{money(normal)}</span>}
               </span>
             </div>
             <div className="flex gap-2">

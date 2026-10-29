@@ -215,28 +215,65 @@ export function orderAmountLabel(order) {
   return `${quantity}${order.unit ? ` ${order.unit}` : ''} · €${Number(order.price).toFixed(2)}`
 }
 
+// An order's price before the discount of its order group (plan 9I): what
+// it costs after its own discount. `price` is what is really paid (the
+// expense), `group_share` its part of the group's discount (0 when it is in
+// no group, or before supabase/028).
+export const orderBase = (order) => Math.round((Number(order?.price) + (Number(order?.group_share) || 0)) * 100) / 100
+
 // An order bought at a discount: its normal price and what it says, e.g.
 // "€80.00 → €56.00 (−30%)" (always with cents, as on the card and on the
-// order's expense in MONEY). `price` is always what was paid (the expense);
-// `list_price` the normal price before the discount. null without one.
+// order's expense in MONEY). `paid` is what is paid after the order's own
+// discount (its price, or its price before the group discount when it is
+// in an order group); `list_price` the normal price before the discount.
+// null without one.
 export function orderDiscount(order) {
   const value = Number(order?.discount_value)
   const list = Number(order?.list_price)
   if (!order?.discount_kind || !(value > 0) || !(list > 0)) return null
   const discount = { kind: order.discount_kind, value }
-  return { list, paid: Number(order.price), discount, label: discountLabel(list, Number(order.price), discount, { exact: true }) }
+  const paid = orderBase(order)
+  return { list, paid, discount, label: discountLabel(list, paid, discount, { exact: true }) }
+}
+
+// What an order says about its price, on its card, on the SHOP "On the way"
+// card and under its expense in MONEY:
+//   own discount only     "€80.00 → €56.00 (−30%)"
+//   order discount only   "€10.99 → €10.68 (order discount −€0.31)"
+//   both                  "€80.00 → €56.00 (−30%) · order discount −€1.20 → €54.80"
+// The order's own discount comes first, then its part of the group's
+// (like a purchase line: item discount, then coupon). '' with neither.
+export function orderPriceNote(order) {
+  const share = Math.round((Number(order?.group_share) || 0) * 100) / 100
+  const own = orderDiscount(order)
+  if (!(share > 0)) return own?.label ?? ''
+  const base = orderBase(order)
+  const paid = Number(order.price)
+  const part = `order discount −€${share.toFixed(2)}`
+  if (!own) return `€${base.toFixed(2)} → €${paid.toFixed(2)} (${part})`
+  return `${own.label} · ${part} → €${paid.toFixed(2)}`
+}
+
+// The normal price an order card shows crossed out next to what was paid:
+// its list price, or its price before the group discount; null when it
+// paid the normal price.
+export function orderNormalPrice(order) {
+  const own = orderDiscount(order)
+  if (own) return own.list
+  return Number(order?.group_share) > 0 ? orderBase(order) : null
 }
 
 // What the MONEY row of an order's expense says about the discount:
-// "€80.00 → €56.00 (−30%)", read from the order linked to it
-// (orders.expense_id). '' without a discount — and also when the expense
-// was edited by hand to another amount than the order's price, as the text
-// would then not describe it. `orderOf(expenseId)` gives the order, if any.
+// "€80.00 → €56.00 (−30%)", "€10.99 → €10.68 (order discount −€0.31)",
+// read from the order linked to it (orders.expense_id). '' without a
+// discount — and also when the expense was edited by hand to another
+// amount than the order's price, as the text would then not describe it.
+// `orderOf(expenseId)` gives the order, if any.
 export function expenseDiscountNote(expense, orderOf) {
   const order = expense?.id ? orderOf(expense.id) : null
-  const discount = order && orderDiscount(order)
-  if (!discount || Math.abs(Number(expense.amount) - discount.paid) > 0.004) return ''
-  return discount.label
+  const note = order ? orderPriceNote(order) : ''
+  if (!note || Math.abs(Number(expense.amount) - Number(order.price)) > 0.004) return ''
+  return note
 }
 
 // The order that made each expense: expense id → order (orders whose

@@ -11,7 +11,11 @@ import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
-import { ORDER_UNITS, normalizeUrl } from '../../lib/orders'
+import { ORDER_UNITS, normalizeUrl, orderBase } from '../../lib/orders'
+import { candidateLabel, joinCandidates, respreadNote } from '../../lib/orderGroups'
+import { useOrderGroups } from '../../hooks/useOrderGroups'
+import { useShops } from '../../hooks/useShops'
+import { parseLocalDate } from '../../lib/week'
 import { chooseTotalPrice, chooseUnitPrice, changeQuantity, emptyPrice, orderTotal, prefilledPrice, priceMismatch, savedPrice, typeTotalPrice, typeUnitPrice } from '../../lib/orderPricing'
 import { useFlow } from '../../hooks/useFlow'
 import { decimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
@@ -40,7 +44,16 @@ import { packField, packStartText, packTextFor } from '../../lib/packSize'
 // order's price and the amount of its expense; the normal price is kept as
 // `list_price` and is what the next order starts from. The quantity is only
 // asked once the database has it (supabase/021).
+//
+// Order groups (plan 9I, supabase/028). A NEW order with a store offers
+// "Same order as: …" when a group or a single order has the same store,
+// order date and payer (K2): ticked by default when there is exactly one,
+// none ticked when there are several. `group` ({ count, discounted }): the
+// order being edited is in an order group — its store, date and payer are
+// set on the group (K7), and its price before the order discount is what
+// the form edits.
 export function OrderForm({
+  group = null,
   initial,
   prefill = null,
   units: unitOptions = null,
@@ -61,7 +74,7 @@ export function OrderForm({
   const start = initial ? null : prefill
   const startCategory = initial?.category_id ?? start?.categoryId ?? null
   const initialMain = startCategory ? categoryTree(categories).mainOf(startCategory) : null
-  const [ids] = useState(() => ({ orderId: crypto.randomUUID(), expenseId: crypto.randomUUID() }))
+  const [ids] = useState(() => ({ orderId: crypto.randomUUID(), expenseId: crypto.randomUUID(), groupId: crypto.randomUUID() }))
   const [itemName, setItemName] = useState(initial?.item_name ?? start?.itemName ?? '')
   const [details, setDetails] = useState(initial?.details ?? '')
   const [shopId, setShopId] = useState(initial?.shop_id ?? start?.shopId ?? '')
@@ -80,7 +93,7 @@ export function OrderForm({
   // being edited starts with its own.
   const [packTyped, setPackTyped] = useState(() => (Number(initial?.pack_size) > 0 && initial.unit ? { text: String(Number(initial.pack_size)), unit: initial.unit } : null))
   const [price, setPrice] = useState(() =>
-    initial ? savedPrice(initial.list_price ?? initial.price, quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
+    initial ? savedPrice(initial.list_price ?? orderBase(initial), quantity, unit) : start?.price > 0 ? prefilledPrice(start.price, quantity, unit) : emptyPrice
   )
   const [discountKind, setDiscountKind] = useState(initial?.discount_kind ?? 'percent')
   const [discountText, setDiscountText] = useState(initial?.discount_kind && Number(initial.discount_value) > 0 ? moneyText(initial.discount_value).replace(/\.00$/, '') : '')
@@ -91,6 +104,20 @@ export function OrderForm({
   const [managingCategories, setManagingCategories] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // "Same order as: …" (K2): the groups and single orders this new order
+  // could be part of. What was ticked counts for the offer it was ticked
+  // in; a new store, date or payer starts the offer again.
+  const groups = useOrderGroups()
+  const allOrders = groups.orders
+  const { byId: shopById } = useShops()
+  const shopName = (id) => shopById.get(id)?.name ?? null
+  const candidates = !initial && groups.ready ? joinCandidates(allOrders, { shopId, orderDate, paidBy }) : []
+  const offerKey = `${shopId}|${orderDate}|${paidBy}|${candidates.map((c) => c.key).join(',')}`
+  const [joinPick, setJoinPick] = useState({ key: null, id: null })
+  const joinId = joinPick.key === offerKey ? joinPick.id : candidates.length === 1 ? candidates[0].key : null
+  const joining = candidates.find((c) => c.key === joinId) ?? null
+  const joiningDiscounted = Boolean(joining?.groupId && joining.orders.some((o) => Number(o.group_share) > 0))
 
   const pickCategory = ({ mainId: main, subId: sub }) => {
     setMainId(main)
@@ -145,6 +172,7 @@ export function OrderForm({
         url,
         ...(withQuantity ? { quantity: parseDecimal(quantity), unit } : {}),
         ...(withQuantity && packItem ? { packSize: pack?.value ?? null } : {}),
+        ...(joining ? { joinWith: joining.groupId ? { groupId: joining.groupId } : { orderId: joining.orders[0].id } } : {}),
       },
       ids
     )
@@ -162,6 +190,7 @@ export function OrderForm({
       setExpectedDate('')
       setExpectedUntil('')
       setUrl('')
+      setJoinPick({ key: null, id: null })
     }
   }
 
@@ -194,12 +223,23 @@ export function OrderForm({
           <Textarea className="h-16" placeholder="Size, colour, seller…" value={details} onChange={(e) => setDetails(e.target.value)} aria-label="Details" />
         </div>
 
-        <ShopPicker value={shopId} onChange={setShopId} defaultOnline label="Store (optional)" />
+        {group ? (
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2.5 text-[11px] space-y-0.5">
+            <p className="text-[var(--color-text)]">
+              {shopName(shopId) ?? 'No store'} · ordered {parseLocalDate(orderDate).toLocaleDateString('en-GB')} · paid by {PAID_BY_OPTIONS.find((o) => o.value === paidBy)?.label ?? paidBy}
+            </p>
+            <p className="text-[var(--color-text-muted)]">Store, date and payer are set on the order group.</p>
+          </div>
+        ) : (
+          <>
+            <ShopPicker value={shopId} onChange={setShopId} defaultOnline label="Store (optional)" />
 
-        <div>
-          <Label>Order date</Label>
-          <DateField label="Order date" required value={orderDate} onChange={setOrderDate} onValidity={(ok) => setDatesValid((v) => (v.order === ok ? v : { ...v, order: ok }))} />
-        </div>
+            <div>
+              <Label>Order date</Label>
+              <DateField label="Order date" required value={orderDate} onChange={setOrderDate} onValidity={(ok) => setDatesValid((v) => (v.order === ok ? v : { ...v, order: ok }))} />
+            </div>
+          </>
+        )}
 
         {withQuantity && (
           <div>
@@ -297,21 +337,49 @@ export function OrderForm({
             problem={priced.problem}
           />
           <LineDiscountNotes priced={priced} />
-          {priced.discount && !priced.problem && <p className="text-[11px] text-[var(--color-text-muted)]">You pay €{priced.paid.toFixed(2)}: that is the order's price and its expense.</p>}
+          {priced.discount && !priced.problem && !group && <p className="text-[11px] text-[var(--color-text-muted)]">You pay €{priced.paid.toFixed(2)}: that is the order's price and its expense.</p>}
+          {group && !priced.problem && priced.paid > 0 && (
+            <p className="text-[11px] text-[var(--color-text-muted)]">
+              €{priced.paid.toFixed(2)} before the order discount of its group.
+              {group.discounted && Math.abs(priced.paid - orderBase(initial)) > 0.004 ? ` ${respreadNote(group.count)}` : ''}
+            </p>
+          )}
         </div>
 
         <ExpenseCategoryPicker value={{ mainId, subId }} onChange={pickCategory} mainCategories={mainCategories} subsOf={subsOf} onManage={() => setManagingCategories(true)} />
 
-        <div>
-          <Label>Paid by</Label>
-          <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} aria-label="Paid by">
-            {PAID_BY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
+        {!group && (
+          <div>
+            <Label>Paid by</Label>
+            <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} aria-label="Paid by">
+              {PAID_BY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        {candidates.length > 0 && (
+          <div className="rounded-2xl border border-[var(--color-border)] p-2.5 space-y-1" role="group" aria-label="Same order">
+            {candidates.length > 1 && (
+              <p className="text-[11px] text-[var(--color-text-muted)]">Same store, order date and payer as these. Tick one if it was part of the same order — otherwise it stays a separate order.</p>
+            )}
+            {candidates.map((c) => (
+              <label key={c.key} className="flex items-start gap-2 min-h-9 text-[11px] text-[var(--color-text)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={joinId === c.key}
+                  onChange={() => setJoinPick({ key: offerKey, id: joinId === c.key ? null : c.key })}
+                  className="w-4 h-4 mt-0.5 shrink-0 accent-[var(--color-primary)]"
+                />
+                <span className="break-words">{candidateLabel(c, shopName)}</span>
+              </label>
             ))}
-          </Select>
-        </div>
+            {joiningDiscounted && <p className="text-[11px] text-amber-300">{respreadNote(joining.orders.length + 1)}</p>}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <div>

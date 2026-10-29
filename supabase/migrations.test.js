@@ -18,6 +18,8 @@ const { LIVE_MONEY_CATEGORIES } = await import('../src/data/moneyCategories.fixt
 const { confirmationPayload, purchaseLine } = await import('../src/lib/purchase.js')
 const { DURABLE_MONEY_CATEGORY_IDS, WORK_CATEGORY_ID } = await import('../src/data/constants.js')
 const { MONEY_CATEGORY_IDS_026 } = await import('../src/data/budgetKeywords.js')
+// For 028: order groups, with the requests the app builds (lib/orderGroups.js).
+const { GROUPS_NOTICE, groupErrorMessage, groupPayload, placeOf, undoGroupPayload } = await import('../src/lib/orderGroups.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -3067,6 +3069,371 @@ describe('027: pack size per purchase — two columns on orders, nothing else', 
       await asMember(() => fx.query(`select unarrive_order($1)`, [o]))
       expect(await item(cat.id)).toEqual({ stock: 5, packaging_unit: 'box', per: 48 })
       expect((await row(`select pack_size::float as size from orders where id = $1`, [o])).size).toBe(30)
+    })
+  })
+})
+
+describe('028: order groups — one discount for the whole online order', () => {
+  const file = '028_order_groups.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  let fx, shop, zalando, pets, home
+  const rows = async (text, params) => (await fx.query(text, params)).rows
+  const row = async (text, params) => (await rows(text, params))[0]
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  async function as(role, userId, fn) {
+    await fx.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await fx.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await fx.exec('reset role')
+    }
+  }
+  const fails = async (fn) => {
+    try {
+      await fn()
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  // save_order_group as the app calls it (logged in as the household).
+  const save = (payload) => as('authenticated', MEMBER, async () => (await fx.query(`select save_order_group($1::jsonb) as r`, [payload])).rows[0].r)
+  // Orders and groups as the app reads them (numbers as numbers).
+  const ordersNow = async (ids) => (await rows(`select to_jsonb(o) as o from orders o where o.id = any($1) order by o.created_at, o.id`, [ids])).map((r) => r.o)
+  const groupNow = async (id) => (await row(`select to_jsonb(g) as g from order_groups g where g.id = $1`, [id]))?.g ?? null
+  const amounts = async (ids) => (await rows(`select e.amount::float as a from orders o join expenses e on e.id = o.expense_id where o.id = any($1) order by o.created_at, o.id`, [ids])).map((r) => r.a)
+  const prices = async (ids) => (await ordersNow(ids)).map((o) => o.price)
+  let seq = 0
+  // An order and its expense, as "Add order" saves them (the expense = the price).
+  async function newOrder(name, price, { shopId = shop, date = '2026-10-17', payer = 'akbar', category = home, extra = {} } = {}) {
+    seq += 1
+    const expense = (await row(`insert into expenses (amount, description, paid_by, expense_date, shop_id, category_id) values ($1, $2, $3, $4, $5, $6) returning id`, [price, name, payer, date, shopId, category])).id
+    const created = new Date(Date.UTC(2026, 9, 17, 10, 0, seq)).toISOString()
+    const id = (await row(
+      `insert into orders (item_name, price, shop_id, order_date, paid_by, expense_id, category_id, created_at, list_price, discount_kind, discount_value) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
+      [name, price, shopId, date, payer, expense, category, created, extra.list_price ?? null, extra.discount_kind ?? null, extra.discount_value ?? null]
+    )).id
+    return id
+  }
+  const placeAmazon = () => ({ shop_id: shop, order_date: '2026-10-17', paid_by: 'akbar' })
+  // What the database has besides 028, to compare before and after it.
+  const untouched = async () => ({
+    functions: await rows(`select p.proname, md5(p.prosrc) as src, p.proconfig::text as config from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname <> 'save_order_group' order by 1, 2`),
+    policies: await rows(`select tablename, policyname, cmd, roles::text, qual, with_check from pg_policies where tablename <> 'order_groups' order by 1, 2`),
+    grants: await rows(`select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name <> 'order_groups' order by 1, 2, 3`),
+    functionGrants: await rows(`select routine_name, grantee, privilege_type from information_schema.role_routine_grants where routine_schema = 'public' and routine_name <> 'save_order_group' order by 1, 2, 3`),
+    expenses: await rows(`select * from expenses order by id`),
+  })
+  let before
+
+  beforeAll(async () => {
+    fx = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-3]|27)_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+      await fx.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    }
+    shop = (await row(`insert into shops (name, is_online) values ('Amazon.it', true) returning id`)).id
+    zalando = (await row(`insert into shops (name, is_online) values ('Zalando', true) returning id`)).id
+    pets = (await row(`select id from expense_categories where name = 'Pets'`))?.id ?? (await row(`insert into expense_categories (name) values ('Pets') returning id`)).id
+    home = (await row(`select id from expense_categories where name = 'Groceries'`)).id
+    await newOrder('An order from before 028', 12.5)
+    before = await untouched()
+  }, 120000)
+
+  it('only adds the table, two columns, indexes and one new function: nothing existing is replaced, no data written', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    const outside = code.replace(/as \$\$[\s\S]*?end \$\$;/g, '')
+    expect([...code.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['save_order_group'])
+    expect([...code.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1])).toEqual(['order_groups'])
+    expect([...outside.matchAll(/alter table (?:public\.)?(\w+)/g)].map((m) => m[1])).toEqual(['order_groups', 'orders', 'orders', 'order_groups'])
+    expect([...code.matchAll(/(?:create|drop) policy[^;]* on public\.(\w+)/g)].map((m) => m[1])).toEqual(['order_groups', 'order_groups'])
+    expect([...code.matchAll(/(?:grant|revoke) [^;]* on (?:function )?(?:public\.)?(\w+)/g)].map((m) => m[1])).toEqual(['order_groups', 'order_groups', 'save_order_group', 'save_order_group'])
+    // No data statement outside the function, no drop of anything but the new policy.
+    expect(outside).not.toMatch(/\b(insert into|update \w+ set|delete from|truncate)\b/i)
+    expect(code.match(/\bdrop\b[^;]*/gi)).toEqual(['drop policy if exists "household_only" on public.order_groups'])
+    expect(code.match(/^select /gm)).toHaveLength(1)
+  })
+
+  it('before 028 (the app is deployed first): no group columns, no function — the app says "This needs the database update supabase/028_order_groups.sql"', async () => {
+    const columns = (await rows(`select column_name from information_schema.columns where table_name = 'orders'`)).map((c) => c.column_name)
+    expect(columns).not.toContain('group_id')
+    expect(columns).not.toContain('group_share')
+    const error = await as('authenticated', MEMBER, async () => {
+      try {
+        await fx.query(`select save_order_group('{}'::jsonb)`)
+      } catch (e) {
+        return e
+      }
+    })
+    expect(groupErrorMessage({ code: error.code, message: error.message })).toBe(GROUPS_NOTICE)
+    expect(await fails(() => fx.query(`select * from order_groups`))).toMatch(/does not exist/)
+  })
+
+  it('run twice: every check is ok; existing functions, policies, grants and data are unchanged; anon gets nothing', async () => {
+    const first = await run()
+    const second = await run()
+    expect(first.map((r) => [r.object, r.status])).toEqual([
+      ['table order_groups', 'ok'],
+      ['order_groups discount check', 'ok'],
+      ['column orders.group_id', 'ok'],
+      ['column orders.group_share', 'ok'],
+      ['orders.group_id → order_groups (on delete set null)', 'ok'],
+      ['orders.group_share >= 0', 'ok'],
+      ['index orders_group_id_idx', 'ok'],
+      ['function save_order_group(jsonb)', 'ok'],
+      ['orders in a group (0 the first time)', 'ok'],
+    ])
+    expect(first.at(-1).detail).toBe('0 of 1')
+    expect(second).toEqual(first)
+    expect(first.length).toBeLessThan(100)
+    expect(await untouched()).toEqual(before)
+    expect(await rows(`select group_id, group_share::float as share from orders`)).toEqual([{ group_id: null, share: 0 }])
+    expect(await as('anon', null, () => fails(() => fx.query(`select * from order_groups`)))).toMatch(/permission denied/)
+    expect(await as('anon', null, () => fails(() => fx.query(`select save_order_group('{}'::jsonb)`)))).toMatch(/permission denied/)
+  })
+
+  it('the household check: a logged-in stranger is refused (42501), and sees no group', async () => {
+    const message = await as('authenticated', STRANGER, () => fails(() => fx.query(`select save_order_group($1::jsonb)`, [{ id: '28000000-0000-4000-8000-0000000000ff', orders: [] }])))
+    expect(message).toMatch(/Not allowed: log in with the household account/)
+    expect(await as('authenticated', STRANGER, async () => (await fx.query(`select count(*)::int as n from order_groups`)).rows[0].n)).toBe(0)
+  })
+
+  describe('the order of 17/10 at Amazon.it (7 orders, −€3.23), with the app\'s own requests', () => {
+    const G = '28000000-0000-4000-8000-000000000017'
+    let ids
+    const names = ['Cat Dry Food', 'Cat Wet Food', 'Hairs all Relief', 'Working Ear Plug', 'Wood Cleaner Spray', 'Silicone Gun', 'Catnip Snack']
+    const list = [30.79, 26.6, 21.99, 8.49, 10.99, 4.99, 9.99]
+
+    beforeAll(async () => {
+      ids = []
+      for (const [i, name] of names.entries()) ids.push(await newOrder(name, list[i], { category: ['Cat Dry Food', 'Cat Wet Food', 'Hairs all Relief', 'Catnip Snack'].includes(name) ? pets : home }))
+    })
+
+    it('"Group orders" → a group of the 7; then the discount −€3.23: shares 0.87 … 0.30, paid €110.61, the expenses follow', async () => {
+      const singles = await ordersNow(ids)
+      await save(groupPayload({ id: G, place: placeOf(singles[0]), members: singles }))
+      expect(await groupNow(G)).toMatchObject({ shop_id: shop, order_date: '2026-10-17', paid_by: 'akbar', discount_kind: null, discount_total: 0 })
+      const members = await ordersNow(ids)
+      const answer = await save(groupPayload({ id: G, place: placeAmazon(), discount: { kind: 'amount', value: 3.23 }, members }))
+      expect(answer.orders.map((o) => o.group_share)).toEqual([0.87, 0.75, 0.62, 0.24, 0.31, 0.14, 0.3])
+      expect(await prices(ids)).toEqual([29.92, 25.85, 21.37, 8.25, 10.68, 4.85, 9.69])
+      expect(await amounts(ids)).toEqual([29.92, 25.85, 21.37, 8.25, 10.68, 4.85, 9.69])
+      expect((await row(`select sum(e.amount)::float as t from orders o join expenses e on e.id = o.expense_id where o.group_id = $1`, [G])).t).toBe(110.61)
+      expect((await row(`select sum(e.amount)::float as t, sum(o.group_share)::float as s from orders o join expenses e on e.id = o.expense_id where o.group_id = $1 and e.category_id = $2`, [G, pets]))).toEqual({ t: 86.83, s: 2.54 })
+      expect(await groupNow(G)).toMatchObject({ discount_kind: 'amount', discount_value: 3.23, discount_total: 3.23 })
+      expect(answer.kept).toEqual([])
+    })
+
+    it('the same request again (pressed twice, or a lost answer): nothing changes, the same answer', async () => {
+      const members = await ordersNow(ids)
+      const payload = groupPayload({ id: G, place: placeAmazon(), discount: { kind: 'amount', value: 3.23 }, members })
+      const snapshot = await rows(`select * from expenses order by id`)
+      const answer = await save(payload)
+      expect(answer.orders).toEqual(members)
+      expect(answer.expenses).toEqual([])
+      expect(await rows(`select * from expenses order by id`)).toEqual(snapshot)
+    })
+
+    it('Return of Working Ear Plug with "Delete the expense" (the app\'s own writes): its €8.25 expense is gone, the other six unchanged, €102.36 left, the group still −€3.23', async () => {
+      const ear = ids[3]
+      const { expense_id: expense } = await row(`select expense_id from orders where id = $1`, [ear])
+      expect((await row(`select amount::float as a from expenses where id = $1`, [expense])).a).toBe(8.25)
+      await as('authenticated', MEMBER, async () => {
+        await fx.query(`update orders set status = 'returned', arrived_date = '2026-10-29', expense_outcome = 'deleted' where id = $1`, [ear])
+        await fx.query(`delete from expenses where id = $1`, [expense])
+      })
+      expect(await amounts(ids)).toEqual([29.92, 25.85, 21.37, 10.68, 4.85, 9.69])
+      expect((await row(`select sum(e.amount)::float as t from orders o join expenses e on e.id = o.expense_id where o.group_id = $1`, [G])).t).toBe(102.36)
+      expect((await row(`select sum(group_share)::float as s from orders where group_id = $1`, [G])).s).toBe(3.23)
+      expect(await row(`select price::float as p, group_share::float as s, expense_id from orders where id = $1`, [ear])).toEqual({ p: 8.25, s: 0.24, expense_id: null })
+      expect((await groupNow(G)).discount_total).toBe(3.23)
+    })
+
+    it('existing functions still work on a member: arrive_order / unarrive_order never touch its share or price', async () => {
+      const cat = (await row(`insert into pantry_items (name, unit, current_stock, category_id) values ('Cat Dry Food', 'pcs', 1, 'misc') returning id`)).id
+      await fx.query(`update orders set pantry_item_id = $2 where id = $1`, [ids[0], cat])
+      await as('authenticated', MEMBER, () => fx.query(`select arrive_order($1, $2, 2, '2026-10-20')`, [ids[0], cat]))
+      await as('authenticated', MEMBER, () => fx.query(`select unarrive_order($1)`, [ids[0]]))
+      expect(await row(`select status, price::float as p, group_share::float as s, group_id from orders where id = $1`, [ids[0]])).toEqual({ status: 'on_the_way', p: 29.92, s: 0.87, group_id: G })
+    })
+  })
+
+  describe('other groups (the rules are general)', () => {
+    it('2 orders 30.79 + 4.99 with −€1.00 → 0.86 / 0.14', async () => {
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99)]
+      const id = '28000000-0000-4000-8000-000000000201'
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      expect((await ordersNow(ids)).map((o) => o.group_share)).toEqual([0.86, 0.14])
+      expect(await amounts(ids)).toEqual([29.93, 4.85])
+    })
+
+    it('−10% on 10 + 8.40 + 20 → €3.84', async () => {
+      const ids = [await newOrder('A', 10), await newOrder('B', 8.4), await newOrder('C', 20)]
+      const id = '28000000-0000-4000-8000-000000000202'
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'percent', value: 10 }, members: await ordersNow(ids) }))
+      expect(await prices(ids)).toEqual([9, 7.56, 18])
+      expect(await groupNow(id)).toMatchObject({ discount_kind: 'percent', discount_value: 10, discount_total: 3.84 })
+    })
+
+    it('an order with its own −30% (€80 → €56) plus the group discount: its own first, then its share', async () => {
+      const sneakers = await newOrder('Sneakers', 56, { extra: { list_price: 80, discount_kind: 'percent', discount_value: 30 } })
+      const ids = [sneakers, await newOrder('Socks', 37.33)]
+      await save(groupPayload({ id: '28000000-0000-4000-8000-000000000203', place: placeAmazon(), discount: { kind: 'amount', value: 2 }, members: await ordersNow(ids) }))
+      expect(await row(`select price::float as p, group_share::float as s, list_price::float as l, discount_value::float as v from orders where id = $1`, [sneakers])).toEqual({ p: 54.8, s: 1.2, l: 80, v: 30 })
+    })
+
+    it('a 3rd order joining a group with a discount (K2, as the order form saves it): spread again over all three', async () => {
+      const id = '28000000-0000-4000-8000-000000000204'
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      const third = await newOrder('C', 10)
+      const group = await groupNow(id)
+      await save(groupPayload({ id, place: placeOf(group), discount: { kind: group.discount_kind, value: group.discount_value }, members: await ordersNow([...ids, third]) }))
+      expect((await ordersNow([...ids, third])).map((o) => o.group_share)).toEqual([0.67, 0.11, 0.22])
+      expect(await amounts([...ids, third])).toEqual([30.12, 4.88, 9.78])
+    })
+
+    it('"Take out of the group", then Undo: exactly as before, every share and expense', async () => {
+      const id = '28000000-0000-4000-8000-000000000205'
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99), await newOrder('C', 10)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      const members = await ordersNow(ids)
+      const group = await groupNow(id)
+      const snapshot = await amounts(ids)
+      const answer = await save(groupPayload({ id, place: placeOf(group), discount: { kind: 'amount', value: 1 }, members: members.slice(0, 2), leaving: [members[2]] }))
+      expect((await ordersNow(ids)).map((o) => [o.group_share, o.group_id === id])).toEqual([[0.86, true], [0.14, true], [0, false]])
+      expect(await amounts(ids)).toEqual([29.93, 4.85, 10])
+      await save(undoGroupPayload({ id, groupBefore: group, before: members, now: answer.orders }))
+      expect(await ordersNow(ids)).toEqual(members)
+      expect(await amounts(ids)).toEqual(snapshot)
+    })
+
+    it('"Ungroup", then Undo: every share 0, prices and expenses back; Undo makes the same group again', async () => {
+      const id = '28000000-0000-4000-8000-000000000206'
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      const members = await ordersNow(ids)
+      const group = await groupNow(id)
+      const answer = await save(groupPayload({ id, place: placeOf(group), members: [], leaving: members }))
+      expect(await groupNow(id)).toBeNull()
+      expect(await amounts(ids)).toEqual([30.79, 4.99])
+      expect((await ordersNow(ids)).every((o) => o.group_id === null && o.group_share === 0)).toBe(true)
+      await save(undoGroupPayload({ id, groupBefore: group, before: members, now: answer.orders }))
+      expect(await groupNow(id)).toEqual(group)
+      expect(await ordersNow(ids)).toEqual(members)
+      expect(await amounts(ids)).toEqual([29.93, 4.85])
+    })
+
+    for (const alsoExpense of [false, true]) {
+      it(`deleting a member with "${alsoExpense ? 'Delete the order and its expense' : 'Delete the order only'}" (the app's steps), then Undo`, async () => {
+        const id = alsoExpense ? '28000000-0000-4000-8000-000000000208' : '28000000-0000-4000-8000-000000000207'
+        const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99), await newOrder('C', 10)]
+        await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+        const members = await ordersNow(ids)
+        const group = await groupNow(id)
+        const snapshot = await amounts(ids)
+        // 1. it leaves the group (its expense back to €10), 2. it is deleted.
+        const answer = await save(groupPayload({ id, place: placeOf(group), discount: { kind: 'amount', value: 1 }, members: members.slice(0, 2), leaving: [members[2]] }))
+        const removed = await as('authenticated', MEMBER, async () => (await fx.query(`delete from orders where id = $1 returning *`, [ids[2]])).rows[0])
+        const expense = alsoExpense ? await as('authenticated', MEMBER, async () => (await fx.query(`delete from expenses where id = $1 returning *`, [removed.expense_id])).rows[0]) : null
+        expect(await amounts(ids.slice(0, 2))).toEqual([29.93, 4.85])
+        expect((await row(`select count(*)::int as n from expenses where id = $1`, [removed.expense_id])).n).toBe(alsoExpense ? 0 : 1)
+        if (!alsoExpense) expect((await row(`select amount::float as a from expenses where id = $1`, [removed.expense_id])).a).toBe(10)
+        // Undo: the expense, the order, then every share as it was.
+        await as('authenticated', MEMBER, async () => {
+          if (expense) await fx.query(`insert into expenses select * from jsonb_populate_record(null::expenses, $1::jsonb)`, [expense])
+          await fx.query(`insert into orders select * from jsonb_populate_record(null::orders, $1::jsonb)`, [removed])
+        })
+        const now = answer.orders.map((o) => (o.id === ids[2] ? { ...o } : o))
+        await save(undoGroupPayload({ id, groupBefore: group, before: members, now }))
+        expect(await ordersNow(ids)).toEqual(members)
+        expect(await amounts(ids)).toEqual(snapshot)
+      })
+    }
+
+    it('an expense edited by hand is left alone when the discount changes, and named in "kept"', async () => {
+      const id = '28000000-0000-4000-8000-000000000209'
+      const ids = [await newOrder('A', 30.79), await newOrder('Hand edited', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      await fx.query(`update expenses set amount = 20 where id = (select expense_id from orders where id = $1)`, [ids[1]])
+      const answer = await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 2 }, members: await ordersNow(ids) }))
+      expect(await amounts(ids)).toEqual([29.07, 20])
+      expect(await prices(ids)).toEqual([29.07, 4.71])
+      expect(answer.kept).toEqual([expect.objectContaining({ order_id: ids[1], name: 'Hand edited', amount: 20, price: 4.71 })])
+    })
+
+    it('a member\'s price edited (K3): its new base, everything spread again, the expenses follow', async () => {
+      const id = '28000000-0000-4000-8000-000000000210'
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids), bases: { [ids[1]]: 9.21 } }))
+      expect((await ordersNow(ids)).map((o) => [o.group_share, o.price])).toEqual([[0.77, 30.02], [0.23, 8.98]])
+      expect(await amounts(ids)).toEqual([30.02, 8.98])
+    })
+
+    it('store, date and payer changed on the group (K7): every order and its expense', async () => {
+      const id = '28000000-0000-4000-8000-000000000211'
+      const ids = [await newOrder('A', 30.79), await newOrder('B', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), members: await ordersNow(ids) }))
+      await save(groupPayload({ id, place: { shop_id: zalando, order_date: '2026-10-16', paid_by: 'shared' }, members: await ordersNow(ids) }))
+      expect(await rows(`select shop_id, order_date::text as d, paid_by from orders where id = any($1)`, [ids])).toEqual([
+        { shop_id: zalando, d: '2026-10-16', paid_by: 'shared' },
+        { shop_id: zalando, d: '2026-10-16', paid_by: 'shared' },
+      ])
+      expect(await rows(`select e.shop_id, e.expense_date::text as d, e.paid_by from orders o join expenses e on e.id = o.expense_id where o.id = any($1)`, [ids])).toEqual([
+        { shop_id: zalando, d: '2026-10-16', paid_by: 'shared' },
+        { shop_id: zalando, d: '2026-10-16', paid_by: 'shared' },
+      ])
+      expect(await groupNow(id)).toMatchObject({ shop_id: zalando, order_date: '2026-10-16', paid_by: 'shared' })
+    })
+  })
+
+  describe('refusals: nothing is written', () => {
+    let ids, members
+    const id = '28000000-0000-4000-8000-000000000301'
+    const refuse = async (payload) => {
+      const snapshot = { orders: await rows(`select * from orders order by id`), expenses: await rows(`select * from expenses order by id`), groups: await rows(`select * from order_groups order by id`) }
+      const message = await fails(() => save(payload))
+      expect({ orders: await rows(`select * from orders order by id`), expenses: await rows(`select * from expenses order by id`), groups: await rows(`select * from order_groups order by id`) }).toEqual(snapshot)
+      return message
+    }
+    beforeAll(async () => {
+      ids = [await newOrder('R1', 30.79), await newOrder('R2', 4.99)]
+      await save(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: await ordersNow(ids) }))
+      members = await ordersNow(ids)
+    })
+
+    it('an order changed meanwhile on the other phone', async () => {
+      const stale = members.map((o, i) => (i === 0 ? { ...o, price: 30 } : o))
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 2 }, members: stale }))).toMatch(/"R1" changed meanwhile \(on the other phone\?\) — open Orders again\. Nothing was changed\./)
+    })
+
+    it('a group not named whole; an order deleted meanwhile; a new group of one', async () => {
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: members.slice(0, 1) }))).toMatch(/The order group changed meanwhile/)
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), members: [...members, { ...members[0], id: '28000000-0000-4000-8000-0000000003ff' }] }))).toMatch(/An order was deleted meanwhile/)
+      const lone = await ordersNow([await newOrder('Lone', 5)])
+      expect(await refuse(groupPayload({ id: '28000000-0000-4000-8000-000000000302', place: placeAmazon(), members: lone }))).toMatch(/Pick at least two orders/)
+    })
+
+    it('another store, date or payer; no store; an order of another group', async () => {
+      const other = await ordersNow([await newOrder('Elsewhere', 5, { shopId: zalando })])
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: [...members, ...other] }))).toMatch(/Only orders of the same store, order date and payer can be one order \("Elsewhere" is different\)/)
+      const later = await ordersNow([await newOrder('Later', 5, { date: '2026-10-18' })])
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: [...members, ...later] }))).toMatch(/"Later" is different/)
+      const nowhere = await ordersNow([await newOrder('N1', 5, { shopId: null }), await newOrder('N2', 6, { shopId: null })])
+      expect(await refuse(groupPayload({ id: '28000000-0000-4000-8000-000000000303', place: placeOf(nowhere[0]), members: nowhere }))).toMatch(/Set the store on the order first\./)
+      const two = await ordersNow([await newOrder('X1', 5), await newOrder('X2', 6)])
+      await save(groupPayload({ id: '28000000-0000-4000-8000-000000000304', place: placeAmazon(), members: two }))
+      const inOther = await ordersNow([two[0].id])
+      expect(await refuse(groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 1 }, members: [...members, ...inOther] }))).toMatch(/"X1" is already in another order group/)
+    })
+
+    it('shares that don\'t add up, a share bigger than its order, a percent above 100', async () => {
+      const good = groupPayload({ id, place: placeAmazon(), discount: { kind: 'amount', value: 2 }, members })
+      expect(await refuse({ ...good, orders: good.orders.map((o, i) => (i === 0 ? { ...o, share: o.share + 0.01 } : o)) })).toMatch(/don't add up/)
+      expect(await refuse({ ...good, discount_total: 40, discount_value: 40, orders: [{ ...good.orders[0], share: 30.79 }, { ...good.orders[1], share: 9.21 }] })).toMatch(/bigger than its price/)
+      expect(await refuse({ ...good, discount_kind: 'percent', discount_value: 150 })).toMatch(/can't be more than 100%/)
     })
   })
 })

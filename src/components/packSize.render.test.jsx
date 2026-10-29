@@ -7,6 +7,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 // Arrived. One field everywhere: "pcs per box", "= 60 pcs", and what
 // happens to the item's usual size.
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
+// Order groups (supabase/028) not loaded here: the order form offers nothing.
+vi.mock('../hooks/useOrderGroups', async (original) => ({ ...(await original()), useOrderGroups: () => ({ ready: false, groups: [], orders: [], byId: new Map() }) }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
 
 // Cat Wet Food is usually 1 box = 48 pcs; Tuna has no usual size yet;

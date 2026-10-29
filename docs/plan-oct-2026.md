@@ -26,6 +26,7 @@ Contents
    - 9F. Durable lock (decided 25/10, as built)
    - 9G. Similar-name safety net (decided 26/10, as built)
    - 9H. Pack size per purchase (decided 27–28/10, as built)
+   - 9I. Order groups (decided 29/10, as built)
 10. Risks and decisions
 
 ---
@@ -2873,6 +2874,228 @@ question in `purchase.test.js`, `moneyPurchase.test.js`,
 7. MONEY → open a purchase bought in packages: "2 box · 30 pcs each · 60
    pcs"; Receipts the same.
 8. 375 px: no sideways scroll with the field open.
+
+### 9I. Order groups (decided 29/10, as built)
+
+Analysis: `tmp-export/amazon-readonly-report.md` (29/10, read only). Zidane
+chose option B on option A's data model, with decisions K1–K9 below; where
+they differ from the report, they win. SQL: `supabase/028_order_groups.sql`
+(not run yet; Irene runs it after Claude has checked it). The app is
+deployed before 028 and works before and after it. No new browser storage
+(the group table is not kept on the phone; the orders, which already are,
+carry what the cards show), no new offline queue, no existing database
+function changed.
+
+**The idea.** Online orders stay ONE order per item (Money → Orders → "Add
+order", Shop → "Order online"), exactly as before. Several orders of the
+same store, order date and payer can form ONE "order group", and a group
+can have ONE discount for the whole order (Amazon's "Promotion Applied
+−€3.23"), spread over its orders. Purchases ("Confirm purchase", "Add
+expense" with "Purchase discount") are unchanged.
+
+**Data (028).** New table `order_groups` (`id, shop_id → shops, order_date,
+paid_by, discount_kind ('percent' | 'amount' | null), discount_value,
+discount_total (€, default 0), created_at`; check `order_groups_discount_ok`
+= the rule of `orders_discount_ok`; RLS on, one policy `household_only`,
+nothing for anon, realtime on). `orders.group_id → order_groups` (on delete
+set null; index `orders_group_id_idx`), `orders.group_share numeric not null
+default 0 check (>= 0)`. `orders.price` stays what is really paid (= the
+expense); the order's **base** = its price before the group discount =
+`price + group_share`; its own discount (`list_price`, `discount_kind/value`)
+works as before and comes first (K8). Store `orderGroupStore`
+(`lib/stores.js`, optional, not persisted).
+
+**`save_order_group(payload)`** (new, `search_path = public`, household
+check 42501, closed to anon/public, all or nothing). The app sends the whole
+state it wants (`lib/orderGroups.js` `groupPayload` / `undoGroupPayload`):
+
+```js
+{ id,                                   // the group (made by the app)
+  shop_id, order_date, paid_by,         // the group's; every order in it takes them
+  discount_kind, discount_value, discount_total,
+  orders:  [{ id, base, share, was: { price, group_share, group_id } }],  // in the group afterwards
+  leaving: [{ id, base, was }],         // out of it afterwards (share 0, price = base)
+  undo, created_at }                    // an Undo may make a group of one again
+```
+
+It refuses (nothing written) when: an order changed meanwhile (`was` is
+not what the database has: "\"X\" changed meanwhile (on the other phone?) —
+open Orders again. Nothing was changed."), an order was deleted, the group
+has orders the request doesn't name, an order is in another group, a
+joining order has another store / date / payer, no store ("Set the store on
+the order first."), a new group of fewer than 2 (unless Undo), a share below
+0 or above its base, the shares don't add up to `discount_total`, the total
+doesn't match what was typed (amount: ≤ the value and ≤ the bases; percent:
+within 1 cent of the percent of the bases), a percent above 100. Then it
+writes the group row (or deletes it when no orders are left), every order's
+`group_id / group_share / price` (and store, date, payer for orders in the
+group), and each order's expense: the amount only while it still equals the
+order's previous price (else it is left and returned in `kept`, and the app
+says "\"X\": its expense was changed by hand (€20.00), so it was left as it
+is."); for orders in the group also `expense_date / shop_id / paid_by` when
+the order's own changed. An order whose expense was deleted just keeps its
+share. Sent again when everything is already as asked: nothing is written,
+the same answer comes back (idempotent). → `{ group, orders, expenses,
+kept }`.
+
+**Rules as built.**
+
+- K1 Spread with `spreadCoupon` (the purchase coupon's rule) over the
+  orders' bases, in the order they were saved (`created_at`, then `id`):
+  rounded to cents, leftover cents on the order saved last (or the one
+  before if it can't take them). % 0–100; € bigger than the bases → capped.
+- K2 New order (Money "Add order" and Shop "Order online"), with a store:
+  every group and every single order (no group, any status) of the same
+  store, order date and payer is offered as a tick box "Same order as:
+  {up to 3 names, then +N more} ({store} · {dd/mm})" — ticked when it is
+  the only one; several: none ticked (only one can be ticked). Changing
+  store, date or payer redoes the offer. No store, or before 028: none.
+  Saving with it ticked (`createOrder` → `joinWith`): the expense and the
+  order are saved, then the order joins (a single order: a new group of
+  the two, id made once per form) in one more step; if the join is
+  refused, the new order and its expense are undone and the form keeps
+  what was typed. A group with a discount: "The order discount will be
+  spread again over N items." before saving.
+- K3 Shares are recomputed only when: the discount is typed/changed
+  ("Save" in the sheet), a member's price or own discount is edited (Edit
+  order → `editGroupMember`: the order's own fields first, then
+  `save_order_group` with the new base; Undo of the first step if it is
+  refused), an order joins or leaves. Always over ALL orders of the group,
+  cancelled and returned ones too, so Cancel / Return never moves anything.
+- K4 Cancel / Return of a member: unchanged. "Delete the expense" deletes
+  its expense (its paid price after the share, e.g. €8.25); the other
+  orders and expenses never change; Undo as before. The group keeps showing
+  the discount given and the total of the expenses still there.
+- K5 Deleting a member (`removeGroupMember`): it first leaves the group
+  (share 0, price and expense back to its base, the discount spread again
+  over the rest; the last one out removes the group), then the order (and
+  its expense if asked) is deleted. The delete dialog adds "It leaves its
+  order group: its part of the order discount (€0.24) is spread again over
+  the other orders." Undo: expense, order, then every share exactly
+  (`undoGroupPayload`). "Take out of the group" (sheet) does the same
+  without deleting, with its own Undo.
+- K6 "Ungroup": every share 0, every price and expense back to its base
+  (same guard), group row deleted; Undo makes the same group again.
+- K7 Edit order of a member: store, order date and payer are shown
+  read-only with "Store, date and payer are set on the order group."; they
+  are changed in the sheet, for all members and their expenses, in one
+  transaction.
+- K8 Own discount first, then the share: the line reads "€80.00 → €56.00
+  (−30%) · order discount −€1.20 → €54.80" (`orders.orderPriceNote`);
+  without an own discount "€10.99 → €10.68 (order discount −€0.31)".
+- K9 Money → Expenses: the expenses of a group are ONE row
+  (`PurchaseGroup` with the group's icon): "{store} · {date}", one dot per
+  main category, "{N} items", the total of its existing expenses, "(order
+  discount −€3.23)" under it (= the sum of all members' shares). Opened:
+  by main category with subtotals; each item with its sub-category, amount,
+  edit / delete, and its line (hidden when the expense was edited by hand);
+  "Open the order group". Category filter: only that part, "of total €…".
+  The same in the three "Sort by" views (`bundleTrips(entries,
+  orderGroupOf)`, a `TripRow` with the group's note). Charts, totals,
+  filters, Select (no tick box for order expenses), "Apply the mapping to
+  past purchases…" and Receipts: unchanged.
+
+**Where (final labels).**
+
+- Money → Orders: "Group orders" (left of "Add order"; only after 028).
+  It opens History and puts a tick box on every card (on the way and in
+  History). The card "Group orders" says how many are ticked and offers
+  "Group as one order" (a new group; its sheet then opens to type the
+  discount) or, when a group of the same store, date and payer exists,
+  only "Add to {store} · {dd/mm} ({N} items)" (with the re-spread note when
+  it has a discount). Refusals: "Tick at least two orders to group them as
+  one order.", "Only orders of the same store can be one order — these are
+  from A and B.", "… of the same order date … — these are on …", "… paid by
+  the same person … — these are paid by … and …", "\"X\" has no store. Set
+  the store on the order first.", "\"X\" is already in another order
+  group.", "These orders are already one order.". "Paid by" not on
+  Everyone: "\"Paid by\" shows only {name}: some orders may be hidden.
+  Choose Everyone to see them all."
+- Every member card (on the way and in History): tag "Order: {store} ·
+  {dd/mm} ({N} items)" → the sheet; the share line; the price before the
+  discount crossed out. Shop → "On the way": the share line too.
+- Sheet "Order group": the members (name, status, "no expense" when it was
+  deleted, base −share, paid, its line, "Take out of the group"), "Order
+  discount" (−% / −€, € first; live line per item, "Paid €… (order discount
+  −€…)"), "Store", "Order date", "Paid by" (with a warning that saving
+  changes all N orders and their expenses), "Ungroup", "Save". "Take out"
+  and "Ungroup" ask first (confirm "Take out" / "Ungroup") and have Undo.
+- Toasts: "N orders grouped as one order", "N order(s) added to the order
+  …", "Order group saved", "\"X\" taken out of the order group",
+  "Ungrouped — the N orders are on their own again", each with Undo;
+  "Saved — an expense edited by hand was left as it is" (+ which).
+- Offline: grouping, the discount, take out and ungroup need a connection
+  (the merge message). Before 028: nothing of it shows; a group request that
+  still fails says "This needs the database update
+  supabase/028_order_groups.sql".
+- Everything else about orders is as before (Arrived in all its forms,
+  Cancel / Return, Back on the way, durable / service lock, pack size, Edit
+  order of orders in no group, reminders).
+- An older app version on the other phone deletes a member without
+  re-spreading (its share is simply gone): reload both iPhones after the
+  deploy.
+
+**Files.** New: `supabase/028_order_groups.sql`, `src/lib/orderGroups.js`
+(+ test), `src/hooks/useOrderGroups.js`, `src/components/expenses/
+OrderGroupSheet.jsx`. Changed: `lib/orders.js` (`orderBase`,
+`orderDiscount` paid = base, `orderPriceNote`, `orderNormalPrice`,
+`expenseDiscountNote`), `lib/stores.js` (`orderGroupStore`),
+`lib/moneyList.js` (`groupPurchases` / `bundleTrips` with
+`orderGroupOf`), `hooks/useOrders.js` (`createOrder` + `joinGroup`,
+`editGroupMember`, `removeGroupMember`), `hooks/orderActions.js` (delete
+dialog), `expenses/OrderCard.jsx`, `expenses/OrdersSection.jsx`
+(`GroupOrdersBar`), `expenses/OrderForm.jsx`, `grocery/OnTheWay.jsx`,
+`expenses/ExpenseGroup.jsx` (`PurchaseGroup`: `icon`, `note`, `noteOf`,
+`extra`), `expenses/EntryRows.jsx` (`TripRow`: same), `pages/
+ExpensesPage.jsx`. Four render tests got one mock line (the order form now
+reads the groups).
+
+**Tests: 1714 → 1796 (98 → 101 files).** `lib/orderGroups.test.js` (17/10:
+shares 0.87, 0.75, 0.62, 0.24, 0.31, 0.14, 0.30, paid €110.61, Pets 2.54 →
+€86.83, the return of Working Ear Plug → €102.36 left, still −€3.23;
+30.79 + 4.99 with −€1 → 0.86 / 0.14; −10%; own −30% + share; a third order
+joining; a member's new base; the cap; take out / ungroup / new group and
+their Undo; K2 with 0, 1, 2 candidates; every "Group orders" refusal; the
+sheet preview; messages; K9 grouping). `hooks/orderGroups.test.js` (the
+hooks against a fake `save_order_group`: group + Undo, discount + Undo,
+expense edited by hand, take out / ungroup + Undo, a third order added,
+offline, before 028, refused; K2 join to a group and to a single order, a
+refused join undone; K3 edit; delete a member both ways + Undo).
+`components/orderGroups.render.test.jsx` (tag, share line, tick box, SHOP
+card, K2 offer 0 / 1 / 2 / before 028, K7 lock, the sheet, K9 row and
+filter, "Group orders" mode, the "Paid by" hint, before 028).
+`supabase/migrations.test.js` block "028" (only new objects; before 028 the
+app's message; run twice, every check ok, existing functions, policies,
+grants and data unchanged, anon nothing; stranger refused; 17/10 with the
+app's own requests, idempotent, the return; arrive / unarrive on a member;
+the other cases; refusals change nothing).
+
+**Version 2 (not built).** If a store refunds the FULL price of a returned
+or cancelled item (e.g. €8.49 instead of €8.25), the whole discount should
+stay on the remaining items and be spread again over them (remaining
+€102.12 instead of €102.36), re-spreading only when "Delete the expense"
+is chosen. Zidane chose Version 1 on 29/10; switch only if real refunds
+show Version 2 is right.
+
+**Later (not scheduled).** "Back on the way" does not restore
+`pantry_items.last_purchased_at` (and Reopen restores it without a guard).
+Fix only when a feature shows or uses the date (report of 29/10, section
+D, options D1 / D2 / D3). Checked 29/10, every place in `src/` that reads
+the column: `lib/inventoryBackup.js` (`CSV_COLUMNS`: the CSV / Excel export
+in Home → Import / Export writes it out; the JSON backup reads all
+columns), `hooks/usePantryItems.js` (`ITEM_FIELDS` / `pickFields`: copies it
+when an item is saved or a backup is restored — a pass-through, no logic),
+`lib/inventory.js` (`OPTIONAL_COLUMNS`: only the name, to leave it out
+before migration 006/007). No sorting, suggestion, filter, label or
+screen uses it.
+
+**Next round (small, right after this one).** An Undo on the toast after
+"Arrived", and stock added through the "It arrived!" dialog recorded on
+the order, so "Back on the way" removes it exactly.
+
+### iPhone checklist for round 9I
+
+Written by Claude after 028 has been checked and run.
 
 ---
 

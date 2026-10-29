@@ -86,15 +86,29 @@ export async function askBackOnTheWay(order, { unit = '' } = {}) {
   return answer ? putBackOnTheWay(order, { createExpense: answer.how === 'add' }) : null
 }
 
+// What deleting an order of an order group (plan 9I) does to the group.
+function leavesGroupNote(order) {
+  if (!order.group_id) return ''
+  const share = Number(order.group_share) || 0
+  return share > 0
+    ? ` It leaves its order group: its part of the order discount (${money(share)}) is spread again over the other orders.`
+    : ' It leaves its order group.'
+}
+
 // Deleting an order, asking about its expense. A linked order's item goes
-// back to "to buy" if it is still low.
+// back to "to buy" if it is still low. An order of an order group leaves
+// the group first (its share is spread again over the others).
 export async function askRemoveOrder(order) {
   let result
-  if (!order.expense_id) result = await removeOrder(order, { alsoExpense: false })
-  else {
+  if (!order.expense_id && !(order.group_id && Number(order.group_share) > 0)) result = await removeOrder(order, { alsoExpense: false })
+  else if (!order.expense_id) {
+    const ok = await confirmDialog({ title: `Delete "${order.item_name}"?`, message: leavesGroupNote(order).trim(), confirmLabel: 'Delete' })
+    if (!ok) return null
+    result = await removeOrder(order, { alsoExpense: false })
+  } else {
     const answer = await askDialog({
       title: `Delete "${order.item_name}"?`,
-      message: 'This order has an expense. Delete that too?',
+      message: `This order has an expense. Delete that too?${leavesGroupNote(order)}`,
       fields: [
         {
           name: 'how',
@@ -102,7 +116,7 @@ export async function askRemoveOrder(order) {
           value: 'order',
           options: [
             { value: 'order', label: 'Delete the order only', hint: 'The expense stays in your expenses.' },
-            { value: 'both', label: 'Delete the order and its expense', hint: `The ${money(order.price)} is taken out of your expenses.` },
+            { value: 'both', label: 'Delete the order and its expense', hint: `The ${money(order.group_id ? Number(order.price) + (Number(order.group_share) || 0) : order.price)} is taken out of your expenses.` },
           ],
         },
       ],
