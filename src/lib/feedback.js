@@ -22,8 +22,10 @@ const subscribe = (listener) => {
 // duration 0 keeps it until dismissed.
 export function showToast({ message, detail = null, tone = 'info', action = null, duration = 5000, key = null }) {
   if (key) toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
-  // The same message is never shown twice at once.
-  const same = toasts.find((t) => t.message === message && t.detail === detail && t.tone === tone)
+  // The same message is never shown twice at once — except a toast with
+  // Undo: each one undoes only its own change, so two equal ones (e.g. two
+  // groups made one after the other) are both shown.
+  const same = action?.label !== 'Undo' && toasts.find((t) => t.message === message && t.detail === detail && t.tone === tone)
   if (same) return same.id
   const id = nextId++
   toasts = [...toasts, { id, key, message, detail, tone, action }]

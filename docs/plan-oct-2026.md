@@ -3164,18 +3164,70 @@ failing test that could not be repeated (its name was not recorded). On
 run): every run green, no failure to trace, so nothing was changed for
 it. If it shows again, record the test name and the error.
 
-**Open (ask Zidane).**
+**Open (ask Zidane).** Both were fixed in the second follow-up below.
 
 - Two groups of the same store and date with the same number of items
   have the same label ("Add to Zalando · 22/10 (2 items)", and the same
-  card tag "Order: …"), so their buttons can't be told apart. Not
-  changed: e.g. the item names under each "Add to" button would tell them
-  apart.
+  card tag "Order: …"), so their buttons can't be told apart. → Fix A.
 - A toast with the same text as one still on screen is not shown again
   (`showToast` in `lib/feedback.js`), so grouping two new groups within
   10 seconds shows only the first "2 orders grouped as one order", and its
   Undo undoes the FIRST group. The same for any two equal Undo toasts.
-  App code, not changed.
+  → Fix B.
+
+### Second follow-up 29/10 to 9I (as built; code and tests only, no SQL)
+
+**Fix A — groups with the same label told apart.** Money → Orders →
+"Group orders": under EVERY "Add to {store} · {dd/mm} ({N} items)" button
+the item names of that group's orders, in their saved order (`created_at`,
+then `id`), at most 3, then "+N more" (`itemNames` in `lib/orderGroups.js`,
+the same text as the order form's offer): e.g. "Cat Litter, Bird Seed" /
+"Hay Bale, Hamster Wheel, Water Bottle +2 more". Small grey text right
+under the button, above the re-spread note when there is one; long names
+wrap (no sideways scroll at 375 px). `GroupOrdersBar` in
+`expenses/OrdersSection.jsx`.
+
+The order form's "Same order as" offer (Money → Orders → "Add order",
+Shop → "Order online"; both `OrderForm`) was checked: every candidate
+already reads "Same order as: {up to 3 names, then +N more} ({store} ·
+{dd/mm})" (`candidateLabel`), also with 2 or more candidates. Not changed.
+The card tag "Order: …" is not changed (it opens the "Order group" sheet,
+which lists every item).
+
+**Fix B — an Undo never undoes the wrong thing (app-wide).** `showToast`
+(`lib/feedback.js`): a toast whose action is "Undo" is never dropped
+because another toast on screen has the same text; it is shown like any
+other new toast (its own timer, its own Undo, the toasts stack). Each
+Undo undoes only its own change. Toasts without an action, and toasts
+with another action (Retry, Log in), keep the old rule: the same text
+(and detail and tone) already on screen → not shown again. A `key` still
+replaces the toasts with that key, as before. This covers every Undo
+toast of the app: order groups ("N orders grouped as one order", "Order
+group saved", …), "Order moved to History", "Order deleted", stock
+changes ("Discarded …"), "Deleted", "Removed …", "Expense saved · €…",
+merges and the rest.
+
+**Tests: 1811 → 1817 (101 files).** `lib/feedback.test.js`: two equal
+"Order moved to History" Undo toasts 3 s apart → both shown, the second
+Undo runs only its own action, the first closes on its own timer; a plain
+toast with the text of an Undo toast on screen and a second equal Retry
+toast are still dropped. `hooks/orderGroups.test.js`: two groups made one
+after the other at Zooplus on 25/10 (paid by Shared) → two "2 orders
+grouped as one order" toasts; the second Undo ungroups only the second
+group, the first stays and its own Undo still works; two orders cancelled
+one after the other → two "Order moved to History" toasts, the second Undo
+puts back only the second order and its expense.
+`components/orderGroups.render.test.jsx`: three groups at Zooplus on 25/10
+(two of 2 items, one of 5) → three "Add to" buttons, two with the same
+label, each with its own names ("Cat Litter, Bird Seed", "Dog Chew, Fish
+Flakes", "Hay Bale, Hamster Wheel, Water Bottle +2 more"), and the second
+button sends only its own group; the form with the same three groups →
+each offer with its own names. Full suite run 3 times: 1817 / 1817 each.
+
+**Open (ask Zidane).** Two failed saves with the same error text show one
+"Couldn't save — check your connection." toast; its "Retry" retries only
+the FIRST save (the second one's Retry is never shown). Not changed (the
+brief said to leave other actions as they are).
 
 ### iPhone checklist for round 9I
 

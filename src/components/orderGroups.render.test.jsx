@@ -32,6 +32,7 @@ vi.mock('../hooks/useOrderGroups', async (original) => {
 const shops = new Map([
   ['amazon', { id: 'amazon', name: 'Amazon.it', is_online: true }],
   ['zal', { id: 'zal', name: 'Zalando', is_online: true }],
+  ['zoo', { id: 'zoo', name: 'Zooplus', is_online: true }],
 ])
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [...shops.values()], byId: shops }) }))
 vi.mock('../hooks/useFlow', () => ({ FLOW_NOTICE: '', useFlow: () => ({ ready: true, missing: false, mapRows: [] }) }))
@@ -193,6 +194,24 @@ describe('"Same order as" in the order form (K2)', () => {
     expect(boxes.map((b) => b.checked)).toEqual([false, false])
     expect(screen.getByLabelText(/Same order as: Rain Jacket, Wool Scarf \(Zalando · /)).toBeTruthy()
     expect(screen.getByLabelText(/Same order as: Gloves \(Zalando · /)).toBeTruthy()
+  })
+
+  it('two groups with the same label and a bigger one: each offer shows its own item names, at most 3 then "+N more"', () => {
+    const zoo = (id, item_name, price, group_id, i) => single(id, item_name, price, { shop_id: 'zoo', order_date: today, paid_by: 'shared', group_id, created_at: `${today}T07:00:${String(i).padStart(2, '0')}Z` })
+    data.orders = [
+      zoo('p2', 'Bird Seed', 6.75, 'gP', 2), zoo('p1', 'Cat Litter', 18.9, 'gP', 1),
+      zoo('q1', 'Dog Chew', 4.2, 'gQ', 3), zoo('q2', 'Fish Flakes', 3.85, 'gQ', 4),
+      ...['Hay Bale', 'Hamster Wheel', 'Water Bottle', 'Salt Lick', 'Nest Box'].map((n, i) => zoo(`r${i}`, n, 2.5 + i, 'gR', 10 + i)),
+    ]
+    data.groups = ['gP', 'gQ', 'gR'].map((id) => ({ id, shop_id: 'zoo', order_date: today, paid_by: 'shared', discount_kind: null, discount_value: null, discount_total: 0 }))
+    render(<OrderForm {...formProps} prefill={{ itemName: 'Scratch Post', shopId: 'zoo', paidBy: 'shared' }} onSubmit={vi.fn()} />)
+    const offer = screen.getByRole('group', { name: 'Same order' })
+    const day = new Date().toLocaleDateString('en-GB').slice(0, 5)
+    expect(within(offer).getAllByRole('checkbox').map((b) => b.closest('label').textContent)).toEqual([
+      `Same order as: Cat Litter, Bird Seed (Zooplus · ${day})`,
+      `Same order as: Dog Chew, Fish Flakes (Zooplus · ${day})`,
+      `Same order as: Hay Bale, Hamster Wheel, Water Bottle +2 more (Zooplus · ${day})`,
+    ])
   })
 
   it('before 028: no offer', () => {
@@ -375,6 +394,31 @@ describe('"Group orders" in MONEY Orders', () => {
     expect(screen.getAllByRole('button', { name: /^Add to / })).toHaveLength(2)
     // Only checkout A has a discount: only its button says it is spread again.
     expect(screen.getAllByText(/spread again/).map((p) => p.textContent)).toEqual(['The order discount will be spread again over 4 items.'])
+  })
+
+  it('two groups with the same store, date and number of items: each "Add to …" shows its own item names (saved order, at most 3, then "+N more")', async () => {
+    const zoo = (id, item_name, price, group_id, i) => single(id, item_name, price, { shop_id: 'zoo', order_date: '2026-10-25', paid_by: 'shared', group_id, created_at: `2026-10-25T07:00:${String(i).padStart(2, '0')}Z` })
+    data.orders = [
+      zoo('p2', 'Bird Seed', 6.75, 'gP', 2), zoo('p1', 'Cat Litter', 18.9, 'gP', 1),
+      zoo('q1', 'Dog Chew', 4.2, 'gQ', 3), zoo('q2', 'Fish Flakes', 3.85, 'gQ', 4),
+      ...['Hay Bale', 'Hamster Wheel', 'Water Bottle', 'Salt Lick', 'Nest Box'].map((n, i) => zoo(`r${i}`, n, 2.5 + i, 'gR', 10 + i)),
+      zoo('s1', 'Scratch Post', 27.4, null, 20),
+    ]
+    data.groups = ['gP', 'gQ', 'gR'].map((id) => ({ id, shop_id: 'zoo', order_date: '2026-10-25', paid_by: 'shared', discount_kind: null, discount_value: null, discount_total: 0 }))
+    data.groupOrders = vi.fn(async () => ({ error: null }))
+    section()
+    fireEvent.click(screen.getByRole('button', { name: /Group orders/ }))
+    fireEvent.click(screen.getByLabelText('Select Scratch Post'))
+    const buttons = screen.getAllByRole('button', { name: /^Add to / })
+    expect(buttons.map((b) => [b.textContent.trim(), b.nextElementSibling.textContent])).toEqual([
+      ['Add to Zooplus · 25/10 (2 items)', 'Cat Litter, Bird Seed'],
+      ['Add to Zooplus · 25/10 (2 items)', 'Dog Chew, Fish Flakes'],
+      ['Add to Zooplus · 25/10 (5 items)', 'Hay Bale, Hamster Wheel, Water Bottle +2 more'],
+    ])
+    // The second button (same label as the first) sends only its own group.
+    fireEvent.click(buttons[1])
+    await vi.waitFor(() => expect(data.groupOrders).toHaveBeenCalledTimes(1))
+    expect(data.groupOrders.mock.calls[0][0].target.groupId).toBe('gQ')
   })
 
   it('"Paid by" not on Everyone: a hint that some orders may be hidden', () => {

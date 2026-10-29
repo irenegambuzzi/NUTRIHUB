@@ -18,7 +18,7 @@ import { groceryStore, pantryStore } from '../../lib/stores'
 import { orderLock } from '../../lib/durable'
 import { localDateString } from '../../lib/expensePeriods'
 import { linkedOrderUnits, splitOrders } from '../../lib/orders'
-import { groupLabel, groupMembers, groupingPlan, respreadNote } from '../../lib/orderGroups'
+import { groupLabel, groupMembers, groupingPlan, itemNames, respreadNote } from '../../lib/orderGroups'
 import { personLabel } from '../../lib/personFilter'
 import { cn } from '../../lib/cn'
 
@@ -295,7 +295,8 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
 // "Group orders": how many orders are ticked and what can be done with
 // them — "Group as one order" (a new group; then its sheet opens, to type
 // the order discount), and beside it one "Add to {group}" for each existing
-// group of the same store, date and payer — or why not. Each button does
+// group of the same store, date and payer (with its item names under it,
+// as two groups can have the same label) — or why not. Each button does
 // only what it says. Every status can be grouped. When "Paid by" isn't on
 // Everyone, it says that some orders may be hidden.
 function GroupOrdersBar({ selected, orders, person, shopName, onDone, onGrouped }) {
@@ -340,10 +341,13 @@ function GroupOrdersBar({ selected, orders, person, shopName, onDone, onGrouped 
             </Button>
           )}
           {plan.targets.map((target) => (
-            <div key={target.groupId} className="space-y-1">
+            <div key={target.groupId} className="space-y-1 min-w-0 max-w-full">
               <Button type="button" onClick={() => run(target)} disabled={busy} className="px-3 py-1.5 text-xs">
                 <Plus size={14} /> Add to {groupLabel(target.members, shopName)}
               </Button>
+              {/* Two groups of the same store, date and size have the same
+                  label: their item names tell them apart. */}
+              <p className="text-[11px] text-[var(--color-text-soft)] break-words">{itemNames(target.members)}</p>
               {target.members.some((o) => Number(o.group_share) > 0) && <p className="text-[11px] text-[var(--color-text-muted)]">{respreadNote(target.members.length + plan.singles.length)}</p>}
             </div>
           ))}

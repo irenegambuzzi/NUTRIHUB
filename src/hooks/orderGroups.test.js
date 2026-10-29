@@ -11,7 +11,7 @@ const net = vi.hoisted(() => ({ offline: false }))
 vi.mock('../lib/connection', async (original) => ({ ...(await original()), isOffline: () => net.offline }))
 
 const { groupOrders, saveGroupDetails, takeOutOfGroup, ungroupOrders } = await import('./useOrderGroups')
-const { createOrder, editOrder, removeOrder } = await import('./useOrders')
+const { createOrder, editOrder, markCancelled, removeOrder } = await import('./useOrders')
 const { orderGroupStore, orderStore } = await import('../lib/stores')
 const { dismissToast, getToasts, runToastAction } = await import('../lib/feedback')
 const { GROUPS_NOTICE } = await import('../lib/orderGroups')
@@ -247,7 +247,7 @@ describe('two separate orders at the same store on the same day (two checkouts)'
     await groupOrders({ id: 'gB', singles: b })
     const singles = [zal(5, 'Beanie', 15.99), zal(6, 'Gloves', 22.4)]
     sync()
-    // The toasts of the two checkouts are closed (the same message isn't shown twice).
+    // The toasts of the two checkouts are closed.
     getToasts().forEach((t) => dismissToast(t.id))
     return singles
   }
@@ -287,6 +287,56 @@ describe('two separate orders at the same store on the same day (two checkouts)'
     expect(view().slice(2, 4)).toEqual(checkoutB)
     expect(view().filter((r) => r[3] === 'gA').map((r) => r[0])).toEqual(['Rain Jacket', 'Wool Scarf', 'Beanie', 'Gloves'])
     expect(round2(view().filter((r) => r[3] === 'gA').reduce((s, r) => s + r[2], 0))).toBe(5)
+  })
+})
+
+describe('two Undo toasts with the same text: each undoes only its own change', () => {
+  // Zooplus, 25/10, paid by Shared: two orders made one after the other.
+  const ZOO = 'zoo'
+  const place = { shop_id: ZOO, order_date: '2026-10-25', paid_by: 'shared' }
+  const zoo = (i, name, price) => seed(i, name, price, { ...place, created_at: `2026-10-25T07:00:0${i}Z` })
+
+  it('two groups made one after the other: two toasts; the second Undo undoes only the second group, the first stays (and its own Undo still works)', async () => {
+    const a = [zoo(1, 'Cat Litter', 18.9), zoo(2, 'Bird Seed', 6.75)]
+    const b = [zoo(3, 'Dog Chew', 4.2), zoo(4, 'Fish Flakes', 3.85)]
+    sync()
+    await groupOrders({ id: 'gP', singles: a })
+    await groupOrders({ id: 'gQ', singles: b })
+    expect(getToasts().map((t) => [t.message, t.action?.label])).toEqual([
+      ['2 orders grouped as one order', 'Undo'],
+      ['2 orders grouped as one order', 'Undo'],
+    ])
+    const [first, second] = getToasts()
+    await runToastAction(second.id)
+    expect(view()).toEqual([
+      ['Cat Litter', 18.9, 0, 'gP'],
+      ['Bird Seed', 6.75, 0, 'gP'],
+      ['Dog Chew', 4.2, 0, null],
+      ['Fish Flakes', 3.85, 0, null],
+    ])
+    expect([...db.order_groups.keys()]).toEqual(['gP'])
+    expect(getToasts().map((t) => t.id)).toEqual([first.id])
+    await runToastAction(first.id)
+    expect(view().map((row) => row[3])).toEqual([null, null, null, null])
+    expect(db.order_groups.size).toBe(0)
+  })
+
+  it('"Order moved to History" twice (two cancelled orders): the second Undo puts back only the second order and its expense', async () => {
+    const litter = zoo(1, 'Cat Litter', 18.9)
+    const chew = zoo(2, 'Dog Chew', 4.2)
+    sync()
+    await markCancelled(litter, { deleteExpense: true, today: '2026-10-27', outcomeKnown: true })
+    await markCancelled(chew, { deleteExpense: true, today: '2026-10-27', outcomeKnown: true })
+    expect(getToasts().map((t) => t.message)).toEqual(['Order moved to History', 'Order moved to History'])
+    expect([...db.orders.values()].map((o) => o.status)).toEqual(['cancelled', 'cancelled'])
+    expect(amounts()).toEqual([])
+    await runToastAction(getToasts()[1].id)
+    expect([...db.orders.values()].map((o) => [o.item_name, o.status])).toEqual([
+      ['Cat Litter', 'cancelled'],
+      ['Dog Chew', 'on_the_way'],
+    ])
+    expect(amounts()).toEqual([4.2])
+    expect(getToasts().map((t) => t.message)).toEqual(['Order moved to History'])
   })
 })
 
