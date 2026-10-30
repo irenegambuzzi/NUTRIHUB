@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, X } from 'lucide-react'
 import { Button } from './Button'
 import { DateField } from './DateField'
@@ -7,6 +8,13 @@ import { cn } from '../../lib/cn'
 import { closeDialog, dialogErrors, dismissToast, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
 // Toasts sit above the mobile tab bar; the dialog covers everything.
+//
+// Layers, bottom to top: a page's own forms and editors (z-30 / z-40), the
+// sheets put on document.body with createPortal (z-50, e.g. "Order group"),
+// this dialog (z-[60]), toasts (z-[70]). The dialog is often asked from
+// inside one of those sheets ("Take out of the group"), so it goes on
+// document.body too, on a layer above all of them: it is always in front,
+// whichever was opened first and wherever <Feedback /> is in the page.
 export function Feedback() {
   return (
     <>
@@ -20,7 +28,7 @@ function Toasts() {
   const toasts = useToasts()
   if (toasts.length === 0) return null
   return (
-    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-[60] flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
+    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-[70] flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -63,11 +71,12 @@ function Dialog() {
   }, [dialog])
 
   if (!dialog) return null
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(null)}>
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(null)}>
       {/* Keyed by dialog, so each one starts with its own default values. */}
       <DialogForm key={dialog.id} dialog={dialog} />
-    </div>
+    </div>,
+    document.body
   )
 }
 

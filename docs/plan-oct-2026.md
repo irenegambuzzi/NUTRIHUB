@@ -3229,6 +3229,69 @@ each offer with its own names. Full suite run 3 times: 1817 / 1817 each.
 the FIRST save (the second one's Retry is never shown). Not changed (the
 brief said to leave other actions as they are).
 
+### Fix 30/10 to 9I — questions in front of the sheets (as built; code and tests only, no SQL)
+
+**What the iPhone test found.** Money → Orders → the tag "Order: {store} ·
+{dd/mm} ({N} items)" → "Order group" → "Take out of the group" (or
+"Ungroup"): the question `Take "{name}" out of the group?` / "Ungroup this
+order?" stayed hidden; the sheet stayed on screen.
+
+**Cause.** The shared question (`confirmDialog` / `askDialog`, drawn by
+`<Feedback />` in `Layout`) was on layer `z-50` inside the app's own
+element (`#root`). The "Order group" sheet is put on `document.body` with
+`createPortal`, also on `z-50`, so after `#root`. Same layer → the one
+later on the page is drawn on top: the sheet covered the question, and
+taps went to the sheet.
+
+**Fix (app-wide, `components/ui/Feedback.jsx`).** The question is now put
+on `document.body` too (`createPortal`), on its own layer `z-[60]`, above
+every sheet; toasts move from `z-[60]` to `z-[70]`, so they stay above the
+question as before. Layers, bottom to top: a page's own forms and editors
+(`z-30` / `z-40`), sheets on `document.body` (`z-50`), the question
+(`z-[60]`), toasts (`z-[70]`). The question no longer depends on which was
+opened first. A tap on its dimmed background only cancels it (as before);
+nothing reaches the sheet behind. Texts, buttons, numbers, Undo: not
+changed. After "Take out" the sheet stays open with the group's new
+numbers; after "Ungroup" it closes (as before).
+
+**Every place a question can open over a sheet or form, checked:**
+
+- Money → Orders → tag → "Order group": "Take out of the group",
+  "Ungroup" — were hidden (sheet on `document.body`, `z-50`). Fixed.
+- Money → Orders → "Edit order" (`z-30`): no question opens from it
+  (only "Manage stores", a sheet on `z-50`: in front). Already fine.
+- Money → Orders → "Arrived" (`ArrivedDialog`, `LinkedArrivedDialog`):
+  no question inside; "Create a new item" swaps it for the HOME item
+  editor (below). Already fine.
+- Money → Orders / Shop → "On the way" → "Cancel / Return", "Back on the
+  way", Delete: asked from the cards, no sheet open. Already fine (now
+  also on `z-[60]`).
+- Shop → "Confirm purchase" (`z-40`): no question opens from it. Already
+  fine. Shop → Receipts → photo viewer (`z-40`) → "Move to another day":
+  was already in front (`z-50` over `z-40`).
+- Money → "Add expense" form (`z-30`) and Money → Expenses → deleting an
+  expense of a purchase ("Part of a purchase"): were already in front.
+- Home → item editor (`z-30`): "Count … in kg instead of gr?", "Move into
+  …?" — were already in front.
+- Manage categories: Money (`CategoryManager`, `z-30`) and Home →
+  Categories → "Manage categories" (sheet on `document.body`): no question
+  opens from them (inline confirms). Already fine.
+- Plan → Profiles → Log out; Home → Import / Export → Import / Restore;
+  Shop → an ordered item ticked: no sheet open. Already fine.
+
+**Tests: 1817 → 1822 (102 files).** New
+`components/dialogLayers.render.test.jsx`, with the real `<Feedback />`
+and the real "Take out" / "Ungroup" (a fake `save_order_group`): the
+question opened from "Order group" is drawn in front of the sheet (higher
+layer, on `document.body`), its confirm button has the focus; Cancel →
+back to the sheet, nothing sent, nothing changed; a tap on its dimmed
+background → only the question closes; "Take out" → the sheet stays with
+2 of 3 orders and "Paid €47.00 (order discount −€3.00)", toast with Undo;
+"Ungroup" → question and sheet closed, toast with Undo. HOME item editor:
+the unit question in front of the editor; Cancel keeps "gr"; "Change
+unit" converts. Before the fix the "Order group" tests failed (question
+behind the sheet). Full suite run twice: 1822 / 1822 each.
+
 ### iPhone checklist for round 9I
 
 Written by Claude after 028 has been checked and run.
