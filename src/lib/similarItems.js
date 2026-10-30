@@ -214,5 +214,9 @@ export const similarOnListText = (entry) => `Similar on your SHOP list: ${entry.
 export const createNewLabel = (name) => `Create new “${String(name ?? '').trim()}”`
 export const CREATE_NEW_HINT = 'Similar names can mix up later — make it clearer, e.g. “Frozen Pumpkin Cubes”.'
 
+// "Add it to Cat Wet Food · 12 pcs at home" in the HOME editor opened from
+// "It arrived!" (plan 9J, K12): the arrival goes to that item instead.
+export const arrivalPickLabel = (item) => `Add it to ${item.name} · ${stockWords(item)}${inStock(item) ? ' at home' : ''}`
+
 // "Go to Fresh Pumpkin" / "Go to Balloons (finished 1×)" in the HOME editor.
 export const goToLabel = (item) => `Go to ${item.name}${isFinished(item) ? ' (finished 1×)' : ''}`

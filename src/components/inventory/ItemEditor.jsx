@@ -61,7 +61,8 @@ function initialState(item, group, prefill) {
 // `homeItems` (every HOME item) turns on the similar-name safety net (plan
 // 9G): a new name, or a renamed one, that is already in HOME is not saved
 // ("Go to …" opens that item instead, `onGoTo`); a similar one asks first.
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null }) {
+// `optionLabel`: the text of each item's button ("Go to …" by default).
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
@@ -208,7 +209,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (homeItems && renamed && exactKey(form.name) !== createNewKey) {
       const { exact, similar, more } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
       if (exact) return setQuestion({ kind: 'exact', item: exact })
-      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: goToLabel(m.item) })), more })
+      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: optionLabel(m.item) })), more })
     }
     setSaving(true)
     setError('')
@@ -267,12 +268,13 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           <Label>Name</Label>
           <Input autoFocus placeholder={isGroup ? 'e.g. Chips & Snacks' : group ? 'Name or brand, e.g. Lays paprika' : 'e.g. Rice, Dish soap, Paracetamol'} value={form.name} onChange={(e) => changeName(e.target.value)} />
           {/* "Go to …" closes this form without saving anything (a stock
-              typed here is not used) and opens the existing item. */}
+              typed here is not used) and opens the existing item (from
+              "It arrived!": the arrival goes to that item instead). */}
           {question?.kind === 'exact' && (
             <SimilarItemsQuestion
               name={form.name}
               title={`“${question.item.name}” is already in HOME`}
-              options={[{ item: question.item, label: goToLabel(question.item) }]}
+              options={[{ item: question.item, label: optionLabel(question.item) }]}
               onPick={onGoTo}
               className="mt-1.5"
             />

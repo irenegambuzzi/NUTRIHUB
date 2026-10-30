@@ -1,6 +1,6 @@
 import { askDialog, confirmDialog } from '../lib/feedback'
 import { outcomeSupported } from '../lib/orders'
-import { markCancelled, putBackOnTheWay, removeOrder, syncListFor, unarriveOrder } from './useOrders'
+import { itemMadeByArrival, markCancelled, putBackOnTheWay, removeOrder, syncListFor, unarriveOrder } from './useOrders'
 
 // The questions asked before an order changes, shared by Orders in MONEY
 // and the "On the way" part of the SHOP list, so both behave the same.
@@ -53,19 +53,34 @@ export async function askCancelOrder(order, { orders, today }) {
   return result
 }
 
-// A finished order goes back on the way. An arrived linked order takes the
-// stock its arrival added back out of HOME (after asking); one whose
-// expense was deleted can get it again.
-export async function askBackOnTheWay(order, { unit = '' } = {}) {
-  if (order.status === 'arrived' && Number(order.stock_added) > 0) {
-    const ok = await confirmDialog({
-      title: `Put "${order.item_name}" back on the way?`,
-      message: `Its arrival added ${Number(order.stock_added)}${unit ? ` ${unit}` : ''} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`,
-      confirmLabel: 'Put back on the way',
-    })
-    return ok ? unarriveOrder(order) : null
+// The question before "Back on the way" on an arrived order that recorded
+// no stock (plan 9J, K17): whatever went into HOME by hand stays there.
+export const NO_STOCK_RECORDED =
+  'No stock was recorded for this order\'s arrival. If something was added to HOME when it arrived, it stays in HOME — when it arrives again, choose "Don\'t add to HOME".'
+
+// A finished order goes back on the way. An arrived order (any, plan 9J
+// K10) takes the stock its arrival added back out of HOME, after asking —
+// with a new item or variant that arrival made, while untouched (K3, K4);
+// one with no stock recorded asks too, unless it is durable or a service
+// (`durable`, K17). A cancelled or returned one whose expense was deleted
+// can get it again.
+export async function askBackOnTheWay(order, { unit = '', durable = false } = {}) {
+  if (order.status === 'arrived') {
+    const title = `Put "${order.item_name}" back on the way?`
+    const added = Number(order.stock_added) > 0
+    const made = added ? await itemMadeByArrival(order) : null
+    const qty = `${Number(order.stock_added)}${unit ? ` ${unit}` : ''}`
+    const message = !added
+      ? NO_STOCK_RECORDED
+      : made
+        ? `Its arrival added ${qty} to HOME and created "${made.name}": both are taken out again, so they aren't counted twice when it really arrives.`
+        : `Its arrival added ${qty} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
+    if (added || !durable) {
+      const ok = await confirmDialog({ title, message, confirmLabel: 'Put back on the way' })
+      if (!ok) return null
+    }
+    return unarriveOrder(order, { made })
   }
-  if (order.status === 'arrived' && order.pantry_item_id) return unarriveOrder(order)
   if (order.expense_id) return putBackOnTheWay(order, { createExpense: false })
   const answer = await askDialog({
     title: `Put "${order.item_name}" back on the way?`,

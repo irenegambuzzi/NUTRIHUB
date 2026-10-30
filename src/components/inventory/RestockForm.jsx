@@ -20,6 +20,7 @@ import { PackSizeField } from '../ui/PackSizeField'
 // package ("1 pack" of an item usually bought by the box). `canSaveUsual`:
 // this arrival may save a first-time usual size (onSubmit then gets
 // `pack.firstTime`). Restocking in HOME has no pack field (unchanged).
+// `initial.variantId`: the variant chosen at the start (a group).
 export function RestockForm({ item, variants = null, onSubmit, onClose, initial = null, submitLabel = 'Add to stock', packs = false, canSaveUsual = false }) {
   const purchaseUnit = item.packaging_unit && Number(item.quantity_per_pack) > 0 ? item.packaging_unit : null
   const orderedUnit = initial?.unit ? normalizeUnit(initial.unit) : null
@@ -32,7 +33,7 @@ export function RestockForm({ item, variants = null, onSubmit, onClose, initial 
   const [text, setText] = useState(initial?.quantity > 0 && orderedUnitConverts ? String(initial.quantity) : '1')
   const [unit, setUnit] = useState(packUnit ?? extraUnit ?? (orderedUnit === item.unit ? item.unit : purchaseUnit ?? item.unit))
   const [packTyped, setPackTyped] = useState(() => (packs && Number(initial?.packSize) > 0 && orderedUnit ? { text: String(Number(initial.packSize)), unit: orderedUnit } : null))
-  const [target, setTarget] = useState(variants?.length ? variants[0].id : 'new')
+  const [target, setTarget] = useState(variants?.some((v) => v.id === initial?.variantId) ? initial.variantId : variants?.length ? variants[0].id : 'new')
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
 

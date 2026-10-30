@@ -281,8 +281,10 @@ describe('Orders: Arrived', () => {
     data.orders = [order({ id: 'o3', item_name: 'Coffee', category_id: 'groceries' })]
     section()
     fireEvent.click(screen.getByRole('button', { name: 'Arrived' }))
-    await waitFor(() => expect(markArrived).toHaveBeenCalledTimes(1))
+    // Plan 9J: the dialog opens on the order still on the way; the choice
+    // made there marks it arrived.
     expect(await screen.findByText('Arrived dialog: add to HOME?')).toBeTruthy()
+    expect(markArrived).not.toHaveBeenCalled()
   })
 
   it('a service order too (decision 14b), marked as a service', async () => {

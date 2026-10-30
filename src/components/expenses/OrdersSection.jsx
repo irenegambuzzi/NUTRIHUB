@@ -10,7 +10,7 @@ import { PersonSelector } from './PersonSelector'
 import { LinkedArrivedDialog } from './LinkedArrivedDialog'
 import { OrderGroupSheet } from './OrderGroupSheet'
 import { WhereToRecord } from '../ui/WhereToRecord'
-import { useOrders, createOrder, editOrder, linkedItemOf, markArrived, markDurableArrived } from '../../hooks/useOrders'
+import { useOrders, createOrder, editOrder, linkedItemOf, markDurableArrived } from '../../hooks/useOrders'
 import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/orderActions'
 import { groupOrders, useOrderGroups } from '../../hooks/useOrderGroups'
 import { useFlow } from '../../hooks/useFlow'
@@ -93,17 +93,17 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
     })
 
   // An order linked to a HOME item asks how much arrived and adds it in
-  // one step; any other order is marked arrived, then HOME is offered. A
-  // durable order (its budget category, or the SHOP entry it came from)
-  // or a service one is only marked arrived: nothing goes into HOME,
+  // one step; any other order offers HOME ("It arrived!") and is marked
+  // arrived by the choice made there (plan 9J) — closed, it stays on the
+  // way. A durable order (its budget category, or the SHOP entry it came
+  // from) or a service one is only marked arrived: nothing goes into HOME,
   // nothing is asked.
-  const arrive = async (order) => {
+  const arrive = (order) => {
     const lock = orderLock(order, { expenseCategories: categories, groceryItems })
     if (lock) return markDurableArrived(order, localDateString(), lock)
     const item = flow.ready ? linkedItemOf(order, pantryRows) : null
     if (item) return setArrivedLinked({ order, item })
-    const { error } = await markArrived(order, localDateString())
-    if (!error) setArrived(order)
+    setArrived(order)
   }
 
   const cancel = async (order) => {
@@ -114,7 +114,13 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
     }
   }
 
-  const backOnTheWay = (order) => askBackOnTheWay(order, { unit: linkedItemOf(order, pantryRows)?.unit })
+  // The unit of the item the arrival went to (also an order not linked to
+  // HOME, plan 9J); durable and service orders are put back without asking.
+  const backOnTheWay = (order) =>
+    askBackOnTheWay(order, {
+      unit: (pantryRows.find((i) => i.id === order.arrived_item_id) ?? linkedItemOf(order, pantryRows))?.unit,
+      durable: Boolean(orderLock(order, { expenseCategories: categories, groceryItems })),
+    })
 
   const pick = (order) =>
     setPicked((ids) => {

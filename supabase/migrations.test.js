@@ -3437,3 +3437,104 @@ describe('028: order groups — one discount for the whole online order', () => 
     })
   })
 })
+
+describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (no new SQL)', () => {
+  let fx
+  const rows = async (text, params) => (await fx.query(text, params)).rows
+  const row = async (text, params) => (await rows(text, params))[0]
+  async function asMember(fn) {
+    await fx.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await fx.exec('set role authenticated')
+    try {
+      return await fn()
+    } finally {
+      await fx.exec('reset role')
+    }
+  }
+  const arrive = async (o, item, qty) => (await asMember(() => fx.query(`select arrive_order($1, $2, $3, '2026-10-30') as r`, [o, item, qty]))).rows[0].r
+  const unarrive = (o) => asMember(() => fx.query(`select unarrive_order($1)`, [o]))
+  const stock = async (id) => (await row(`select current_stock::float as s from pantry_items where id = $1`, [id]))?.s ?? null
+  const orderNow = (id) => row(`select status, arrived_date::text as day, stock_added::float as added, arrived_item_id, arrived_log_id, pantry_item_id from orders where id = $1`, [id])
+  const logsOf = (id) => rows(`select id, change::float as change, new_stock::float as new_stock, reason from stock_logs where item_id = $1`, [id])
+  // An order as Money → Orders → "Add order" saves it: not linked to HOME.
+  const unlinked = async (name, price, extra = {}) =>
+    (await row(`insert into orders (item_name, price, order_date, paid_by, grocery_item_id) values ($1, $2, '2026-10-24', 'shared', $3) returning id`, [name, price, extra.grocery ?? null])).id
+
+  beforeAll(async () => {
+    fx = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-3]|2[78])_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+      await fx.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    }
+  }, 120000)
+
+  it('no SQL file after 028, and arrive_order / unarrive_order are still the ones of 021', async () => {
+    expect(fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f)).sort().at(-1)).toBe('028_order_groups.sql')
+    const sql = fs.readFileSync(path.join(dir, '021_connected_flow.sql'), 'utf8')
+    for (const name of ['arrive_order', 'unarrive_order']) {
+      const body = sql.match(new RegExp(`create or replace function ${name}\\([\\s\\S]*?as \\$\\$([\\s\\S]*?)\\$\\$;`))[1]
+      expect((await row(`select prosrc from pg_proc where proname = $1`, [name])).prosrc).toBe(body)
+    }
+  })
+
+  it('an order with pantry_item_id null into an existing item: +5000 gr as "purchased", the order stays unlinked; unarrive takes out exactly that and deletes the row', async () => {
+    const rice = (await row(`insert into pantry_items (name, unit, current_stock, min_stock, category_id) values ('Basmati Rice', 'gr', 200, 500, 'misc') returning id`)).id
+    const o = await unlinked('Basmati rice 5 kg', 21.5)
+    const answer = await arrive(o, rice, 5000)
+    expect(answer.added).toBe(true)
+    expect(await stock(rice)).toBe(5200)
+    const [log] = await logsOf(rice)
+    expect(log).toMatchObject({ change: 5000, new_stock: 5200, reason: 'purchased' })
+    expect(await orderNow(o)).toEqual({ status: 'arrived', day: '2026-10-30', added: 5000, arrived_item_id: rice, arrived_log_id: log.id, pantry_item_id: null })
+    // The other phone presses Arrived too: nothing is added again.
+    expect((await arrive(o, rice, 5000)).added).toBe(false)
+    expect(await stock(rice)).toBe(5200)
+    await unarrive(o)
+    expect(await stock(rice)).toBe(200)
+    expect(await logsOf(rice)).toEqual([])
+    expect(await orderNow(o)).toEqual({ status: 'on_the_way', day: null, added: 0, arrived_item_id: null, arrived_log_id: null, pantry_item_id: null })
+  })
+
+  it('"Create a new item": made with stock 0 (as the app upserts it), then arrive_order +2; created before its history row; unarrive → 0 and the app\'s guarded delete removes it', async () => {
+    const id = '9a000000-0000-4000-8000-000000000001'
+    const o = await unlinked('Catnip Snack', 4.2)
+    const make = () => asMember(() => fx.query(`insert into pantry_items (id, name, unit, current_stock, min_stock, category_id) values ($1, 'Catnip Snack', 'pcs', 0, 1, 'misc') on conflict (id) do nothing`, [id]))
+    await make()
+    await make() // pressed again after a dropped answer: still one item
+    expect(Number((await row(`select count(*) from pantry_items where name = 'Catnip Snack'`)).count)).toBe(1)
+    await arrive(o, id, 2)
+    expect(await stock(id)).toBe(2)
+    const logs = await logsOf(id)
+    expect(logs.map((l) => l.reason)).toEqual(['purchased'])
+    const gap = await row(`select extract(epoch from (l.created_at - p.created_at))::float as s from stock_logs l join pantry_items p on p.id = l.item_id where l.id = $1`, [logs[0].id])
+    expect(gap.s).toBeGreaterThanOrEqual(0)
+    expect(gap.s).toBeLessThanOrEqual(30)
+    await unarrive(o)
+    expect(await stock(id)).toBe(0)
+    expect(await logsOf(id)).toEqual([])
+    await asMember(() => fx.query(`delete from pantry_items where id = $1 and current_stock = 0`, [id]))
+    expect(await stock(id)).toBeNull()
+    expect((await orderNow(o)).status).toBe('on_the_way')
+  })
+
+  it('a new item with "Current stock" 0: arrive_order adds nothing (the order arrives, the item is not recorded on it)', async () => {
+    const id = '9a000000-0000-4000-8000-000000000002'
+    const o = await unlinked('Lint Roller', 5.5)
+    await asMember(() => fx.query(`insert into pantry_items (id, name, unit, current_stock, category_id) values ($1, 'Lint Roller', 'pcs', 0, 'misc') on conflict (id) do nothing`, [id]))
+    await arrive(o, id, 0)
+    expect(await orderNow(o)).toMatchObject({ status: 'arrived', added: 0, arrived_item_id: null, arrived_log_id: null })
+    expect(await logsOf(id)).toEqual([])
+  })
+
+  it('"Don\'t add to HOME": arrive_order(order, null, 0) then unarrive_order — the SHOP entry leaves the list and comes back', async () => {
+    const entry = (await row(`insert into grocery_items (name, quantity, unit, completed) values ('Shoe Insoles', 1, 'pcs', false) returning id`)).id
+    const o = await unlinked('Shoe Insoles', 9, { grocery: entry })
+    const before = await row(`select sum(current_stock)::float as s, count(*)::int as n from pantry_items`)
+    await arrive(o, null, 0)
+    expect(await orderNow(o)).toMatchObject({ status: 'arrived', day: '2026-10-30', added: 0, arrived_item_id: null, arrived_log_id: null })
+    expect((await row(`select completed from grocery_items where id = $1`, [entry])).completed).toBe(true)
+    await unarrive(o)
+    expect(await orderNow(o)).toMatchObject({ status: 'on_the_way', day: null })
+    expect((await row(`select completed from grocery_items where id = $1`, [entry])).completed).toBe(false)
+    expect(await row(`select sum(current_stock)::float as s, count(*)::int as n from pantry_items`)).toEqual(before)
+  })
+})

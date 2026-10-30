@@ -30,7 +30,7 @@ import { ArrivedDialog } from '../components/expenses/ArrivedDialog'
 import { WhereToRecord } from '../components/ui/WhereToRecord'
 import { FLOW_NOTICE, useFlow } from '../hooks/useFlow'
 import { useShops } from '../hooks/useShops'
-import { markArrived, markDurableArrived } from '../hooks/useOrders'
+import { markDurableArrived } from '../hooks/useOrders'
 import { askCancelOrder } from '../hooks/orderActions'
 import { askDialog, showToast } from '../lib/feedback'
 import { expectedLabel } from '../lib/orders'
@@ -165,13 +165,12 @@ export function GroceryPage() {
 
   // A durable order (its budget category, or the SHOP entry it came from)
   // or a service one is only marked arrived: nothing goes into HOME,
-  // nothing is asked.
-  const arrive = async (order, pantry) => {
+  // nothing is asked. Any other opens its dialog on the order still on the
+  // way: the choice made there marks it arrived (plan 9J).
+  const arrive = (order, pantry) => {
     const lock = orderLock(order, { expenseCategories, groceryItems: onTheWay })
     if (lock) return markDurableArrived(order, today, lock)
-    if (pantry) return setArriving({ order, item: pantry })
-    const { error } = await markArrived(order, today)
-    if (!error) setArriving({ order })
+    setArriving(pantry ? { order, item: pantry } : { order })
   }
 
   const shopOf = (item) => {

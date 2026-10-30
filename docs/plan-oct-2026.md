@@ -27,6 +27,7 @@ Contents
    - 9G. Similar-name safety net (decided 26/10, as built)
    - 9H. Pack size per purchase (decided 27–28/10, as built)
    - 9I. Order groups (decided 29/10, as built)
+   - 9J. Arrived Undo and recorded arrivals (decided 30/10, as built)
 10. Risks and decisions
 
 ---
@@ -3089,9 +3090,9 @@ when an item is saved or a backup is restored — a pass-through, no logic),
 before migration 006/007). No sorting, suggestion, filter, label or
 screen uses it.
 
-**Next round (small, right after this one).** An Undo on the toast after
-"Arrived", and stock added through the "It arrived!" dialog recorded on
-the order, so "Back on the way" removes it exactly.
+**Next round.** Round 9J (an Undo on the toast after "Arrived", and stock
+added through the "It arrived!" dialog recorded on the order) is done —
+see section 9J below. Next: round 6D.
 
 ### Follow-up 29/10 to 9I (as built; code and tests only, no SQL)
 
@@ -3295,6 +3296,203 @@ behind the sheet). Full suite run twice: 1822 / 1822 each.
 ### iPhone checklist for round 9I
 
 Written by Claude after 028 has been checked and run.
+
+### 9J. Arrived Undo and recorded arrivals (decided 30/10, as built)
+
+Analysis: `tmp-export/9j-readonly-report.md` (30/10, read only; paths L1,
+L2, U0–U4, D). Zidane chose 1-A + 2-A, c1 (Undo and "Back on the way"),
+the same for new variants, 3-B, 4-A + 4-C, and decisions K1–K17 below.
+**No SQL**: `arrive_order` / `unarrive_order` (021) are used as they are;
+no function replaced, no column, no data fix. No new browser storage, no
+new offline queue. Deployed at once (nothing waits for SQL); an older app
+version on the other phone keeps the old "It arrived!" (marked arrived
+first, stock unrecorded) until it is reloaded.
+
+**K1 — every "It arrived!" choice is one `arrive_order` step.**
+`OrdersSection.arrive` and `GroceryPage.arrive` open `ArrivedDialog` on the
+order still on the way (no `markArrived` first). `ArrivedDialog` calls
+`useOrders.arriveLinkedOrder` (the linked path, now for both):
+
+- "Add to an existing item" / an existing variant →
+  `arrive_order(order, item, delta, today)`.
+- "New variant…" → `newVariant` (row upserted with stock 0, id fixed per
+  dialog and per group, then `arrive_order`; deleted again, still at 0,
+  when the other phone was first).
+- "Create a new item" → the HOME editor's save gives the fields
+  (`usePantryItems.pickFields`, now exported) as `newItem`: upserted with
+  stock 0 (ignore duplicates, never `addItem`: no "Added" history row, no
+  SHOP sync at 0), then `arrive_order(order, newId, typed stock)`. Other
+  phone first → deleted again where still 0, toast `"{name}" was already
+  marked as arrived (on the other phone?) — nothing was added again.`
+  (no Undo). The SHOP list is then synced for the arrived item
+  (`syncListFor(order, itemId)`: the linked item, or else the item the
+  arrival went to).
+- Second step failed: the editor / dialog stays open with what was typed;
+  pressing again reuses the same id — when the upsert finds the row
+  already there, the fields typed now are written onto it while it is
+  still at 0 (a name changed meanwhile). Closed without arriving (×, a tap
+  outside, Back + ×): `discardUnusedItem(id)` deletes it as a follow-up,
+  only while at 0 with no history row. Also for a new variant, in both
+  dialogs (deviation: K1 named the new item only).
+- "Don't add to HOME" → `arrive_order(order, null, 0)`.
+- `orders.pantry_item_id` is never set by it. Offline: refused before
+  writing ("You're offline — this needs a connection."); the old queued
+  `adjustStock` of "Add to an existing item" is gone.
+- No pack size is written on an order not linked to HOME (its form has no
+  pack field; the arrival's pack field counts the stock only).
+
+Dialog text now: `Add "{name}" to HOME? Choose below — that marks it as
+arrived. The expense stays as it is — nothing new is added to your
+expenses.` (was "… is marked as arrived. Add it to HOME? …").
+
+**K2** × or a tap outside: nothing happens, the order stays on the way (also
+the linked dialog, as before).
+
+**K3 / K4 — a new item or variant made by an arrival** goes again with it
+only while untouched (`useOrders.madeByArrival`, read before
+`unarrive_order` deletes the arrival's row): after taking out
+`stock_added` it is at 0; no history row but the arrival's; no SHOP entry
+but automatic ones still to buy (not bought, not in the cart); no other
+order linked to it or arrived into it. Toast Undo: the app knows the id.
+"Back on the way" later: the item's `created_at` is 0–30 s before the
+arrival's history row (`ENTRY_GRACE_MS`). Any doubt → kept (its stock is
+still reduced exactly). Deleting (`deleteMadeItem`): only while at 0 with
+no history row, its automatic "to buy" entries with it, its group judged
+again. Same for a linked arrival's new variant.
+
+**K5 — Undo guard (app only).** The order is read first; Undo goes on only
+when `status = 'arrived'` and `arrived_log_id` is the one our arrival
+wrote (with no stock: no log, the same `arrived_date`, no stock). Else the
+toast `"{name}" changed meanwhile (on the other phone?) — nothing was
+undone.` (error tone) and nothing is written. Gap of milliseconds
+(read-then-act), as chosen.
+
+**K6** "Current stock" 0 is allowed: the order arrives with nothing added
+(`stock_added 0`, no item on the order); the item gets its automatic "to
+buy" entry (stock 0 = Out, as any new item at 0). The toast Undo deletes it
+while untouched; "Back on the way" later leaves it (nothing recorded).
+
+**K7** History reason `purchased` (HOME History "Bought") for every "It
+arrived!" arrival with stock — what `arrive_order` writes.
+
+**K8** Toast Undo puts `orders.pack_size` back to what the order had before
+(24 at ordering, 22 at arrival → 24) and runs `restoreArrivalPack`. "Back on
+the way" keeps the arrival's pack size (9H).
+
+**K9** No data fix: old arrivals stay unrecorded.
+
+**K10 — "Back on the way" on every arrived order uses `unarrive_order`**
+(`askBackOnTheWay`, `hooks/orderActions.js`): also no stock, durable,
+service, "Don't add to HOME" and old unrecorded arrivals, so the SHOP entry
+is `completed = false` again and the card is back under Shop → "On the
+way". After it the SHOP list is judged again for the item (new: before 9J
+"Back on the way" never synced; this puts back an automatic "to buy" that
+the arrival had removed). Cancelled / returned: unchanged
+(`putBackOnTheWay`, "Its expense was deleted…"). Deviation by the letter of
+K10: an *arrived* order whose expense was deleted is no longer asked "Add
+the expense again" (see the round summary).
+
+**K11 — Undo on every Arrived toast, 10 s** (`useOrders.arrivedToast`),
+Money and Shop: "Arrived — added {qty} to "{item}"" (and the group texts),
+`"{name}" marked as arrived — nothing added to HOME` (linked and, new, "It
+arrived!" → "Don't add to HOME"), `Added {qty} to "{item}"`, `Added {n}
+{unit} to "{variant}"` / `… to a new variant of "{group}"`, `"{name}" is now
+in HOME`, `“{name}” arrived — durable, nothing added to HOME.` / `… —
+service, …`. Texts unchanged, only "Undo" added. Undo (`undoArrival`):
+guard → `unarrive_order` → `restoreArrivalPack` → pack size back → new
+item / variant deleted when untouched → refresh → SHOP sync. Never
+`putBackOnTheWay`, never a price, group, share, order group or expense.
+Offline: refused. Toast after it: `"{name}" is on the way again`, plus
+` — {qty} taken out of "{item}"`; a new item / variant deleted: ` — {qty}
+taken out, and the new item "{item}" deleted from HOME` (or `the new
+variant`; with no stock ` — the new item "{item}" deleted from HOME`);
+kept because used: ` — {qty} taken out of "{item}" (kept in HOME: it
+changed meanwhile)`. Durable / service now arrive through `markArrived`
+as before; its saved row is the Undo's reference.
+
+**K12 — the safety net in "Create a new item".** `ArrivedDialog` passes
+`homeItems` and `optionLabel = similarItems.arrivalPickLabel` to
+`ItemEditor` (new prop `optionLabel`, default `goToLabel`). Exact name →
+`“{HOME name}” is already in HOME` + `Add it to {name} · {stock words}`
+(e.g. "Add it to Cat Wet Food · 12 pcs at home", "· out of stock", "·
+finished 1× item, it comes back"); no "Create new" (HOME names stay unique,
+as 9G). Similar → `Similar item in HOME:`, up to 3 `Add it to …`, `{N} more
+— type more of the name`, `Create new “{typed}”` with the 9G hint; the next
+press saves as typed, a changed name asks again. A button switches the
+dialog to "Add to an existing item" with that item chosen (RestockForm:
+quantity, unit, pack field); a variant → "Add to a variant of an item
+group" with its group and the variant chosen (`RestockForm
+initial.variantId`, new); a group → that group. Durables never offered.
+
+**K13** First-time usual pack size from "It arrived!": still off.
+
+**K14 — Retry toasts.** `showToast` no longer drops a toast with "Retry"
+because another one has the same text (like "Undo" since a8aaa17): own id,
+own timer, own Retry. Plain toasts keep the old rule; keyed toasts (load,
+"Log in", offline) unchanged. The toast column (`Toasts`, `data-toasts`):
+`max-h-[45vh]`, scrolls inside (`overflow-y-auto`, `overscroll-contain`),
+`overflow-x-hidden`, scrolled to the newest when one is added.
+
+**K15 — keyboard in questions** (`ui/Feedback.jsx`): the confirm button has
+the focus unless the first field is a select / date / number (they keep
+`autoFocus`); Tab / Shift+Tab go round inside the question (`tabStops`; a
+radio group counts once); Escape = Cancel; on close the focus goes back to
+the element that had it when asked (`askDialog` keeps `opener`; one
+question replacing another keeps the first opener) — a button always, a
+select only when the question was answered with the keyboard (no
+programmatic focus on a drop-down after a tap), never a text field. `#root`
+is not inert.
+
+**K16** Only the Undo on the toast; no History opening or highlight after
+Arrived.
+
+**K17** "Back on the way" on an arrived order with no stock recorded that is
+not durable / service asks: `Put "{name}" back on the way?` — `No stock was
+recorded for this order's arrival. If something was added to HOME when it
+arrived, it stays in HOME — when it arrives again, choose "Don't add to
+HOME".` — "Cancel" / "Put back on the way". Durable / service: no question.
+With stock and a new item that will go: `Its arrival added {qty} to HOME
+and created "{item}": both are taken out again, so they aren't counted
+twice when it really arrives.`
+
+**Files.** Changed: `hooks/useOrders.js` (`markArrived` returns the row,
+`markDurableArrived`, `syncListFor(order, itemId)`, `alreadyArrivedMessage`,
+`arriveLinkedOrder` with `newItem`, `discardUnusedItem`, `arrivedToast`,
+`changedMeanwhileMessage`, `undoArrival`, `madeByArrival`,
+`deleteMadeItem`, `itemMadeByArrival`, `unarriveOrder(order, { made })`),
+`hooks/orderActions.js` (`askBackOnTheWay`, `NO_STOCK_RECORDED`),
+`hooks/usePantryItems.js` (`pickFields` exported),
+`expenses/ArrivedDialog.jsx`, `expenses/LinkedArrivedDialog.jsx`,
+`expenses/OrdersSection.jsx`, `pages/GroceryPage.jsx`,
+`inventory/ItemEditor.jsx` (`optionLabel`), `inventory/RestockForm.jsx`
+(`initial.variantId`), `lib/similarItems.js` (`arrivalPickLabel`),
+`lib/feedback.js` (Retry rule, `opener`), `ui/Feedback.jsx`. New:
+`hooks/arrivalDb.fixture.js` (a database in memory doing what 021 does,
+for tests).
+
+**Tests: 1822 → 1874 (102 → 105 files).** New `hooks/arrivalUndo.test.js`
+(26: L1 with pack 24 → 22 → 24, first-time usual size undone, L2, linked new
+variant deleted, existing item with SHOP sync, existing variant, new variant
+kept when used, new item with 2 and with 0, "Don't add to HOME", other
+phone first, second step failing + same id + discard, durable, service, K5
+twice, offline, an order-group member unchanged; "Back on the way": new item
+named and deleted, used → kept, old item, K17 + Cancel, old unrecorded,
+durable, cancelled), `components/arrivedUndo.render.test.jsx` (13: × and a
+tap outside, every choice's toast with Undo, the new item, other phone
+first, second step failing in the editor, K12 exact / similar + Create new /
+variant / durable, linked dialog), `components/dialogFocus.render.test.jsx`
+(6: confirm focused, Tab round, select keeps focus, Escape, focus back to a
+button not a text field, the Flour case, two Retry toasts and the column
+limit). `lib/feedback.test.js`: the old Retry test replaced (+2).
+`supabase/migrations.test.js` block "9J" (5, PGlite, SQL unchanged: no file
+after 028, the 021 functions as written, an unlinked order into an
+existing item and into a new item made at 0, stock 0, null/0 and back).
+Changed: `components/durableLock.render.test.jsx` (no `markArrived` before
+the dialog).
+
+### iPhone checklist for round 9J
+
+Written by Claude after the round.
 
 ---
 

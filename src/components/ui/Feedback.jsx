@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertTriangle, X } from 'lucide-react'
 import { Button } from './Button'
 import { DateField } from './DateField'
 import { Input, Label, Select } from './Field'
 import { cn } from '../../lib/cn'
-import { closeDialog, dialogErrors, dismissToast, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
+import { closeDialog, dialogErrors, dismissToast, getDialog, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
 // Toasts sit above the mobile tab bar; the dialog covers everything.
 //
@@ -24,11 +24,24 @@ export function Feedback() {
   )
 }
 
+// The toasts stack upwards; many at once (e.g. several saves that failed
+// on a weak signal, each with its own Retry) never cover more than about
+// half the screen: the column scrolls inside, the newest in view. Nothing
+// is hidden or merged.
 function Toasts() {
   const toasts = useToasts()
+  const column = useRef(null)
+  useEffect(() => {
+    if (column.current) column.current.scrollTop = column.current.scrollHeight
+  }, [toasts.length])
   if (toasts.length === 0) return null
   return (
-    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-[70] flex flex-col items-center gap-2 px-4 pointer-events-none" aria-live="polite">
+    <div
+      ref={column}
+      data-toasts
+      className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] md:bottom-6 z-[70] max-h-[45vh] overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col items-center gap-2 px-4 pointer-events-none"
+      aria-live="polite"
+    >
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -60,19 +73,63 @@ function Toasts() {
   )
 }
 
+// What Tab can reach in the question, in order: a group of radio buttons
+// counts once (its checked one), as in the browser.
+function tabStops(root) {
+  const all = [...root.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')].filter((el) => !el.disabled && el.tabIndex >= 0)
+  return all.filter((el) => {
+    if (el.type !== 'radio') return true
+    const group = all.filter((o) => o.type === 'radio' && o.name === el.name)
+    return el === (group.find((o) => o.checked) ?? group[0])
+  })
+}
+
+// Where the focus may go back to when a question closes: a button or a
+// drop-down still on the page — never a text field, which would open the
+// keyboard on a phone.
+const canRefocus = (el) => Boolean(el?.isConnected) && !el.disabled && (el.tagName === 'BUTTON' || el.tagName === 'SELECT')
+
+// The question (askDialog / confirmDialog), in front of everything. With a
+// keyboard: Escape = Cancel, Tab and Shift+Tab stay inside it (from the
+// last to the first and back), so nothing behind it — e.g. an editor's
+// "Save changes" — can be reached. When it closes, the focus goes back to
+// the button it came from (a drop-down only when it was answered with the
+// keyboard: on a phone, focusing it after a tap could open its list).
 function Dialog() {
   const dialog = useDialog()
+  const box = useRef(null)
+  const byKeyboard = useRef(false)
 
   useEffect(() => {
     if (!dialog) return
-    const onKey = (e) => e.key === 'Escape' && closeDialog(null)
+    byKeyboard.current = false
+    const onKey = (e) => {
+      byKeyboard.current = true
+      if (e.key === 'Escape') return closeDialog(null)
+      if (e.key !== 'Tab' || !box.current) return
+      const stops = tabStops(box.current)
+      if (!stops.length) return
+      e.preventDefault()
+      const at = stops.indexOf(document.activeElement)
+      const next = at === -1 ? (e.shiftKey ? stops.length - 1 : 0) : (at + (e.shiftKey ? -1 : 1) + stops.length) % stops.length
+      stops[next].focus()
+    }
+    const onPointer = () => (byKeyboard.current = false)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointer, true)
+    const opener = dialog.opener
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointer, true)
+      // Another question took its place: that one returns the focus.
+      if (getDialog()) return
+      if (canRefocus(opener) && (opener.tagName === 'BUTTON' || byKeyboard.current)) opener.focus({ preventScroll: true })
+    }
   }, [dialog])
 
   if (!dialog) return null
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(null)}>
+    <div ref={box} className="fixed inset-0 z-[60] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => closeDialog(null)}>
       {/* Keyed by dialog, so each one starts with its own default values. */}
       <DialogForm key={dialog.id} dialog={dialog} />
     </div>,
@@ -193,7 +250,9 @@ function DialogForm({ dialog }) {
         <Button type="button" variant="ghost" className="flex-1" onClick={() => closeDialog(null)}>
           Cancel
         </Button>
-        <Button type="submit" className="flex-1" autoFocus={dialog.fields.length === 0}>
+        {/* The confirm button has the focus, unless the first field is a
+            drop-down, a date or a number, which takes it itself. */}
+        <Button type="submit" className="flex-1" autoFocus={!dialog.fields.length || dialog.fields[0].type === 'choice'}>
           {dialog.confirmLabel}
         </Button>
       </div>

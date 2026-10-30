@@ -23,9 +23,11 @@ const subscribe = (listener) => {
 export function showToast({ message, detail = null, tone = 'info', action = null, duration = 5000, key = null }) {
   if (key) toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
   // The same message is never shown twice at once — except a toast with
-  // Undo: each one undoes only its own change, so two equal ones (e.g. two
-  // groups made one after the other) are both shown.
-  const same = action?.label !== 'Undo' && toasts.find((t) => t.message === message && t.detail === detail && t.tone === tone)
+  // Undo or Retry: each one undoes (or saves again) only its own change, so
+  // two equal ones (e.g. two groups made one after the other, two saves
+  // that failed on a weak signal) are both shown.
+  const own = action?.label === 'Undo' || action?.label === 'Retry'
+  const same = !own && toasts.find((t) => t.message === message && t.detail === detail && t.tone === tone)
   if (same) return same.id
   const id = nextId++
   toasts = [...toasts, { id, key, message, detail, tone, action }]
@@ -111,10 +113,13 @@ export function toastLoadError(error, retry, source) {
 //   date   – optional unless required: true
 //   number – min (exclusive lower bound), unit shown after the input
 // Resolves to { name: value } when confirmed, or null when cancelled.
+// `opener`: what had the keyboard focus when it was asked (kept when one
+// question replaces another), so the focus can go back there afterwards.
 export function askDialog({ title, message, fields = [], confirmLabel = 'Save' }) {
   return new Promise((resolve) => {
+    const opener = dialog ? dialog.opener : typeof document === 'undefined' ? null : document.activeElement
     dialog?.resolve(null)
-    dialog = { id: nextId++, title, message, fields, confirmLabel, resolve }
+    dialog = { id: nextId++, title, message, fields, confirmLabel, resolve, opener }
     emit()
   })
 }

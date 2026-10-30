@@ -79,15 +79,46 @@ describe('toasts', () => {
     expect(getToasts()).toHaveLength(0)
   })
 
-  it('still drop a toast without Undo whose text is on screen (a plain one, or one with Retry), even beside an equal Undo toast', () => {
+  it('still drop a plain toast whose text is on screen, even beside an equal Undo toast', () => {
     const undo = vi.fn()
     showToast({ message: '3 orders grouped as one order', duration: 0, action: { label: 'Undo', onClick: undo } })
     showToast({ message: '3 orders grouped as one order', duration: 0 })
     expect(getToasts()).toHaveLength(1)
-    const retry = vi.fn()
-    const r1 = showToast({ message: "Couldn't save — check your connection.", tone: 'error', duration: 0, action: { label: 'Retry', onClick: retry } })
-    const r2 = showToast({ message: "Couldn't save — check your connection.", tone: 'error', duration: 0, action: { label: 'Retry', onClick: vi.fn() } })
-    expect(r2).toBe(r1)
+    const a = showToast({ message: 'Added “Napkins”', duration: 0 })
+    const b = showToast({ message: 'Added “Napkins”', duration: 0 })
+    expect(b).toBe(a)
+    expect(getToasts()).toHaveLength(2)
+  })
+
+  // Plan 9J, K14: two saves that failed on a weak signal, e.g. two "+" taps
+  // on "Rice" and "Dish soap": each toast is shown, closes on its own timer
+  // and its Retry saves only its own change again.
+  it('show two equal Retry toasts, each retrying only its own save on its own timer', () => {
+    const rice = vi.fn()
+    const soap = vi.fn()
+    const r1 = toastSaveError({ message: 'Failed to fetch' }, rice)
+    vi.advanceTimersByTime(2000)
+    const r2 = toastSaveError({ message: 'Failed to fetch' }, soap)
+    expect(r2).not.toBe(r1)
+    expect(getToasts().map((t) => [t.message, t.detail, t.action.label])).toEqual([
+      ["Couldn't save — check your connection.", 'Failed to fetch', 'Retry'],
+      ["Couldn't save — check your connection.", 'Failed to fetch', 'Retry'],
+    ])
+    runToastAction(r2)
+    expect(soap).toHaveBeenCalledTimes(1)
+    expect(rice).not.toHaveBeenCalled()
+    expect(getToasts().map((t) => t.id)).toEqual([r1])
+    vi.advanceTimersByTime(6000)
+    expect(getToasts()).toHaveLength(0)
+    expect(rice).not.toHaveBeenCalled()
+  })
+
+  it('keep one load toast per kind of failure (keyed), Retry or not', () => {
+    toastLoadError({ message: 'Load failed' }, vi.fn(), 'orders')
+    toastLoadError({ message: 'Load failed' }, vi.fn(), 'expenses')
+    expect(getToasts()).toHaveLength(1)
+    showToast({ message: "You're offline — this needs a connection.", key: 'offline' })
+    showToast({ message: "You're offline — this needs a connection.", key: 'offline' })
     expect(getToasts()).toHaveLength(2)
   })
 

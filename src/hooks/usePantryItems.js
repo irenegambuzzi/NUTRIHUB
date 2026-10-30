@@ -32,7 +32,8 @@ export const ITEM_FIELDS = [
   'one_time',
 ]
 
-function pickFields(source) {
+// Only the item columns of a form's values ('' saved as empty).
+export function pickFields(source) {
   const out = {}
   for (const f of ITEM_FIELDS) if (f in source) out[f] = source[f] === '' ? null : source[f]
   return out
