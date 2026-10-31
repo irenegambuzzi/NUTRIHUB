@@ -18,15 +18,22 @@ const subscribe = (listener) => {
 }
 
 // How long a toast stays, the same on every screen: one with a button
-// (Undo, Retry, Log in…) 20 seconds, so there is time to read it and
-// still press it; any other 15 seconds. × closes any toast at once.
+// (Undo, Retry…) 20 seconds, so there is time to read it and still press
+// it; any other 15 seconds. × closes any toast at once.
+//
+// The one exception is `untilClosed`: such a toast has no timer and stays
+// until × or its button. Only the "Log in" toast of an ended session uses
+// it (session.js): nothing can be saved or loaded until the user logs in
+// again, so the message must not go away by itself (K27). It also closes
+// when the session comes back.
 export const TOAST_WITH_ACTION_MS = 20000
 export const TOAST_MS = 15000
 
 // tone: 'info' | 'error'. action: { label, onClick }. A toast with the
 // same `key` replaces the previous one (e.g. repeated load failures).
-// How long it stays follows from whether it has a button (above).
-export function showToast({ message, detail = null, tone = 'info', action = null, key = null }) {
+// How long it stays follows from whether it has a button (above), unless
+// `untilClosed`.
+export function showToast({ message, detail = null, tone = 'info', action = null, key = null, untilClosed = false }) {
   if (key) toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
   // The same message is never shown twice at once — except a toast with
   // Undo or Retry: each one undoes (or saves again) only its own change, so
@@ -37,7 +44,7 @@ export function showToast({ message, detail = null, tone = 'info', action = null
   if (same) return same.id
   const id = nextId++
   toasts = [...toasts, { id, key, message, detail, tone, action }]
-  timers.set(id, setTimeout(() => dismissToast(id), action ? TOAST_WITH_ACTION_MS : TOAST_MS))
+  if (!untilClosed) timers.set(id, setTimeout(() => dismissToast(id), action ? TOAST_WITH_ACTION_MS : TOAST_MS))
   emit()
   return id
 }

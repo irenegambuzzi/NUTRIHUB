@@ -86,6 +86,53 @@ describe('a session that cannot be renewed', () => {
   })
 })
 
+// K27 (31/10): the "Log in" toast doesn't close by itself; every other
+// toast keeps its 20 / 15 seconds.
+describe('the session-ended message', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    client.supabase = { auth: { refreshSession: async () => ({ data: { session: null }, error: { status: 400, message: 'Invalid Refresh Token' } }) } }
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('stays past 20 seconds, while other toasts close after 20 s (button) and 15 s (none)', async () => {
+    await session.renewSession()
+    feedback.showToast({ message: 'Order moved to History', action: { label: 'Undo', onClick: vi.fn() } })
+    feedback.showToast({ message: 'Saved' })
+    vi.advanceTimersByTime(feedback.TOAST_MS)
+    expect(feedback.getToasts().map((t) => t.message)).toEqual(['Your session has ended. Log in again.', 'Order moved to History'])
+    vi.advanceTimersByTime(feedback.TOAST_WITH_ACTION_MS - feedback.TOAST_MS)
+    expect(feedback.getToasts().map((t) => t.message)).toEqual(['Your session has ended. Log in again.'])
+    vi.advanceTimersByTime(30 * 60 * 1000)
+    expect(sessionToasts()).toHaveLength(1)
+  })
+
+  it('closes with ×, and shows again when something else fails', async () => {
+    await session.renewSession()
+    vi.advanceTimersByTime(60000)
+    feedback.dismissToast(sessionToasts()[0].id)
+    expect(feedback.getToasts()).toHaveLength(0)
+    feedback.toastLoadError(expiredError, vi.fn(), 'expenses')
+    expect(sessionToasts()).toHaveLength(1)
+  })
+
+  it('"Log in" still opens the login after a long wait', async () => {
+    await session.renewSession()
+    vi.advanceTimersByTime(5 * 60 * 1000)
+    feedback.runToastAction(sessionToasts()[0].id)
+    expect(auth.getAuth()).toMatchObject({ status: 'out', notice: 'Your session has ended. Log in again.' })
+    expect(feedback.getToasts()).toHaveLength(0)
+  })
+
+  it('closes by itself when the session comes back', async () => {
+    await session.renewSession()
+    expect(sessionToasts()).toHaveLength(1)
+    client.supabase = { auth: { refreshSession: async () => ({ data: { session: { access_token: tokenIssuedAt(Date.now()) } }, error: null }) } }
+    await session.renewSession()
+    expect(sessionToasts()).toHaveLength(0)
+  })
+})
+
 describe('no signal', () => {
   it('is a connection problem, not an ended session', async () => {
     client.supabase = { auth: { refreshSession: async () => ({ data: { session: null }, error: Object.assign(new Error('fetch failed'), { name: 'AuthRetryableFetchError', status: 0 }) }) } }

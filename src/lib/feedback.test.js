@@ -38,15 +38,40 @@ describe('toasts', () => {
   it('with Undo, Retry or any other button: 20 seconds, then gone', () => {
     showToast({ message: 'Order moved to History', action: { label: 'Undo', onClick: vi.fn() } })
     toastSaveError({ message: 'Failed to fetch' }, vi.fn())
-    showToast({ key: 'session', message: 'Your login has ended.', tone: 'error', action: { label: 'Log in', onClick: vi.fn() } })
+    showToast({ key: 'example', message: 'Something to open.', action: { label: 'Open', onClick: vi.fn() } })
     showToast({ key: 'offline', message: "You're offline — this needs a connection." })
     vi.advanceTimersByTime(TOAST_MS)
-    expect(getToasts().map((t) => t.action?.label)).toEqual(['Undo', 'Retry', 'Log in'])
+    expect(getToasts().map((t) => t.action?.label)).toEqual(['Undo', 'Retry', 'Open'])
     vi.advanceTimersByTime(TOAST_WITH_ACTION_MS - TOAST_MS - 1)
     expect(getToasts()).toHaveLength(3)
     vi.advanceTimersByTime(1)
     expect(getToasts()).toHaveLength(0)
     expect(TOAST_WITH_ACTION_MS).toBe(20000)
+  })
+
+  // K27 (31/10): only a toast shown `untilClosed` (the session's "Log in")
+  // has no timer; it goes with × or its button.
+  it('untilClosed: no timer, stays past 20 seconds until × or its button', () => {
+    const onClick = vi.fn()
+    const stays = showToast({ message: 'Stays', tone: 'error', action: { label: 'Log in', onClick }, untilClosed: true })
+    showToast({ message: 'With a button', action: { label: 'Undo', onClick: vi.fn() } })
+    showToast({ message: 'Without a button' })
+    vi.advanceTimersByTime(TOAST_MS)
+    expect(getToasts().map((t) => t.message)).toEqual(['Stays', 'With a button'])
+    vi.advanceTimersByTime(TOAST_WITH_ACTION_MS - TOAST_MS)
+    expect(getToasts().map((t) => t.message)).toEqual(['Stays'])
+    vi.advanceTimersByTime(10 * 60 * 1000)
+    expect(getToasts().map((t) => t.message)).toEqual(['Stays'])
+    expect(vi.getTimerCount()).toBe(0)
+    runToastAction(stays)
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(getToasts()).toHaveLength(0)
+
+    const again = showToast({ message: 'Stays', tone: 'error', action: { label: 'Log in', onClick }, untilClosed: true })
+    vi.advanceTimersByTime(60000)
+    dismissToast(again)
+    expect(getToasts()).toHaveLength(0)
+    expect(onClick).toHaveBeenCalledTimes(1)
   })
 
   it('× closes any toast at once, and its timer is gone with it', () => {

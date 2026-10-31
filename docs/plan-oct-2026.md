@@ -3095,8 +3095,8 @@ before migration 006/007). No sorting, suggestion, filter, label or
 screen uses it.
 
 **Next round.** Round 9J (an Undo on the toast after "Arrived", and stock
-added through the "It arrived!" dialog recorded on the order) is done —
-see section 9J below. Next: round 6D.
+added through the "It arrived!" dialog recorded on the order) is done and
+tested (31/10/2026) — see section 9J below. Next: round 6D.
 
 ### Follow-up 29/10 to 9I (as built; code and tests only, no SQL)
 
@@ -3599,9 +3599,64 @@ passes its own duration), its equal-toast tests on the new times.
 the order has an expense. `components/durableLock.render.test.jsx`: no
 `markArrived` mock.
 
+### Follow-up 31/10 (2) to 9J (as built; code and tests only, no SQL)
+
+Decisions of Zidane, 31/10. **No SQL**: no file in `supabase/`, no `.sql`
+changed; no new browser storage.
+
+**K26 (a) — kept as built.** A failed durable / service Arrived shows
+"Couldn't save — check your connection." without Retry (the arrival path
+is `retry: false`); the order stays on the way and "Arrived" can be
+pressed again. No change.
+
+**K27 (b) — the session "Log in" toast stays until it is closed.** One
+explicit option in `lib/feedback.js`: `showToast({ …, untilClosed: true })`
+starts no timer, so the toast stays until × or its button. Only the
+session toast uses it (`endSession` in `lib/session.js`, key `'session'`):
+nothing can be saved or loaded until the user logs in again, so it must
+not go away by itself. It still closes when the session comes back (a
+renewal that works, or a new sign-in: `dismissToastsByKey('session')` in
+`session.js` and `auth.js`, unchanged). "Log in" opens the login as
+before; after × it is shown again only when something else fails, as
+before. Every other toast keeps the 9J rule: with a button 20 s
+(`TOAST_WITH_ACTION_MS`), without 15 s (`TOAST_MS`).
+
+**Files.** Changed: `lib/feedback.js` (`untilClosed`), `lib/session.js`
+(`endSession` passes it; comment).
+
+**Tests: 1890 → 1895 (105 files).** `lib/feedback.test.js` +1
+(`untilClosed`: still there after 20 s and 10 minutes, no timer, its
+button runs once and closes it, × closes it; a toast with a button beside
+it closes after 20 s, one without after 15 s); the 20-s test uses an
+"Open" button instead of the session toast. `lib/session.test.js` +4 (the
+session toast stays past 20 s and 30 minutes while an Undo toast closes
+after 20 s and a plain one after 15 s; × closes it and it shows again on
+the next failure; "Log in" still opens the login after 5 minutes; it
+closes when the session is renewed).
+
 ### iPhone checklist for round 9J
 
-Written by Claude after the round.
+Tested on the iPhones and a computer on 31/10/2026 by Zidane:
+
+- **A** (unlinked order → "Create a new item", × keeps it on the way, Undo
+  deletes the new item, "Bought" in HOME History, "Back on the way" text
+  with the created item), **C** (item used meanwhile is kept at 0 and goes
+  on the SHOP list), **D** (Don't add to HOME + Undo, the K17 question,
+  expense deleted → one question with K17 text + "Add the expense
+  again"), **E** (durable Arrived without dialog + Undo), **F** (linked
+  order from SHOP: Arrived, Undo, card back under On the way, Back on the
+  way) — all as expected.
+- **B** retested with "TEST Zebar Glu" / "test zebra glu": similar and
+  exact name handled as expected (note: "Glu" vs "Glue" is NOT similar by
+  the 9G rule — words of 4 letters or fewer must be identical — correct).
+- **E4** (the second phone's "already marked as arrived") could not be
+  reproduced: live sync removes the card from the other phone within a
+  second, so the message only appears when two devices press almost at
+  the same moment — correct, covered by automated tests.
+- **G** (keyboard focus) skipped: the household doesn't count items in
+  gr; covered by automated tests.
+- Not tested on purpose: K5, K14, "Add to a variant of an item group"
+  (covered by automated tests).
 
 ---
 

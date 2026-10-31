@@ -88,9 +88,10 @@ export function renewSession() {
   return renewing
 }
 
-// The one message for a session that has ended; shown again only after it
-// was closed (×, or after its time like every toast with a button) and
-// something else fails.
+// The one message for a session that has ended. It stays until it is
+// closed (× or "Log in") or the session comes back (`untilClosed`, see
+// feedback.js); shown again only after it was closed and something else
+// fails.
 export function endSession() {
   if (getAuth().status === 'out' || getToasts().some((t) => t.key === 'session')) return
   showToast({
@@ -98,6 +99,7 @@ export function endSession() {
     message: SESSION_ENDED,
     detail: clockOff ? CLOCK_MESSAGE : null,
     tone: 'error',
+    untilClosed: true,
     action: { label: 'Log in', onClick: () => showLogin(clockOff ? `${SESSION_ENDED} ${CLOCK_MESSAGE}` : SESSION_ENDED) },
   })
 }
