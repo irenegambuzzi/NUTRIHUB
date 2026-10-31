@@ -3,9 +3,11 @@ import { supabase } from '../lib/supabaseClient'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { receiptPhotoStore } from '../lib/stores'
 import { photoPath, removeFiles, shrinkImage, uploadFile } from '../lib/receipts'
+import { TOAST_WITH_ACTION_MS } from '../lib/feedback'
 
-// How long a deleted photo's file is kept, so Undo can bring it back.
-const KEEP_FOR_UNDO = 7000
+// How long a deleted photo's file is kept, so Undo can bring it back: a
+// little longer than the Undo toast stays.
+const KEEP_FOR_UNDO = TOAST_WITH_ACTION_MS + 2000
 
 // Receipt photos: adding (camera or file), replacing and deleting them.
 export function useReceiptPhotos() {

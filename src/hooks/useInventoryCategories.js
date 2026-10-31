@@ -228,7 +228,7 @@ export function useInventoryCategories() {
       const result = await callCategoryFunction('merge_inventory_category', { from_id: id, to_id: targetId })
       if (result.error) return result
       const message = `${mergeSummary(result.data, pathOf(categories, byId.get(targetId)))}. "${category.name}" deleted.`
-      showToast({ message, duration: 8000 })
+      showToast({ message })
       return { ...result, message }
     },
     [categories, byId]

@@ -37,7 +37,7 @@ export async function reopenTrip(tripId, note = null, source = 'shop') {
   const result = await attempt(async () => must(await supabase.rpc('reopen_shopping_trip', { trip_id: tripId })), { onFail: reloadAll })
   if (!result.error) {
     const done = source === 'money' ? 'Purchase undone — its expenses are deleted and HOME stock is back as before.' : 'Purchase reopened — the items are back in the cart.'
-    showToast({ message: note ? `${done} ${note}` : done, duration: note ? 10000 : 5000 })
+    showToast({ message: note ? `${done} ${note}` : done })
     await reloadAll()
     await followUp('the shopping list', async () => {
       for (const item of pantryStore.getSnapshot().rows) await syncShoppingForItem(item)
@@ -89,7 +89,6 @@ export async function recordMoneyPurchase({ payload, restocked = [] }) {
   const count = payload.items.length
   showToast({
     message: `Purchase saved · ${count} item${count === 1 ? '' : 's'} · ${money(result.data?.total ?? 0)}`,
-    duration: UNDO_FOR,
     action: { label: 'Undo', onClick: () => reopenTrip(payload.id, null, 'money') },
   })
   afterSave(new Set(restocked))
@@ -134,7 +133,6 @@ export async function confirmCart({ id, date, lines, answers, totalOf, photoIds,
   // the reloads and list updates that follow (they run in the background).
   showToast({
     message: `Purchase confirmed · ${lines.length} item${lines.length === 1 ? '' : 's'} · ${money(result.data?.total ?? 0)}`,
-    duration: UNDO_FOR,
     action: { label: 'Undo', onClick: () => reopenTrip(id) },
   })
   afterConfirm(lines, shopId && !flowReady ? { tripId: id, shopId } : null)
@@ -184,8 +182,6 @@ async function removeEmptyVariants(ids) {
     console.error(error)
   }
 }
-
-const UNDO_FOR = 10000
 
 // Puts the store on the expenses the purchase made. The purchase stays
 // saved if this fails; the toast offers Retry.
@@ -243,7 +239,7 @@ export async function setTripShop(tripId, shopId, { flowReady = true } = {}) {
       },
       { onFail: reloadAll }
     )
-  showToast({ message: `Store changed for ${before.length} expense${before.length === 1 ? '' : 's'} of this purchase`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message: `Store changed for ${before.length} expense${before.length === 1 ? '' : 's'} of this purchase`, action: { label: 'Undo', onClick: undo } })
   return result
 }
 

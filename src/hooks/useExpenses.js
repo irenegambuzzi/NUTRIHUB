@@ -227,7 +227,7 @@ export async function setExpensesShop(ids, shopId) {
       },
       { onFail: refreshExpenses }
     )
-  showToast({ message: `Store set for ${ids.length} expense${ids.length === 1 ? '' : 's'}`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message: `Store set for ${ids.length} expense${ids.length === 1 ? '' : 's'}`, action: { label: 'Undo', onClick: undo } })
   return result
 }
 
@@ -252,6 +252,6 @@ export async function addExpenseOnce({ id, categoryId, amount, description, paid
       },
       { onFail: refreshExpenses }
     )
-  showToast({ message: `Expense saved · €${Number(amount).toFixed(2)}`, duration: 8000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message: `Expense saved · €${Number(amount).toFixed(2)}`, action: { label: 'Undo', onClick: undo } })
   return result
 }

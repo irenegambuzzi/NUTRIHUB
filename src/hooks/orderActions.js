@@ -1,6 +1,6 @@
 import { askDialog, confirmDialog } from '../lib/feedback'
 import { outcomeSupported } from '../lib/orders'
-import { itemMadeByArrival, markCancelled, putBackOnTheWay, removeOrder, syncListFor, unarriveOrder } from './useOrders'
+import { addExpenseAgain, itemMadeByArrival, markCancelled, putBackOnTheWay, removeOrder, syncListFor, unarriveOrder } from './useOrders'
 
 // The questions asked before an order changes, shared by Orders in MONEY
 // and the "On the way" part of the SHOP list, so both behave the same.
@@ -58,46 +58,56 @@ export async function askCancelOrder(order, { orders, today }) {
 export const NO_STOCK_RECORDED =
   'No stock was recorded for this order\'s arrival. If something was added to HOME when it arrived, it stays in HOME — when it arrives again, choose "Don\'t add to HOME".'
 
+// The question about an expense deleted by hand, when an order goes back
+// on the way.
+export const EXPENSE_DELETED = 'Its expense was deleted. Add the expense again (one, for the order date and price)?'
+const expenseChoice = (order) => ({
+  name: 'how',
+  type: 'choice',
+  value: 'add',
+  options: [
+    { value: 'add', label: 'Add the expense again', hint: `${money(order.price)} on ${day(order.order_date)}.` },
+    { value: 'none', label: 'Without an expense' },
+  ],
+})
+
 // A finished order goes back on the way. An arrived order (any, plan 9J
 // K10) takes the stock its arrival added back out of HOME, after asking —
 // with a new item or variant that arrival made, while untouched (K3, K4);
 // one with no stock recorded asks too, unless it is durable or a service
-// (`durable`, K17). A cancelled or returned one whose expense was deleted
-// can get it again.
+// (`durable`, K17). An order whose expense was deleted can get it again:
+// a cancelled or returned one as before; an arrived one in the same one
+// question, after what it says about the stock (K20) — put back first,
+// then the expense made again (if that fails the order stays on the way,
+// with Retry).
 export async function askBackOnTheWay(order, { unit = '', durable = false } = {}) {
+  const title = `Put "${order.item_name}" back on the way?`
   if (order.status === 'arrived') {
-    const title = `Put "${order.item_name}" back on the way?`
     const added = Number(order.stock_added) > 0
     const made = added ? await itemMadeByArrival(order) : null
     const qty = `${Number(order.stock_added)}${unit ? ` ${unit}` : ''}`
-    const message = !added
-      ? NO_STOCK_RECORDED
+    const stock = !added
+      ? durable
+        ? ''
+        : NO_STOCK_RECORDED
       : made
         ? `Its arrival added ${qty} to HOME and created "${made.name}": both are taken out again, so they aren't counted twice when it really arrives.`
         : `Its arrival added ${qty} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
-    if (added || !durable) {
-      const ok = await confirmDialog({ title, message, confirmLabel: 'Put back on the way' })
+    if (!order.expense_id) {
+      const answer = await askDialog({ title, message: [stock, EXPENSE_DELETED].filter(Boolean).join(' '), fields: [expenseChoice(order)], confirmLabel: 'Put back on the way' })
+      if (!answer) return null
+      const result = await unarriveOrder(order, { made })
+      if (!result.error && answer.how === 'add') await addExpenseAgain(order)
+      return result
+    }
+    if (stock) {
+      const ok = await confirmDialog({ title, message: stock, confirmLabel: 'Put back on the way' })
       if (!ok) return null
     }
     return unarriveOrder(order, { made })
   }
   if (order.expense_id) return putBackOnTheWay(order, { createExpense: false })
-  const answer = await askDialog({
-    title: `Put "${order.item_name}" back on the way?`,
-    message: 'Its expense was deleted. Add the expense again (one, for the order date and price)?',
-    fields: [
-      {
-        name: 'how',
-        type: 'choice',
-        value: 'add',
-        options: [
-          { value: 'add', label: 'Add the expense again', hint: `${money(order.price)} on ${day(order.order_date)}.` },
-          { value: 'none', label: 'Without an expense' },
-        ],
-      },
-    ],
-    confirmLabel: 'Put back on the way',
-  })
+  const answer = await askDialog({ title, message: EXPENSE_DELETED, fields: [expenseChoice(order)], confirmLabel: 'Put back on the way' })
   return answer ? putBackOnTheWay(order, { createExpense: answer.how === 'add' }) : null
 }
 

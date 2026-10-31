@@ -46,7 +46,7 @@ export async function saveOrderGroup(payload) {
 // After a change made with an order (a new order joining, a member edited
 // or deleted): an expense edited by hand that was left alone is named.
 export function sayKept(data) {
-  if (data?.kept?.length) showToast({ message: 'Saved — an expense edited by hand was left as it is', detail: keptNote(data.kept), duration: 10000 })
+  if (data?.kept?.length) showToast({ message: 'Saved — an expense edited by hand was left as it is', detail: keptNote(data.kept) })
   return data
 }
 
@@ -76,7 +76,7 @@ async function changeWithUndo(payload, { before, groupBefore, message }) {
     const now = orderStore.getSnapshot().rows.filter((o) => before.some((b) => b.id === o.id))
     await run(undoGroupPayload({ id: payload.id, groupBefore, before, now }))
   }
-  showToast({ message, detail: keptNote(result.data.kept) || null, duration: 10000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message, detail: keptNote(result.data.kept) || null, action: { label: 'Undo', onClick: undo } })
   return result
 }
 

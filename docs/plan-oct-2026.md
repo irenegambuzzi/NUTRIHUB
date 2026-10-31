@@ -27,7 +27,8 @@ Contents
    - 9G. Similar-name safety net (decided 26/10, as built)
    - 9H. Pack size per purchase (decided 27–28/10, as built)
    - 9I. Order groups (decided 29/10, as built)
-   - 9J. Arrived Undo and recorded arrivals (decided 30/10, as built)
+   - 9J. Arrived Undo and recorded arrivals (decided 30/10, as built;
+     follow-up 31/10: K20, K24, toast durations)
 10. Risks and decisions
 
 ---
@@ -2275,6 +2276,9 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    child (baby bottles, pacifiers… today Baby › Feeding).
 5. Later (not scheduled): adding to the SHOP list while offline needs a
    new offline queue; not built.
+6. Later: Before round 7 (Trips & Holidays), discuss Zidane's notes of
+   31/10: the SHOP search field position, and a real split of "Shared"
+   payments between the payers (and a shared bank account).
 
 ### 9G. Similar-name safety net (decided 26/10, as built)
 
@@ -3390,9 +3394,10 @@ way". After it the SHOP list is judged again for the item (new: before 9J
 the arrival had removed). Cancelled / returned: unchanged
 (`putBackOnTheWay`, "Its expense was deleted…"). Deviation by the letter of
 K10: an *arrived* order whose expense was deleted is no longer asked "Add
-the expense again" (see the round summary).
+the expense again" (see the round summary). **Put back 31/10 (K20, see
+"Follow-up 31/10" below).**
 
-**K11 — Undo on every Arrived toast, 10 s** (`useOrders.arrivedToast`),
+**K11 — Undo on every Arrived toast, 10 s** (`useOrders.arrivedToast`; 20 s since 31/10),
 Money and Shop: "Arrived — added {qty} to "{item}"" (and the group texts),
 `"{name}" marked as arrived — nothing added to HOME` (linked and, new, "It
 arrived!" → "Don't add to HOME"), `Added {qty} to "{item}"`, `Added {n}
@@ -3408,7 +3413,8 @@ taken out, and the new item "{item}" deleted from HOME` (or `the new
 variant`; with no stock ` — the new item "{item}" deleted from HOME`);
 kept because used: ` — {qty} taken out of "{item}" (kept in HOME: it
 changed meanwhile)`. Durable / service now arrive through `markArrived`
-as before; its saved row is the Undo's reference.
+as before; its saved row is the Undo's reference. (Since 31/10 through
+`arrive_order` with 0, K24.)
 
 **K12 — the safety net in "Create a new item".** `ArrivedDialog` passes
 `homeItems` and `optionLabel = similarItems.arrivalPickLabel` to
@@ -3489,6 +3495,109 @@ after 028, the 021 functions as written, an unlinked order into an
 existing item and into a new item made at 0, stock 0, null/0 and back).
 Changed: `components/durableLock.render.test.jsx` (no `markArrived` before
 the dialog).
+
+### Follow-up 31/10 to 9J (as built; code and tests only, no SQL)
+
+Decisions of Zidane, 31/10. **K18, K19, K21, K22, K23**: kept exactly as
+built in 18dc01e (no change). **K25**: the new top text of "It arrived!"
+is approved (no change). **No SQL**: `arrive_order` / `unarrive_order`
+(021) are used as they are; no file in `supabase/`, no `.sql` changed.
+
+**K20 — "Back on the way" on an arrived order whose expense was deleted**
+(by hand in Money, so `orders.expense_id` is empty): the expense question
+from before 9J is back, inside the **one** question (`askBackOnTheWay`,
+never two windows in a row). Title `Put "{name}" back on the way?`; the
+message is, in this order, the stock text that applies today, then
+`Its expense was deleted. Add the expense again (one, for the order date
+and price)?` (`EXPENSE_DELETED`, the pre-9J text); then the choice
+"Add the expense again" (hint `€{price} on {dd/mm/yyyy}.`, chosen at
+first) / "Without an expense"; buttons "Cancel" / "Put back on the way".
+
+- Stock recorded: `Its arrival added {qty} to HOME. That stock is taken
+  out again, so it isn't counted twice when it really arrives.` (with a new
+  item that will go: `… and created "{item}": both are taken out again …`)
+  + the expense part.
+- No stock recorded, not durable / service: the K17 text
+  (`NO_STOCK_RECORDED`) + the expense part.
+- Durable / service: only the expense part (as before 9J).
+- Expense still there: exactly as built in 18dc01e (no expense choice;
+  durable / service still not asked).
+
+"Put back on the way" → `unarriveOrder` (as built) → only if "Add the
+expense again" was chosen, `addExpenseAgain(order)` (new, `useOrders`):
+the same expense the pre-9J `putBackOnTheWay` makes (`addExpenseRow`, now
+shared by both: `expenseRowForOrder` — amount = order price, date = order
+date, category, payer, store, description = order name; id fixed, upsert
+ignoring duplicates), then the order gets `expense_id` (and
+`expense_outcome` empty, as before). It never writes the order's status, so
+it can't undo an Arrived made meanwhile on the other phone. If it fails:
+the expense made in the same step is taken back (`inSteps`), toast
+"Couldn't save — check your connection." with Retry (same id, so one
+expense only); the order stays on the way. No toast when it works (as
+before 9J: the expense shows in Money's list). "Cancel" → nothing changes.
+Cancelled / returned orders: unchanged (`putBackOnTheWay`, own question).
+
+**K24 — durable and service arrivals through `arrive_order(order, null,
+0)`** (`markDurableArrived` → `arriveLinkedOrder` with `syncList: false`):
+only the first Arrived counts. The other phone first → toast `"{name}" was
+already marked as arrived (on the other phone?) — nothing was added
+again.`, no Undo, nothing written. Otherwise the toast `“{name}” arrived —
+durable, nothing added to HOME.` / `… — service, …` with Undo, as built.
+The SHOP entry (if any) is `completed = true, in_cart = false` as before
+(now by `arrive_order`), and the SHOP list is not judged again on arrival
+(as before; the Undo and "Back on the way" still do it, 9J). `markArrived`
+is gone (nothing else used it). Old durable orders already arrived:
+unchanged. Deviation: a failed durable Arrived now shows "Couldn't save —
+check your connection." without Retry (the arrival path is `retry: false`);
+the order stays on the way and "Arrived" can be pressed again (Kata ragu).
+
+**Toast durations — one rule for every screen** (`lib/feedback.js`):
+`TOAST_WITH_ACTION_MS = 20000` (a toast with any button: Undo, Retry, Log
+in…) and `TOAST_MS = 15000` (no button). `showToast` and `deleteWithUndo`
+no longer take a `duration`; every hard-coded one is gone
+(`toastSaveError` / `toastLoadError` 8 s, Cancel / Return 8 s, order
+groups 10 s, merge / split 10 s, purchase Undo `UNDO_FOR` 10 s, Reopen
+5 / 10 s, budget mapping 10 s, store changes 8 s, "Expense saved" 8 s,
+category merge 8 s, cart left 8 s, Arrived Undo 10 s, every
+`deleteWithUndo` 5 s). Keyed toasts follow the same rule and are still
+replaced by key: offline 15 s, load error (Retry) 20 s, session "Log in"
+20 s (before: stayed until closed). × closes any toast at once; the K14
+stack is unchanged.
+
+- Checked every Undo before: all write at once and restore on tap (none
+  waits for the toast to end), so all are lengthened. The offline stock
+  queue sends when the connection is back, not when the toast ends.
+- Timers that followed the old window: receipt photo delete
+  (`useReceiptPhotos.KEEP_FOR_UNDO`, the file is removed after Undo is no
+  longer offered) 7 s → `TOAST_WITH_ACTION_MS + 2000` (22 s). The 9J guard
+  (K5) and the "new item untouched" check (`madeByArrival`) have no timer
+  (read-then-act); `ENTRY_GRACE_MS` (30 s, item made → arrival) is not
+  about the toast: unchanged.
+
+**Files.** Changed: `lib/feedback.js` (the two constants, no `duration`),
+`lib/db.js` (`deleteWithUndo`), `lib/session.js`, `hooks/useOrders.js`
+(`markDurableArrived`, `arriveLinkedOrder` `syncList`, `addExpenseRow`,
+`addExpenseAgain`, `putBackOnTheWay` reuses `addExpenseRow`; `markArrived`
+removed), `hooks/orderActions.js` (`askBackOnTheWay`, `EXPENSE_DELETED`,
+`expenseChoice`), `hooks/useReceiptPhotos.js`, `hooks/useMerge.js`,
+`hooks/useOrderGroups.js`, `hooks/usePurchase.js`, `hooks/useExpenses.js`,
+`hooks/useBudgetMap.js`, `hooks/useInventoryCategories.js`,
+`components/grocery/ConfirmPurchase.jsx`,
+`components/expenses/LinkedArrivedDialog.jsx` (comment).
+
+**Tests: 1874 → 1890 (105 files).** `hooks/arrivalUndo.test.js` +12: K20
+(stock + expense deleted with "Add the expense again" — amount, date,
+category, payer, store — and a new item named; "Without an expense"; K17
+text + expense; durable only the expense; expense still there; Cancel;
+the expense step failing → Retry, once; cancelled unchanged), K24 (durable
+`arrive_order` with 0 and the SHOP entry; service; other phone first, no
+Undo; Undo and offline). The 9J "Back on the way" tests now give their
+orders an expense (as real orders have). `lib/feedback.test.js` +4
+(15 s, 20 s for Undo / Retry / Log in, × at once, keyed toasts; no file
+passes its own duration), its equal-toast tests on the new times.
+`lib/db.test.js`: Undo 20 s. `components/packSizeUndo.render.test.jsx`:
+the order has an expense. `components/durableLock.render.test.jsx`: no
+`markArrived` mock.
 
 ### iPhone checklist for round 9J
 

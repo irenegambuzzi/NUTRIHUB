@@ -41,7 +41,6 @@ export async function mergeExpenses({ id, expenseIds, shopId = null, total = 0 }
   if (result.error) return result
   showToast({
     message: `${plural(expenseIds.length, 'expense')} merged into one purchase · ${money(total)}`,
-    duration: 10000,
     action: { label: 'Undo', onClick: () => splitPurchase(id, expenseIds, { offerUndo: false }) },
   })
   return result
@@ -53,7 +52,6 @@ export async function addToPurchase({ tripId, expenseIds, total = 0 }) {
   if (result.error) return result
   showToast({
     message: `${plural(expenseIds.length, 'expense')} added to the purchase · ${money(total)}`,
-    duration: 10000,
     action: { label: 'Undo', onClick: () => splitPurchase(tripId, expenseIds, { offerUndo: false }) },
   })
   return result
@@ -81,7 +79,6 @@ export async function splitPurchase(tripId, expenseIds = null, { offerUndo = tru
   const undo = before ? undoSplit(tripId, before) : null
   showToast({
     message: `${plural(count, 'expense')} single again, each with its own store`,
-    duration: 10000,
     action: undo ? { label: 'Undo', onClick: undo } : null,
   })
   return result

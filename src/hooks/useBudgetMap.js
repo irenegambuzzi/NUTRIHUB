@@ -85,6 +85,6 @@ export async function applyPastPurchases(changes) {
       },
       { onFail: refreshExpenses }
     )
-  showToast({ message: `${changes.length} past purchase${changes.length === 1 ? '' : 's'} moved to their mapped budget category`, duration: 10000, action: { label: 'Undo', onClick: undo } })
+  showToast({ message: `${changes.length} past purchase${changes.length === 1 ? '' : 's'} moved to their mapped budget category`, action: { label: 'Undo', onClick: undo } })
   return result
 }

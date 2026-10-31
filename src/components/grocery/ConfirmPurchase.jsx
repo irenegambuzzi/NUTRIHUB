@@ -178,7 +178,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     })
     setBusy(false)
     if (error) return
-    if (leftInCart > 0) showToast({ message: `${leftInCart} item${leftInCart === 1 ? '' : 's'} stay in the cart — confirm ${leftInCart === 1 ? 'it' : 'them'} as another trip (e.g. the other store).`, duration: 8000 })
+    if (leftInCart > 0) showToast({ message: `${leftInCart} item${leftInCart === 1 ? '' : 's'} stay in the cart — confirm ${leftInCart === 1 ? 'it' : 'them'} as another trip (e.g. the other store).` })
     onClose()
   }
 

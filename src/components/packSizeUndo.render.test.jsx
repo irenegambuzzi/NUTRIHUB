@@ -74,6 +74,7 @@ const arrived = {
   order_date: '2026-10-20',
   price: 9,
   paid_by: 'shared',
+  expense_id: 'exp-tuna',
   pantry_item_id: 'tuna',
   arrived_item_id: 'tuna',
   stock_added: 12,

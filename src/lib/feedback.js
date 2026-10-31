@@ -17,10 +17,16 @@ const subscribe = (listener) => {
   return () => listeners.delete(listener)
 }
 
+// How long a toast stays, the same on every screen: one with a button
+// (Undo, Retry, Log in…) 20 seconds, so there is time to read it and
+// still press it; any other 15 seconds. × closes any toast at once.
+export const TOAST_WITH_ACTION_MS = 20000
+export const TOAST_MS = 15000
+
 // tone: 'info' | 'error'. action: { label, onClick }. A toast with the
 // same `key` replaces the previous one (e.g. repeated load failures).
-// duration 0 keeps it until dismissed.
-export function showToast({ message, detail = null, tone = 'info', action = null, duration = 5000, key = null }) {
+// How long it stays follows from whether it has a button (above).
+export function showToast({ message, detail = null, tone = 'info', action = null, key = null }) {
   if (key) toasts.filter((t) => t.key === key).forEach((t) => dismissToast(t.id))
   // The same message is never shown twice at once — except a toast with
   // Undo or Retry: each one undoes (or saves again) only its own change, so
@@ -31,7 +37,7 @@ export function showToast({ message, detail = null, tone = 'info', action = null
   if (same) return same.id
   const id = nextId++
   toasts = [...toasts, { id, key, message, detail, tone, action }]
-  if (duration) timers.set(id, setTimeout(() => dismissToast(id), duration))
+  timers.set(id, setTimeout(() => dismissToast(id), action ? TOAST_WITH_ACTION_MS : TOAST_MS))
   emit()
   return id
 }
@@ -78,7 +84,6 @@ export function toastSaveError(error, retry = null, message = SAVE_ERROR) {
     // Not repeated when the message already says it.
     detail: error?.message && error.message !== message ? error.message : null,
     tone: 'error',
-    duration: 8000,
     action: retry ? { label: 'Retry', onClick: retry } : null,
   })
 }
@@ -94,7 +99,6 @@ export function toastLoadError(error, retry, source) {
     message: LOAD_ERROR,
     detail: error?.message ?? null,
     tone: 'error',
-    duration: 8000,
     key: `load:${error?.message ?? ''}`,
     action: {
       label: 'Retry',

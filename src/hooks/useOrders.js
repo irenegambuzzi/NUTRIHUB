@@ -196,32 +196,17 @@ function editGroupMember(order, values) {
   )
 }
 
-// The order arrived. Only the order (and its SHOP list entry) changes: its
-// expense was made when ordering and is never made again. Gives the order
-// as saved (`data`), for the Undo on the toast.
-export function markArrived(order, date) {
-  return attempt(
-    async () => {
-      const rows = must(await supabase.from('orders').update({ status: 'arrived', arrived_date: date }).eq('id', order.id).select())
-      orderStore.upsertLocal(rows)
-      // Ordered from the SHOP list for something not in HOME: it leaves the list.
-      if (order.grocery_item_id) {
-        must(await supabase.from('grocery_items').update({ completed: true, in_cart: false }).eq('id', order.grocery_item_id))
-        await groceryStore.refresh()
-      }
-      return rows[0] ?? null
-    },
-    { onFail: () => Promise.all([orderStore.refresh(), groceryStore.refresh()]) }
-  )
-}
-
 // A durable order arrived (lib/durable.js orderLock; `kind` 'durable' or
-// 'service'): marked arrived like any other, but nothing goes into HOME,
-// so neither "Arrived" dialog opens (plan 9F). The toast has Undo (plan
-// 9J).
+// 'service'): nothing goes into HOME, so neither "Arrived" dialog opens
+// (plan 9F). It is marked arrived by arrive_order with nothing added
+// (plan 9J follow-up, K24), so only the first Arrived counts, on whichever
+// phone: the second one is told so, with no Undo. Its SHOP entry, if any,
+// leaves the list (arrive_order does it); the SHOP list is not judged
+// again, as before. The toast has Undo (plan 9J). Its expense was made
+// when ordering and is never made again.
 export async function markDurableArrived(order, date, kind = 'durable') {
-  const result = await markArrived(order, date)
-  if (!result.error) arrivedToast(`“${order.item_name}” arrived — ${kind === 'service' ? 'service' : 'durable'}, nothing added to HOME.`, result.data ? { order, arrived: result.data } : null)
+  const result = await arriveLinkedOrder(order, { itemId: null, delta: 0, date, syncList: false })
+  if (!result.error) arrivedToast(result.added ? `“${order.item_name}” arrived — ${kind === 'service' ? 'service' : 'durable'}, nothing added to HOME.` : alreadyArrivedMessage(order), result.arrival)
   return result
 }
 
@@ -257,9 +242,10 @@ export const alreadyArrivedMessage = (order) => `"${order.item_name}" was alread
 // one; when the other phone was first it is deleted again (still at 0).
 // Never an expense. `pack` ({ unit, value, firstTime }): the pack field of
 // the arrival and `packItem` the item it counts for (plan 9H,
-// rememberArrivalPack). Returns { error, added, arrival }: `arrival` is
-// what the Undo on the toast needs (undoArrival).
-export async function arriveLinkedOrder(order, { itemId, delta, newVariant = null, newItem = null, date, pack = null, packItem = null }) {
+// rememberArrivalPack). `syncList` false: the SHOP list is not judged
+// again afterwards (a durable order, K24). Returns { error, added,
+// arrival }: `arrival` is what the Undo on the toast needs (undoArrival).
+export async function arriveLinkedOrder(order, { itemId, delta, newVariant = null, newItem = null, date, pack = null, packItem = null, syncList = true }) {
   const made = newVariant ?? newItem
   let added = false
   let arrived = null
@@ -287,7 +273,7 @@ export async function arriveLinkedOrder(order, { itemId, delta, newVariant = nul
   if (result.error) return { ...result, added: false, arrival: null }
   if (added && delta > 0) await rememberArrivalPack(order, packItem, pack)
   await refreshFlow()
-  await syncListFor(order, added ? made?.id ?? itemId : null)
+  if (syncList) await syncListFor(order, added ? made?.id ?? itemId : null)
   return { ...result, added, arrival: added && arrived ? { order, arrived, madeId: made?.id ?? null } : null }
 }
 
@@ -302,11 +288,11 @@ export function discardUnusedItem(id) {
   })
 }
 
-// The toast after Arrived (plan 9J, K11): 10 seconds with Undo when the
-// arrival is known (`arrival` from arriveLinkedOrder / markArrived), so a
-// wrong tap is put right at once. Without it a plain toast.
+// The toast after Arrived (plan 9J, K11): with Undo when the arrival is
+// known (`arrival` from arriveLinkedOrder), so a wrong tap is put right at
+// once. Without it a plain toast.
 export function arrivedToast(message, arrival) {
-  showToast({ message, ...(arrival ? { duration: 10000, action: { label: 'Undo', onClick: () => undoArrival(arrival) } } : {}) })
+  showToast({ message, ...(arrival ? { action: { label: 'Undo', onClick: () => undoArrival(arrival) } } : {}) })
 }
 
 export const changedMeanwhileMessage = (order) => `"${order.item_name}" changed meanwhile (on the other phone?) — nothing was undone.`
@@ -530,7 +516,6 @@ export function markCancelled(order, { kind = 'cancelled', deleteExpense, today,
   const before = { ...originalOf(order, patch), expense_id: order.expense_id ?? null }
   return deleteWithUndo({
     message: 'Order moved to History',
-    duration: 8000,
     remove: () =>
       inSteps(async (onFail) => {
         const rows = must(await supabase.from('orders').update(patch).eq('id', order.id).select())
@@ -563,14 +548,35 @@ export function putBackOnTheWay(order, { createExpense, expenseId = crypto.rando
   return attempt(
     () =>
       inSteps(async (onFail) => {
-        if (makeExpense) {
-          const rows = must(
-            await supabase.from('expenses').upsert([{ id: expenseId, ...expenseRowForOrder(order, shopsAvailable(shopStore.getSnapshot())) }], { onConflict: 'id', ignoreDuplicates: true }).select()
-          )
-          onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
-          showExpenses(rows)
-        }
+        if (makeExpense) await addExpenseRow(order, expenseId, onFail)
         const patch = { status: 'on_the_way', arrived_date: null, ...('expense_outcome' in order ? { expense_outcome: null } : {}), ...(makeExpense ? { expense_id: expenseId } : {}) }
+        orderStore.upsertLocal(must(await supabase.from('orders').update(patch).eq('id', order.id).select()))
+      }),
+    { onFail: refreshOrdersAndExpenses }
+  )
+}
+
+// The expense of an order made again: one, for the order date and price
+// (`expenseId` fixed, so a Retry never makes a second one).
+async function addExpenseRow(order, expenseId, onFail) {
+  const rows = must(
+    await supabase.from('expenses').upsert([{ id: expenseId, ...expenseRowForOrder(order, shopsAvailable(shopStore.getSnapshot())) }], { onConflict: 'id', ignoreDuplicates: true }).select()
+  )
+  onFail(async () => must(await supabase.from('expenses').delete().eq('id', expenseId)))
+  showExpenses(rows)
+}
+
+// An arrived order put back on the way (unarriveOrder) whose expense was
+// deleted by hand gets it again, when asked (plan 9J follow-up, K20): the
+// same expense putBackOnTheWay makes, linked to the order. Only the
+// expense and the link are written — the order is on the way already and
+// stays so if this fails (toast with Retry).
+export function addExpenseAgain(order, { expenseId = crypto.randomUUID() } = {}) {
+  return attempt(
+    () =>
+      inSteps(async (onFail) => {
+        await addExpenseRow(order, expenseId, onFail)
+        const patch = { expense_id: expenseId, ...('expense_outcome' in order ? { expense_outcome: null } : {}) }
         orderStore.upsertLocal(must(await supabase.from('orders').update(patch).eq('id', order.id).select()))
       }),
     { onFail: refreshOrdersAndExpenses }

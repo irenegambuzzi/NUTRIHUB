@@ -20,7 +20,7 @@ import { localDateString } from '../../lib/week'
 // so "Put back on the way" undoes it exactly. Confirming marks the order
 // arrived and adds the stock in one step; only the first confirmation
 // adds anything, on whichever phone. Never an expense: that was made when
-// ordering. The toast after it has Undo for 10 seconds (plan 9J). Closed
+// ordering. The toast after it has Undo (plan 9J). Closed
 // with × or a tap outside, nothing happens: the order stays on the way.
 export function LinkedArrivedDialog({ order, item, onClose }) {
   const { items } = usePantryItems()

@@ -96,10 +96,12 @@ describe('deleteWithUndo', () => {
     expect(restore).toHaveBeenCalledWith(rows)
   })
 
-  it('keeps Undo available only for about 5 seconds', async () => {
+  it('keeps Undo available for 20 seconds, like every toast with a button', async () => {
     vi.useFakeTimers()
     await deleteWithUndo({ remove: async () => [], restore: vi.fn() })
-    vi.advanceTimersByTime(5000)
+    vi.advanceTimersByTime(19999)
+    expect(getToasts()).toHaveLength(1)
+    vi.advanceTimersByTime(1)
     expect(getToasts()).toHaveLength(0)
     vi.useRealTimers()
   })

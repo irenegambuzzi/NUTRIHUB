@@ -10,7 +10,8 @@ const client = vi.hoisted(() => ({ supabase: {} }))
 vi.mock('../lib/supabaseClient', () => client)
 const { arrivalDb } = await import('./arrivalDb.fixture')
 const { arriveLinkedOrder, arrivedToast, discardUnusedItem, markDurableArrived, undoArrival } = await import('./useOrders')
-const { askBackOnTheWay, NO_STOCK_RECORDED } = await import('./orderActions')
+const { askBackOnTheWay, EXPENSE_DELETED, NO_STOCK_RECORDED } = await import('./orderActions')
+const { shopStore } = await import('../lib/stores')
 const { closeDialog, dismissToast, getDialog, getToasts, runToastAction } = await import('../lib/feedback')
 const { setOnlineForTest } = await import('../lib/connection')
 const { newVariantFields } = await import('../lib/groups')
@@ -240,7 +241,7 @@ describe('durable and service orders: the toast has Undo too', () => {
     await runToastAction(toast.id)
     expect(order(o.id)).toMatchObject({ status: 'on_the_way', arrived_date: null })
     expect(db.row('grocery_items', entry.id).completed).toBe(false)
-    expect(db.calls.filter((c) => c.op === 'rpc').map((c) => c.name)).toEqual(['unarrive_order'])
+    expect(db.calls.filter((c) => c.op === 'rpc').map((c) => c.name)).toEqual(['arrive_order', 'unarrive_order'])
   })
 
   it('service: the same, with its own text', async () => {
@@ -306,7 +307,7 @@ describe('an order of an order group (plan 9I)', () => {
 
 describe('"Back on the way" (Money → Orders → History)', () => {
   it('stock recorded, a new item made by that arrival and untouched: named in the question, then deleted with the stock', async () => {
-    const o = db.add('orders', { item_name: 'Catnip Snack', price: 4.2 })
+    const o = db.add('orders', { item_name: 'Catnip Snack', price: 4.2, expense_id: 'exp-catnip' })
     await arriveLinkedOrder(asShown(o.id), { newItem: { id: 'new-catnip', fields: { name: 'Catnip Snack', unit: 'pcs', min_stock: 1 } }, delta: 2, date: TODAY })
     db.later(3 * 24 * 3600 * 1000)
     const { dialog, result } = await answer(askBackOnTheWay(asShown(o.id), { unit: 'pcs' }))
@@ -319,7 +320,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
   })
 
   it('the new item was used meanwhile: the question does not name it, the stock is taken out exactly, the item stays', async () => {
-    const o = db.add('orders', { item_name: 'Remedy Balls for cat', price: 6.3 })
+    const o = db.add('orders', { item_name: 'Remedy Balls for cat', price: 6.3, expense_id: 'exp-balls' })
     await arriveLinkedOrder(asShown(o.id), { newItem: { id: 'new-balls', fields: { name: 'Remedy Balls', unit: 'pcs', min_stock: 1 } }, delta: 3, date: TODAY })
     await db.supabase.rpc('increment_stock', { item_id: 'new-balls', delta: -1 })
     db.add('stock_logs', { item_id: 'new-balls', change: -1, reason: 'used' })
@@ -332,7 +333,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
   it('an item that existed long before the arrival is never deleted (only its stock comes out)', async () => {
     const towels = db.add('pantry_items', { name: 'Paper Towels', unit: 'roll', current_stock: 0, min_stock: 2 })
     db.later(5 * 24 * 3600 * 1000)
-    const o = db.add('orders', { item_name: 'Paper Towels 8 rolls', price: 7 })
+    const o = db.add('orders', { item_name: 'Paper Towels 8 rolls', price: 7, expense_id: 'exp-towels' })
     await arriveLinkedOrder(asShown(o.id), { itemId: towels.id, delta: 8, date: TODAY })
     const { dialog } = await answer(askBackOnTheWay(asShown(o.id), { unit: 'roll' }))
     expect(dialog.message).toMatch(/^Its arrival added 8 roll to HOME\. That stock/)
@@ -341,7 +342,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
 
   it('no stock recorded, not durable ("Don\'t add to HOME"): asked first (K17), then unarrive_order — the SHOP entry is on the way again', async () => {
     const entry = db.add('grocery_items', { name: 'Shoe Insoles' })
-    const o = db.add('orders', { item_name: 'Shoe Insoles', price: 9, grocery_item_id: entry.id })
+    const o = db.add('orders', { item_name: 'Shoe Insoles', price: 9, grocery_item_id: entry.id, expense_id: 'exp-insoles' })
     await arriveLinkedOrder(asShown(o.id), { itemId: null, delta: 0, date: TODAY })
     const { dialog } = await answer(askBackOnTheWay(asShown(o.id)))
     expect(dialog).toMatchObject({ title: 'Put "Shoe Insoles" back on the way?', message: NO_STOCK_RECORDED, confirmLabel: 'Put back on the way' })
@@ -352,7 +353,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
   })
 
   it('Cancel on that question: nothing changes', async () => {
-    const o = db.add('orders', { item_name: 'Yoga Mat', price: 19 })
+    const o = db.add('orders', { item_name: 'Yoga Mat', price: 19, expense_id: 'exp-mat' })
     await arriveLinkedOrder(asShown(o.id), { itemId: null, delta: 0, date: TODAY })
     const { result } = await answer(askBackOnTheWay(asShown(o.id)), false)
     expect(result).toBeNull()
@@ -362,7 +363,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
   it('an old arrival with nothing recorded (before 9J): asked (K17), then unarrive_order; what went into HOME by hand stays', async () => {
     const snack = db.add('pantry_items', { name: 'Hairs all Relief', unit: 'pcs', current_stock: 2 })
     db.add('stock_logs', { item_id: snack.id, change: 2, reason: 'added' })
-    const o = db.add('orders', { item_name: 'Hairs all Relief', price: 5, status: 'arrived', arrived_date: '2026-10-18' })
+    const o = db.add('orders', { item_name: 'Hairs all Relief', price: 5, status: 'arrived', arrived_date: '2026-10-18', expense_id: 'exp-hairs' })
     const { dialog } = await answer(askBackOnTheWay(asShown(o.id)))
     expect(dialog.message).toBe(NO_STOCK_RECORDED)
     expect(order(o.id).status).toBe('on_the_way')
@@ -372,7 +373,7 @@ describe('"Back on the way" (Money → Orders → History)', () => {
 
   it('durable or service: no question, straight back on the way with unarrive_order', async () => {
     const entry = db.add('grocery_items', { name: 'Kettle', category_id: 'appliances' })
-    const o = db.add('orders', { item_name: 'Kettle', price: 29, grocery_item_id: entry.id })
+    const o = db.add('orders', { item_name: 'Kettle', price: 29, grocery_item_id: entry.id, expense_id: 'exp-kettle' })
     await markDurableArrived(asShown(o.id), TODAY)
     const result = await askBackOnTheWay(asShown(o.id), { durable: true })
     expect(result.error).toBeFalsy()
@@ -387,5 +388,194 @@ describe('"Back on the way" (Money → Orders → History)', () => {
     expect(result.error).toBeFalsy()
     expect(order(o.id)).toMatchObject({ status: 'on_the_way', arrived_date: null, expense_outcome: null })
     expect(db.calls.some((c) => c.op === 'rpc')).toBe(false)
+  })
+})
+
+// Round 9J follow-up (31/10), K20: an arrived order whose expense was
+// deleted by hand in Money (orders.expense_id empty) is asked about the
+// expense again — in the same one question, after what it says about the
+// stock.
+describe('"Back on the way" on an arrived order whose expense was deleted (K20)', () => {
+  // An order with its expense, as "Order online" makes it, then the expense
+  // deleted by hand in Money (the database unlinks it from the order).
+  function orderWithDeletedExpense(fields) {
+    const o = db.add('orders', { order_date: '2026-10-24', paid_by: 'shared', category_id: 'cat-pets', expense_id: 'exp-old', ...fields })
+    db.tables.expenses.push({ id: 'exp-old', amount: o.price, description: o.item_name })
+    db.tables.expenses = []
+    order(o.id).expense_id = null
+    return o
+  }
+  async function answerWith(promise, values) {
+    await vi.waitFor(() => expect(getDialog()).toBeTruthy())
+    const dialog = getDialog()
+    closeDialog(values)
+    return { dialog, result: await promise }
+  }
+  const choiceLabels = (dialog) => dialog.fields.map((f) => [f.name, f.value, f.options.map((o) => [o.label, o.hint ?? null])])
+
+  it('stock recorded: one question with the stock text, then the expense choice; "Add the expense again" → on the way, stock out, the same expense back', async () => {
+    db.add('shops', { id: 'shop-zoo', name: 'Zooplus' })
+    await shopStore.refresh()
+    const cat = db.add('pantry_items', { name: 'Cat Wet Food', unit: 'pcs', current_stock: 4, min_stock: 6 })
+    const o = orderWithDeletedExpense({ item_name: 'Cat Wet Food', price: 18.9, pantry_item_id: cat.id, shop_id: 'shop-zoo' })
+    await arriveLinkedOrder(asShown(o.id), { itemId: cat.id, delta: 24, date: TODAY })
+    expect(item(cat.id).current_stock).toBe(28)
+    const { dialog, result } = await answerWith(askBackOnTheWay(asShown(o.id), { unit: 'pcs' }), { how: 'add' })
+    expect(dialog).toMatchObject({ title: 'Put "Cat Wet Food" back on the way?', confirmLabel: 'Put back on the way' })
+    expect(dialog.message).toBe('Its arrival added 24 pcs to HOME. That stock is taken out again, so it isn\'t counted twice when it really arrives. Its expense was deleted. Add the expense again (one, for the order date and price)?')
+    expect(choiceLabels(dialog)).toEqual([['how', 'add', [['Add the expense again', '€18.90 on 24/10/2026.'], ['Without an expense', null]]]])
+    expect(result.error).toBeFalsy()
+    expect(order(o.id).status).toBe('on_the_way')
+    expect(item(cat.id).current_stock).toBe(4)
+    expect(logsOf(cat.id)).toEqual([])
+    expect(db.tables.expenses).toHaveLength(1)
+    const [expense] = db.tables.expenses
+    expect(expense).toMatchObject({ amount: 18.9, expense_date: '2026-10-24', category_id: 'cat-pets', paid_by: 'shared', shop_id: 'shop-zoo', description: 'Cat Wet Food' })
+    expect(order(o.id).expense_id).toBe(expense.id)
+    expect(db.calls.filter((c) => c.op === 'rpc').map((c) => c.name)).toEqual(['arrive_order', 'unarrive_order'])
+    // A new item made by that arrival is named in the same question.
+    const o2 = orderWithDeletedExpense({ item_name: 'Catnip Snack', price: 4.2 })
+    await arriveLinkedOrder(asShown(o2.id), { newItem: { id: 'new-catnip', fields: { name: 'Catnip Snack', unit: 'pcs', min_stock: 1 } }, delta: 2, date: TODAY })
+    const second = await answerWith(askBackOnTheWay(asShown(o2.id), { unit: 'pcs' }), { how: 'none' })
+    expect(second.dialog.message).toBe(`Its arrival added 2 pcs to HOME and created "Catnip Snack": both are taken out again, so they aren't counted twice when it really arrives. ${EXPENSE_DELETED}`)
+    expect(item('new-catnip')).toBeNull()
+  })
+
+  it('"Without an expense": on the way, the stock out, no expense made', async () => {
+    const rice = db.add('pantry_items', { name: 'Basmati Rice', unit: 'kg', current_stock: 1 })
+    const o = orderWithDeletedExpense({ item_name: 'Basmati Rice 5 kg', price: 12, pantry_item_id: rice.id })
+    await arriveLinkedOrder(asShown(o.id), { itemId: rice.id, delta: 5, date: TODAY })
+    const { result } = await answerWith(askBackOnTheWay(asShown(o.id), { unit: 'kg' }), { how: 'none' })
+    expect(result.error).toBeFalsy()
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', expense_id: null })
+    expect(item(rice.id).current_stock).toBe(1)
+    expect(db.tables.expenses).toEqual([])
+    expect(db.calls.some((c) => c.table === 'expenses' && c.op !== 'select')).toBe(false)
+  })
+
+  it('no stock recorded, not durable: the K17 text, then the expense choice, in one window', async () => {
+    const o = orderWithDeletedExpense({ item_name: 'Shoe Insoles', price: 9 })
+    await arriveLinkedOrder(asShown(o.id), { itemId: null, delta: 0, date: TODAY })
+    const { dialog } = await answerWith(askBackOnTheWay(asShown(o.id)), { how: 'add' })
+    expect(dialog.message).toBe(`${NO_STOCK_RECORDED} ${EXPENSE_DELETED}`)
+    expect(dialog.fields).toHaveLength(1)
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', expense_id: db.tables.expenses[0].id })
+  })
+
+  it('durable or service: only the expense choice', async () => {
+    const entry = db.add('grocery_items', { name: 'Kettle', category_id: 'appliances' })
+    const o = orderWithDeletedExpense({ item_name: 'Kettle', price: 29, grocery_item_id: entry.id })
+    await markDurableArrived(asShown(o.id), TODAY)
+    const { dialog } = await answerWith(askBackOnTheWay(asShown(o.id), { durable: true }), { how: 'add' })
+    expect(dialog.message).toBe(EXPENSE_DELETED)
+    expect(EXPENSE_DELETED).toBe('Its expense was deleted. Add the expense again (one, for the order date and price)?')
+    expect(order(o.id).status).toBe('on_the_way')
+    expect(db.row('grocery_items', entry.id).completed).toBe(false)
+    expect(db.tables.expenses).toMatchObject([{ amount: 29, description: 'Kettle' }])
+  })
+
+  it('the expense still there: no expense choice, exactly as built in 9J', async () => {
+    const o = db.add('orders', { item_name: 'Yoga Mat', price: 19, expense_id: 'exp-mat' })
+    db.tables.expenses.push({ id: 'exp-mat', amount: 19 })
+    await arriveLinkedOrder(asShown(o.id), { itemId: null, delta: 0, date: TODAY })
+    const { dialog } = await answerWith(askBackOnTheWay(asShown(o.id)), {})
+    expect(dialog.message).toBe(NO_STOCK_RECORDED)
+    expect(dialog.fields).toEqual([])
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', expense_id: 'exp-mat' })
+    expect(db.tables.expenses).toEqual([{ id: 'exp-mat', amount: 19 }])
+  })
+
+  it('Cancel: nothing changes', async () => {
+    const towels = db.add('pantry_items', { name: 'Paper Towels', unit: 'roll', current_stock: 0 })
+    const o = orderWithDeletedExpense({ item_name: 'Paper Towels', price: 7 })
+    await arriveLinkedOrder(asShown(o.id), { itemId: towels.id, delta: 8, date: TODAY })
+    const before = structuredClone(db.tables)
+    const { result } = await answerWith(askBackOnTheWay(asShown(o.id), { unit: 'roll' }), null)
+    expect(result).toBeNull()
+    expect(db.tables).toEqual(before)
+  })
+
+  it('the expense step fails: the order stays on the way, the toast has Retry, and Retry adds the expense once', async () => {
+    const oil = db.add('pantry_items', { name: 'Olive Oil', unit: 'btl', current_stock: 1 })
+    const o = orderWithDeletedExpense({ item_name: 'Olive Oil 3 l', price: 24, pantry_item_id: oil.id })
+    await arriveLinkedOrder(asShown(o.id), { itemId: oil.id, delta: 3, date: TODAY })
+    db.failWhen = (c) => c.table === 'orders' && c.op === 'update' && 'expense_id' in (c.patch ?? {})
+    const { result } = await answerWith(askBackOnTheWay(asShown(o.id), { unit: 'btl' }), { how: 'add' })
+    expect(result.error).toBeFalsy()
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', expense_id: null })
+    expect(item(oil.id).current_stock).toBe(1)
+    // The expense made before the link failed is taken back (inSteps).
+    expect(db.tables.expenses).toEqual([])
+    const toast = getToasts().at(-1)
+    expect(toast).toMatchObject({ message: "Couldn't save — check your connection.", tone: 'error', action: { label: 'Retry' } })
+    db.failWhen = () => false
+    await runToastAction(toast.id)
+    expect(db.tables.expenses).toHaveLength(1)
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', expense_id: db.tables.expenses[0].id })
+    await runToastAction(toast.id)
+    expect(db.tables.expenses).toHaveLength(1)
+  })
+
+  it('a cancelled order keeps its own question (before 9J): unchanged', async () => {
+    const o = db.add('orders', { item_name: 'Rain Jacket', price: 49, order_date: '2026-10-20', paid_by: 'shared', status: 'cancelled', arrived_date: '2026-10-25', expense_outcome: 'deleted' })
+    const { dialog } = await answerWith(askBackOnTheWay(asShown(o.id)), { how: 'add' })
+    expect(dialog.message).toBe(EXPENSE_DELETED)
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', arrived_date: null, expense_outcome: null, expense_id: db.tables.expenses[0].id })
+    expect(db.calls.some((c) => c.op === 'rpc')).toBe(false)
+  })
+})
+
+// Round 9J follow-up (31/10), K24: durable and service orders arrive
+// through arrive_order with nothing added, so only the first Arrived counts.
+describe('durable and service arrivals through arrive_order (K24)', () => {
+  it('durable: arrive_order(order, null, 0); its SHOP entry leaves the list as before; nothing in HOME', async () => {
+    const entry = db.add('grocery_items', { name: 'Cordless Vacuum', category_id: 'appliances' })
+    const o = db.add('orders', { item_name: 'Cordless Vacuum', price: 149, grocery_item_id: entry.id })
+    const { error, added } = await markDurableArrived(asShown(o.id), TODAY)
+    expect(error).toBeFalsy()
+    expect(added).toBe(true)
+    expect(db.calls.filter((c) => c.op === 'rpc')).toMatchObject([{ name: 'arrive_order', args: { order_id: o.id, item_id: null, add_qty: 0, arrived_on: TODAY } }])
+    expect(order(o.id)).toMatchObject({ status: 'arrived', arrived_date: TODAY, stock_added: 0, arrived_item_id: null, arrived_log_id: null })
+    expect(db.row('grocery_items', entry.id)).toMatchObject({ completed: true, in_cart: false })
+    expect(db.tables.pantry_items).toEqual([])
+    expect(db.tables.stock_logs).toEqual([])
+    expect(db.calls.some((c) => c.table === 'orders' && c.op === 'update')).toBe(false)
+  })
+
+  it('service: the same step, its own toast with Undo', async () => {
+    const o = db.add('orders', { item_name: 'Car Service', price: 180 })
+    await markDurableArrived(asShown(o.id), TODAY, 'service')
+    expect(db.calls.filter((c) => c.op === 'rpc').map((c) => [c.name, c.args.add_qty])).toEqual([['arrive_order', 0]])
+    expect(getToasts().at(-1)).toMatchObject({ message: '“Car Service” arrived — service, nothing added to HOME.', action: { label: 'Undo' } })
+  })
+
+  it('already arrived on the other phone: told so, no Undo, nothing written again', async () => {
+    const entry = db.add('grocery_items', { name: 'Desk Chair', category_id: 'furniture' })
+    const o = db.add('orders', { item_name: 'Desk Chair', price: 99, grocery_item_id: entry.id })
+    const shown = asShown(o.id)
+    await db.supabase.rpc('arrive_order', { order_id: o.id, item_id: null, add_qty: 0, arrived_on: '2026-10-29' })
+    const theirs = { ...order(o.id) }
+    const { error, added } = await markDurableArrived(shown, TODAY)
+    expect(error).toBeFalsy()
+    expect(added).toBe(false)
+    expect(order(o.id)).toEqual(theirs)
+    const toast = getToasts().at(-1)
+    expect(toast.message).toBe('"Desk Chair" was already marked as arrived (on the other phone?) — nothing was added again.')
+    expect(toast.action).toBeNull()
+    expect(messages()).not.toContain('“Desk Chair” arrived — durable, nothing added to HOME.')
+  })
+
+  it('Undo of a durable arrival puts the order and its SHOP entry back; offline the Arrived is refused before writing', async () => {
+    const entry = db.add('grocery_items', { name: 'Air Fryer', category_id: 'appliances' })
+    const o = db.add('orders', { item_name: 'Air Fryer', price: 79, grocery_item_id: entry.id })
+    await markDurableArrived(asShown(o.id), TODAY)
+    await runToastAction(getToasts().at(-1).id)
+    expect(order(o.id)).toMatchObject({ status: 'on_the_way', arrived_date: null })
+    expect(db.row('grocery_items', entry.id)).toMatchObject({ completed: false, in_cart: false })
+    expect(messages()).toContain('"Air Fryer" is on the way again')
+    setOnlineForTest(false)
+    const { error } = await markDurableArrived(asShown(o.id), TODAY)
+    expect(error).toMatchObject({ offline: true })
+    expect(order(o.id).status).toBe('on_the_way')
   })
 })

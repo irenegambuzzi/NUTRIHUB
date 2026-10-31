@@ -58,14 +58,12 @@ vi.mock('../hooks/useExpenses', () => ({ addExpenseOnce: vi.fn() }))
 vi.mock('../hooks/useReceiptPhotos', () => ({ useReceiptPhotos: () => ({ photos: [], addPhoto: vi.fn(), deletePhoto: vi.fn() }) }))
 vi.mock('../hooks/useGroceryList', () => ({ useGroceryList: () => data.groceryList }))
 vi.mock('../hooks/useFlow', () => ({ FLOW_NOTICE: '', useFlow: () => ({ ready: true, missing: false, mapRows: [] }) }))
-const markArrived = vi.fn(async () => ({ error: null }))
 const markDurableArrived = vi.fn(async () => ({ error: null }))
 vi.mock('../hooks/useOrders', () => ({
   useOrders: () => ({ orders: data.orders, ready: true, missing: false }),
   createOrder: vi.fn(),
   editOrder: vi.fn(),
   linkedItemOf: () => null,
-  markArrived: (...args) => markArrived(...args),
   markDurableArrived: (...args) => markDurableArrived(...args),
 }))
 vi.mock('./expenses/ArrivedDialog', () => ({ ArrivedDialog: () => <p>Arrived dialog: add to HOME?</p> }))
@@ -80,7 +78,6 @@ const { ItemEditor } = await import('./inventory/ItemEditor')
 
 afterEach(() => {
   cleanup()
-  markArrived.mockClear()
   markDurableArrived.mockClear()
 })
 
@@ -267,7 +264,6 @@ describe('Orders: Arrived', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Arrived' }))
     await waitFor(() => expect(markDurableArrived).toHaveBeenCalledTimes(1))
     expect(markDurableArrived.mock.calls[0][0]).toMatchObject({ id: 'o1' })
-    expect(markArrived).not.toHaveBeenCalled()
     expect(screen.queryByText('Arrived dialog: add to HOME?')).toBeNull()
   })
 
@@ -284,7 +280,6 @@ describe('Orders: Arrived', () => {
     // Plan 9J: the dialog opens on the order still on the way; the choice
     // made there marks it arrived.
     expect(await screen.findByText('Arrived dialog: add to HOME?')).toBeTruthy()
-    expect(markArrived).not.toHaveBeenCalled()
   })
 
   it('a service order too (decision 14b), marked as a service', async () => {
@@ -293,7 +288,6 @@ describe('Orders: Arrived', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Arrived' }))
     await waitFor(() => expect(markDurableArrived).toHaveBeenCalledTimes(1))
     expect(markDurableArrived.mock.calls[0][2]).toBe('service')
-    expect(markArrived).not.toHaveBeenCalled()
   })
 })
 
