@@ -4343,6 +4343,7 @@ const REOPEN_ADDED = [
   "  v_factor numeric;",
   "  v_elsewhere boolean;",
   "  v_trip_logs uuid[];",
+  "  v_keep_pack boolean;",
   "  select coalesce(array_agg(l.id), '{}') into v_trip_logs",
   "  from shopping_trip_items i cross join lateral unnest(i.log_ids) as l(id)",
   "  where i.trip_id = reopen_shopping_trip.trip_id;",
@@ -4383,6 +4384,8 @@ const REOPEN_ADDED = [
   "            where p.id = pi.id;",
   "          end if;",
   "        else",
+  "          v_keep_pack := v_unit is distinct from pi.unit",
+  "            or (coalesce(ti.pantry_before->>'packaging_unit', '') <> '' and coalesce((ti.pantry_before->>'quantity_per_pack')::numeric, 0) > 0);",
   "          update pantry_items p set",
   "            current_stock = case when v_factor is null then p.current_stock",
   "                                 else greatest(0, coalesce(p.current_stock, 0) - ti.stock_added * v_factor) + ti.stock_discarded * v_factor end,",
@@ -4393,8 +4396,8 @@ const REOPEN_ADDED = [
   "            payer = ti.pantry_before->>'payer',",
   "            last_purchased_at = (ti.pantry_before->>'last_purchased_at')::timestamptz,",
   "            expiry_date = (ti.pantry_before->>'expiry_date')::date,",
-  "            packaging_unit = case when v_unit is distinct from p.unit then p.packaging_unit else ti.pantry_before->>'packaging_unit' end,",
-  "            quantity_per_pack = case when v_unit is distinct from p.unit then p.quantity_per_pack else (ti.pantry_before->>'quantity_per_pack')::numeric end",
+  "            packaging_unit = case when v_keep_pack then p.packaging_unit else ti.pantry_before->>'packaging_unit' end,",
+  "            quantity_per_pack = case when v_keep_pack then p.quantity_per_pack else (ti.pantry_before->>'quantity_per_pack')::numeric end",
   "          where p.id = pi.id;",
   "        end if;",
 ]
@@ -4770,6 +4773,36 @@ describe('031: Reopen of items a purchase created, and unit changes after a purc
     expect(await itemOf(fx, 'Fizz 031 c8')).toEqual({ unit: 'pcs', stock: 4, packaging_unit: 'pack', per: 4, price: 3, price_unit: 'pack' })
     expect(await reopen(base, id(83))).toEqual({ n: 1, notes: [] })
     expect(await itemOf(base, 'Fizz 031 c8')).toEqual({ unit: 'pcs', stock: 7, packaging_unit: null, per: null, price: 3, price_unit: null })
+  })
+
+  it('K33: no unit change — a usual size complete before the purchase is never put back (48, changed by hand to 40 → stays 40; 48 unchanged → 48); none before → the first-time size the purchase saved goes again (12 → empty)', async () => {
+    for (const d of [fx, base]) {
+      // "1 box = 48" before, a purchase of 1 box, then 40 typed by hand.
+      await addItem(d, id(141), 'Tea 031 k33a', 'pcs', 10, { packaging_unit: 'box', quantity_per_pack: 48 })
+      await addEntry(d, id(142), 'Tea 031 k33a', { unit: 'box', pantry: id(141) })
+      await shop(d, id(143), [{ entry: id(142), add: 48, pantry: id(141) }])
+      await d.query(`update pantry_items set quantity_per_pack = 40 where id = $1`, [id(141)])
+      // No usual size before: the purchase saves "1 box = 12" (first time, 9H).
+      await addItem(d, id(144), 'Tea 031 k33b', 'pcs', 10)
+      await addEntry(d, id(145), 'Tea 031 k33b', { unit: 'box', pantry: id(144) })
+      await shop(d, id(146), [{ entry: id(145), add: 12, pantry: id(144), extra: { packaging_unit: 'box', quantity_per_pack: 12 } }])
+      // "1 box = 48" before, a purchase, nothing changed.
+      await addItem(d, id(147), 'Tea 031 k33c', 'pcs', 10, { packaging_unit: 'box', quantity_per_pack: 48 })
+      await addEntry(d, id(148), 'Tea 031 k33c', { unit: 'box', pantry: id(147) })
+      await shop(d, id(149), [{ entry: id(148), add: 48, pantry: id(147) }])
+    }
+    expect(await itemOf(fx, 'Tea 031 k33a')).toMatchObject({ unit: 'pcs', stock: 58, packaging_unit: 'box', per: 40 })
+    expect(await itemOf(fx, 'Tea 031 k33b')).toMatchObject({ unit: 'pcs', stock: 22, packaging_unit: 'box', per: 12 })
+    expect(await itemOf(fx, 'Tea 031 k33c')).toMatchObject({ unit: 'pcs', stock: 58, packaging_unit: 'box', per: 48 })
+    for (const trip of [id(143), id(146), id(149)]) expect(await reopen(fx, trip)).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(fx, 'Tea 031 k33a')).toMatchObject({ unit: 'pcs', stock: 10, packaging_unit: 'box', per: 40 })
+    expect(await itemOf(fx, 'Tea 031 k33b')).toMatchObject({ unit: 'pcs', stock: 10, packaging_unit: null, per: null })
+    expect(await itemOf(fx, 'Tea 031 k33c')).toMatchObject({ unit: 'pcs', stock: 10, packaging_unit: 'box', per: 48 })
+    // 030 (023's Reopen): the hand-typed 40 went back to 48; the other two the same.
+    for (const trip of [id(143), id(146), id(149)]) expect(await reopen(base, trip)).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(base, 'Tea 031 k33a')).toMatchObject({ stock: 10, packaging_unit: 'box', per: 48 })
+    expect(await itemOf(base, 'Tea 031 k33b')).toMatchObject({ stock: 10, packaging_unit: null, per: null })
+    expect(await itemOf(base, 'Tea 031 k33c')).toMatchObject({ stock: 10, packaging_unit: 'box', per: 48 })
   })
 
   it('9: converted with "Keep the numbers as they are" and no usual size → nothing taken out, and the app says so (030: taken out in the wrong unit, nothing said)', async () => {

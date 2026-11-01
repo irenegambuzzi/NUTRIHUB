@@ -1,6 +1,7 @@
 import { askDialog, confirmDialog } from '../lib/feedback'
 import { outcomeSupported } from '../lib/orders'
-import { addExpenseAgain, itemMadeByArrival, markCancelled, putBackOnTheWay, removeOrder, syncListFor, unarriveOrder } from './useOrders'
+import { backOnTheWayStockText } from '../lib/reopenUnits'
+import { addExpenseAgain, itemMadeByArrival, markCancelled, putBackOnTheWay, readArrivalItem, removeOrder, syncListFor, unarriveOrder } from './useOrders'
 
 // The questions asked before an order changes, shared by Orders in MONEY
 // and the "On the way" part of the SHOP list, so both behave the same.
@@ -75,7 +76,8 @@ const expenseChoice = (order) => ({
 // K10) takes the stock its arrival added back out of HOME, after asking —
 // with a new item or variant that arrival made, while untouched (K3, K4);
 // one with no stock recorded asks too, unless it is durable or a service
-// (`durable`, K17). An order whose expense was deleted can get it again:
+// (`durable`, K17); after a unit change it says what the arrival really
+// added (plan 9M, K37: backOnTheWayStockText). An order whose expense was deleted can get it again:
 // a cancelled or returned one as before; an arrived one in the same one
 // question, after what it says about the stock (K20) — put back first,
 // then the expense made again (if that fails the order stays on the way,
@@ -92,7 +94,7 @@ export async function askBackOnTheWay(order, { unit = '', durable = false } = {}
         : NO_STOCK_RECORDED
       : made
         ? `Its arrival added ${qty} to HOME and created "${made.name}": both are taken out again, so they aren't counted twice when it really arrives.`
-        : `Its arrival added ${qty} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
+        : backOnTheWayStockText(order, unit, await readArrivalItem(order))
     if (!order.expense_id) {
       const answer = await askDialog({ title, message: [stock, EXPENSE_DELETED].filter(Boolean).join(' '), fields: [expenseChoice(order)], confirmLabel: 'Put back on the way' })
       if (!answer) return null

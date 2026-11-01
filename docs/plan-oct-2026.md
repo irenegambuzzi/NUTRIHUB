@@ -4439,7 +4439,8 @@ empty) shows a small grey **"deleted item"** after the date ("Unit changed ·
   purchase 1 pack = 2 pack, converted to 8 pcs (1 pack = 4), Reopen → 8 − 4
   = 4 pcs. When the unit changed after the purchase (the line's unit ≠ the
   item's unit now), the usual pack size of NOW is kept (never the one in
-  `pantry_before`), and a price that had no unit before the purchase is put
+  `pantry_before`) — and also without a unit change when `pantry_before`
+  had a complete usual size (K33, below), and a price that had no unit before the purchase is put
   back per the unit it was counted in then ("€3.00 per 1 pack", not per 1
   pcs; Kata ragu). Price, price quantity, payer, last bought and expiry are
   put back from `pantry_before` as today. No conversion → the stock is not
@@ -4487,7 +4488,24 @@ same, without the note.
   an order from elsewhere; this purchase's stock couldn't be taken out (its
   unit changed) — check it in HOME.`
 - "Back on the way" / the Arrived Undo: `"{item}": this arrival's stock
-  couldn't be taken out (its unit changed) — check it in HOME.` The Arrived
+  couldn't be taken out (its unit changed) — check it in HOME.`
+- The "Back on the way" question (K37), when the arrival's own history row
+  (`orders.arrived_log_id` → `stock_logs.unit`) was counted in another unit
+  than the item's now. The app can't tell BEFORE the call whether 031 has
+  run, so the question says both (Kata ragu 01/11, 1):
+  - convertible: `Its arrival added 1 pack (4 pcs) to HOME. That stock is
+    taken out again, so it isn't counted twice when it really arrives. Until
+    the database update supabase/031_reopen_created_items.sql has run, 1 pcs
+    is taken out instead — check "{item}" in HOME afterwards.`
+  - not convertible: `Its arrival added 1 pack to HOME. That stock won't be
+    taken out (its unit changed) — check "{item}" in HOME. Until the database
+    update supabase/031_reopen_created_items.sql has run, 1 pcs is taken out
+    instead.`
+  - the same unit, the arrival's row gone, or the item / row can't be read:
+    the text as before (`Its arrival added {qty} to HOME. That stock is taken
+    out again, …`; 021 and 031 then take out the same). The variant with a
+    new item (`… and created "{item}" …`) and the K20 expense part: as
+    before. The Arrived
   Undo toast after a unit change says what really came out (`"Soap" is on
   the way again — 4 pcs taken out of "Soap"`); without a unit change as
   before.
@@ -4518,9 +4536,9 @@ the same with its own line diff):
 
 | Where (line in 023) | Change | A line without a unit change, an item not created |
 |---|---|---|
-| declare, after `v_source text;` (576) | + comment, `pi pantry_items;`, `v_unit text;`, `v_factor numeric;`, `v_elsewhere boolean;`, `v_trip_logs uuid[];` | — |
+| declare, after `v_source text;` (576) | + comment, `pi pantry_items;`, `v_unit text;`, `v_factor numeric;`, `v_elsewhere boolean;`, `v_trip_logs uuid[];`, + comment, `v_keep_pack boolean;` (K33) | — |
 | after the `merged` refusal (590) | + comment, `select coalesce(array_agg(l.id), '{}') into v_trip_logs from shopping_trip_items i cross join lateral unnest(i.log_ids) …` (the history rows of every line of this purchase) | Read only. |
-| inside `if ti.pantry_item_id is not null then` (596–609: `if ti.pantry_created then delete …; else update … end if;`, 14 lines) | replaced by: lock the item (`select * into pi … for update`; gone → skipped, as before); `v_unit` = `stock_unit`, else the line's "Bought" row's unit; `v_factor` (null unit → 1 only when the line's unit is the item's; same unit 1; kg/L → 1000; gr/ml → 0.001; usual pack → its size; else null); `v_unit := coalesce(v_unit, ti.unit)`; `v_elsewhere` (K26); created and not elsewhere → delete its automatic "to buy" entries (K31), all its history, the item; created and elsewhere → `current_stock − stock_added × factor` (nothing when null); otherwise the 023 update with `current_stock` = (null → unchanged, else `greatest(0, stock − added × f) + discarded × f`), `price_unit` / `packaging_unit` / `quantity_per_pack` from `pantry_before` unless the unit changed (then: the price's unit or the unit counted in; the pack size of now), `where p.id = pi.id` | `v_factor` = 1, unit unchanged: the same values as 023 (`stock − added + discarded`, every field from `pantry_before`). |
+| inside `if ti.pantry_item_id is not null then` (596–609: `if ti.pantry_created then delete …; else update … end if;`, 14 lines) | replaced by: lock the item (`select * into pi … for update`; gone → skipped, as before); `v_unit` = `stock_unit`, else the line's "Bought" row's unit; `v_factor` (null unit → 1 only when the line's unit is the item's; same unit 1; kg/L → 1000; gr/ml → 0.001; usual pack → its size; else null); `v_unit := coalesce(v_unit, ti.unit)`; `v_elsewhere` (K26); created and not elsewhere → delete its automatic "to buy" entries (K31), all its history, the item; created and elsewhere → `current_stock − stock_added × factor` (nothing when null); otherwise `v_keep_pack := v_unit is distinct from pi.unit or (coalesce(ti.pantry_before->>'packaging_unit', '') <> '' and coalesce((ti.pantry_before->>'quantity_per_pack')::numeric, 0) > 0);` (K33) and the 023 update with `current_stock` = (null → unchanged, else `greatest(0, stock − added × f) + discarded × f`), `price_unit` from `pantry_before` unless the unit changed (then: the price's unit or the unit counted in), `packaging_unit` / `quantity_per_pack` = `case when v_keep_pack then` the item's values of now `else` `pantry_before`'s `end`, `where p.id = pi.id` | `v_factor` = 1, unit unchanged: the same values as 023 (`stock − added + discarded`, every field from `pantry_before`) — except the usual pack size when `pantry_before` had a complete one (K33): the item's of now, which is `pantry_before`'s unless it was changed by hand after the purchase. |
 
 Everything else — the household check, the lock on the purchase, the
 `merged` refusal, the order of the lines, `delete from stock_logs where id =
@@ -4640,6 +4658,54 @@ Orders) is not confirmed.
    (the arrival's number with the item's unit now) — not changed in 9M.
 7. An arrival whose own history row was deleted by hand: taken out as today
    (counted in the item's unit now).
+
+**Decisions on the doubts (01/11): K32–K38.**
+
+- **K32** (doubt 1, an old line whose "Bought" row was deleted by hand):
+  keep as built.
+- **K33** (doubt 2) CHANGED: an existing item (not created by the line)
+  whose unit did NOT change gets its usual pack size (`packaging_unit` /
+  `quantity_per_pack`) back from `pantry_before` ONLY when `pantry_before`
+  had no complete usual size (`packaging_unit` empty or `quantity_per_pack`
+  not > 0 — the 9H first-time rule, `lib/packSize.savesUsualSize`) —
+  exactly as before. With a complete one, the item keeps its values of now:
+  a purchase never overwrites an existing usual size, so a different one
+  now was changed by hand. Unit changed → the values of now (as built).
+  "1 box = 48", purchase, changed by hand to 40, Reopen → 40; none, the
+  purchase saved 12, Reopen → empty; "1 box = 48", nothing changed, Reopen
+  → 48. SQL 031 changed in place (not run yet).
+- **K34, K35, K36** (doubts 3, 4, 5): keep as built.
+- **K37** (doubt 6) FIXED: the "Back on the way" question says what the
+  arrival really added, in the unit of its own history row, and what is
+  taken out now (see "Texts"). `lib/reopenUnits.backOnTheWayStockText`;
+  `hooks/orderActions.askBackOnTheWay` reads the item and that row first
+  (`useOrders.readArrivalItem`, now exported).
+- **K38** (doubt 7, an arrival whose own history row was deleted by hand):
+  keep as built.
+
+Tests of the follow-up: 2095 → 2102 (115 files). `supabase/migrations.test.js`
+block "031" + 1 (the three K33 examples, with 030's result next to them:
+40 → 48 there); the line diff lists `v_keep_pack`. `lib/reopenUnits.test.js`
++ 3 (same unit / row gone / nothing read; 1 pack = 4 and 0.5 kg → "0.5 kg
+(500 gr)"; not convertible). `hooks/reopenNotes.test.js` + 3 (the question,
+with 031 and with 021 each: no unit change 3 → 2 pack; 1 pack = 4: 12 → 8
+with 031, 12 → 11 before; not convertible: 3 stays with 031, 3 → 2 before).
+
+**Kata ragu (01/11 follow-up).**
+
+1. K37 "before 031, keep today's text": the app only knows whether 031 has
+   run AFTER the call (it compares the stock), not before the question. Now
+   the question says both what 031 does and what comes out before 031
+   (examples in "Texts"). Options: (a) keep it, and drop the "Until …"
+   sentence in a small round after 031 has run (recommended); (b) give 031
+   a tiny marker the app can read before asking (one more function, e.g.
+   `reopen_units_version()` returning 31 — breaks "031 replaces only two
+   functions"); (c) show only the 031 text, also before 031 (wrong for 1
+   pack = 4: says 4 pcs, 1 pcs comes out).
+2. K33 "complete usual size": counted as `packaging_unit` filled and
+   `quantity_per_pack` > 0 (as 9H). "1 box = 0" before → put back as today.
+   `packaging_unit` empty but `quantity_per_pack` 48 → put back as today too
+   (the household's rule as written; 9H would never overwrite it either).
 
 ### iPhone checklist for round 9M
 

@@ -485,8 +485,9 @@ export async function unarriveOrder(order, { made = null } = {}) {
 // The item an arrival put stock into and the arrival's own history row,
 // read just before unarrive_order (which deletes that row), so what it
 // did can be told afterwards (plan 9M). Null when nothing was added or
-// they can't be read: the order goes back on the way all the same.
-async function readArrivalItem(order) {
+// they can't be read: the order goes back on the way all the same. Also
+// read before the "Back on the way" question (K37).
+export async function readArrivalItem(order) {
   if (!order?.arrived_item_id || !(Number(order.stock_added) > 0)) return null
   try {
     const item = must(await supabase.from('pantry_items').select('*').eq('id', order.arrived_item_id).maybeSingle())

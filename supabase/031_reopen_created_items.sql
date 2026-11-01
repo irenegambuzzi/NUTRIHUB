@@ -26,7 +26,13 @@
 --                         (c) an existing item whose unit changed after the
 --                         purchase keeps its usual pack size now, and a
 --                         price the purchase found without a unit is put
---                         back per the unit it was counted in then.
+--                         back per the unit it was counted in then;
+--                         (d) an existing item that had a complete usual
+--                         size before the purchase (packaging_unit and
+--                         quantity_per_pack > 0, the 9H first-time rule: a
+--                         purchase never overwrites one) keeps its usual
+--                         size now too (K33); without one, it is put back
+--                         from before the purchase, as today.
 --                         Lines without a unit change: exactly the 023
 --                         text.
 --   unarrive_order(order_id)        replaced, starting from the 021 version
@@ -83,6 +89,8 @@ declare
   v_factor numeric;
   v_elsewhere boolean;
   v_trip_logs uuid[];
+  -- 031 (K33): the item keeps its usual pack size of now.
+  v_keep_pack boolean;
 begin
   -- Only for the household's account (see is_household_member).
   if not is_household_member() then
@@ -155,7 +163,11 @@ begin
           end if;
         else
           -- 031: converted (not at all if it can't be); a unit changed after
-          -- the purchase keeps the usual pack size of now.
+          -- the purchase keeps the usual pack size of now. So does a usual
+          -- size complete before the purchase (K33): a purchase never
+          -- overwrites one (9H), so one different now was changed by hand.
+          v_keep_pack := v_unit is distinct from pi.unit
+            or (coalesce(ti.pantry_before->>'packaging_unit', '') <> '' and coalesce((ti.pantry_before->>'quantity_per_pack')::numeric, 0) > 0);
           update pantry_items p set
             current_stock = case when v_factor is null then p.current_stock
                                  else greatest(0, coalesce(p.current_stock, 0) - ti.stock_added * v_factor) + ti.stock_discarded * v_factor end,
@@ -166,8 +178,8 @@ begin
             payer = ti.pantry_before->>'payer',
             last_purchased_at = (ti.pantry_before->>'last_purchased_at')::timestamptz,
             expiry_date = (ti.pantry_before->>'expiry_date')::date,
-            packaging_unit = case when v_unit is distinct from p.unit then p.packaging_unit else ti.pantry_before->>'packaging_unit' end,
-            quantity_per_pack = case when v_unit is distinct from p.unit then p.quantity_per_pack else (ti.pantry_before->>'quantity_per_pack')::numeric end
+            packaging_unit = case when v_keep_pack then p.packaging_unit else ti.pantry_before->>'packaging_unit' end,
+            quantity_per_pack = case when v_keep_pack then p.quantity_per_pack else (ti.pantry_before->>'quantity_per_pack')::numeric end
           where p.id = pi.id;
         end if;
       end if;

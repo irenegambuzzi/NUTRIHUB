@@ -93,6 +93,27 @@ export function reopenNotes({ lines, before, after, logs = [] }) {
 // (`log`), or the item's unit when that row is gone.
 export const arrivalFactor = (log, item) => stockFactor(log?.unit ?? item?.unit ?? null, item)
 
+// The question before "Back on the way" (K37), what it says about the
+// stock an arrival added to an item it didn't create. `unit`: the item's
+// unit as the phone shows it; `seen` ({ item, log }, read just before):
+// when the arrival's own history row was counted in another unit than the
+// item's now, it says what the arrival really added and what 031 takes
+// out. The app can't tell before the call whether 031 has run, so it also
+// says what the database before 031 takes out (the arrival's number in the
+// item's unit now). Otherwise (same unit, that row gone, nothing read) the
+// text as before: both take out the same.
+export function backOnTheWayStockText(order, unit, seen) {
+  const added = Number(order.stock_added)
+  const item = seen?.item
+  const from = seen?.log?.unit ?? null
+  if (!item || from == null || from === (item.unit ?? null)) return `Its arrival added ${added}${unit ? ` ${unit}` : ''} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
+  const factor = stockFactor(from, item)
+  const before031 = `Until the database update supabase/031_reopen_created_items.sql has run, ${quantity(added, item.unit)} is taken out instead`
+  return factor == null
+    ? `Its arrival added ${quantity(added, from)} to HOME. That stock won't be taken out (its unit changed) — check "${item.name}" in HOME. ${before031}.`
+    : `Its arrival added ${quantity(added, from)} (${quantity(added * factor, item.unit)}) to HOME. That stock is taken out again, so it isn't counted twice when it really arrives. ${before031} — check "${item.name}" in HOME afterwards.`
+}
+
 // What "Back on the way" / the Arrived Undo took out of `before` (the item
 // before the call; `after`: the same item after it), or null when it can't
 // be told; and the text when nothing could be taken out (031) — only when
