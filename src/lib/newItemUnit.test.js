@@ -18,10 +18,12 @@ describe('which units', () => {
     for (const u of ['pcs', 'btl', 'can', 'jar', 'roll', 'tube', 'sachet', 'gr', 'kg', 'ml', 'L', 'g', 'l']) expect(isPackageUnit(u)).toBe(false)
   })
 
-  it('the count units offered all exist in the app\'s unit list: pcs, btl, can, roll, jar, tube, sachet, tablet, capsule', () => {
-    expect(COUNT_STOCK_UNITS).toEqual(['pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule'])
+  it('the count units offered are ALL count units, each in the app\'s unit list: pcs, btl, can, roll, jar, tube, sachet, tablet, capsule, sheet, set, pair, shaker (K15)', () => {
+    expect(COUNT_STOCK_UNITS).toEqual(['pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule', 'sheet', 'set', 'pair', 'shaker'])
     for (const u of COUNT_STOCK_UNITS) expect(UNIT_VALUES).toContain(u)
-    expect(stockUnitChoices('pack')).toEqual(['pack', 'pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule'])
+    // Every count unit of the app's list that isn't a package is offered.
+    expect(UNIT_VALUES.filter((u) => !isPackageUnit(u) && !['gr', 'kg', 'ml', 'L'].includes(u)).sort()).toEqual([...COUNT_STOCK_UNITS].sort())
+    expect(stockUnitChoices('pack')).toEqual(['pack', 'pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule', 'sheet', 'set', 'pair', 'shaker'])
     expect(stockUnitChoices('box')[0]).toBe('box')
     // Never a measure, never another package.
     for (const u of ['gr', 'kg', 'ml', 'L', 'box', 'case']) expect(stockUnitChoices('pack')).not.toContain(u)
@@ -75,6 +77,14 @@ describe('the question "Count it at home in"', () => {
     expect(ask('pack', chose('pack', 'roll', '6')).pack).toMatchObject({ stockUnit: 'roll', total: 6 })
     expect(ask('pack', chose('pack', 'pcs', '4'), 2).pack.total).toBe(8)
     expect(ask('pack', chose('pack', 'btl', '1,5')).pack.value).toBe(1.5)
+  })
+
+  it('K15: gelatin sheets "1 pack" → sheet 10 (sends sheet + 10); set, pair and shaker can be chosen too', () => {
+    const q = ask('pack', chose('pack', 'sheet', '10'))
+    expect(q).toMatchObject({ stockUnit: 'sheet', blocking: false, pack: { stockUnit: 'sheet', total: 10 } })
+    expect(newItemKeys(q)).toEqual({ new_stock_unit: 'sheet', new_pack_size: 10 })
+    expect(ask('pack', chose('pack', 'sheet', '10'), 2).pack.total).toBe(20)
+    for (const u of ['set', 'pair', 'shaker']) expect(ask('box', chose('box', u, '2')).stockUnit).toBe(u)
   })
 
   it('an answer for another purchase unit, or a unit not offered, starts again', () => {

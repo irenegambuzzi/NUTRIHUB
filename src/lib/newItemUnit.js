@@ -16,9 +16,11 @@ import { moneyText } from './decimal'
 export const isPackageUnit = (unit) => PACKAGING_UNITS.includes(normalizeUnit(unit))
 
 // The count units a package can be counted in at home, in this order:
-// pcs first, then the others the app's unit list has. Never a measure
-// (gr, kg, ml, L), never another package.
-export const COUNT_STOCK_UNITS = ['pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule'].filter((u) => UNIT_VALUES.includes(u))
+// pcs first, then the others the app's unit list has (all of its count
+// units, K15). Never a measure (gr, kg, ml, L), never another package.
+// Shared by "Count it at home in" (SHOP Confirm purchase, MONEY "+ Add
+// expense") and HOME "Edit item" "Convert with the pack size".
+export const COUNT_STOCK_UNITS = ['pcs', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule', 'sheet', 'set', 'pair', 'shaker'].filter((u) => UNIT_VALUES.includes(u))
 
 // What "Count it at home in" offers for a purchase unit: the unit itself
 // (today's result: counted in packs), then the count units.

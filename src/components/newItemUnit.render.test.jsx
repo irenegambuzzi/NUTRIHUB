@@ -112,7 +112,7 @@ describe('SHOP Confirm purchase: "Count it at home in" (K1–K4)', () => {
       ['pack', 'false'],
       ['pcs', 'false'],
     ])
-    expect([...screen.getByLabelText('Other unit to count Soft drink in').options].map((o) => o.value)).toEqual(['', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule'])
+    expect([...screen.getByLabelText('Other unit to count Soft drink in').options].map((o) => o.value)).toEqual(['', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule', 'sheet', 'set', 'pair', 'shaker'])
     expect(text()).toContain('Choose how to count it at home.')
     expect(text()).toContain('Answer the question above to confirm.')
     expect(button().disabled).toBe(true)
@@ -141,6 +141,21 @@ describe('SHOP Confirm purchase: "Count it at home in" (K1–K4)', () => {
     const items = sent()
     expect(items[0]).not.toHaveProperty('new_stock_unit')
     expect(items[1]).toMatchObject({ new_stock_unit: 'roll', new_pack_size: 6, add: 1 })
+  })
+
+  it('K15: "Other…" offers sheet, set, pair and shaker; gelatin sheets "1 pack" → sheet 10: "= 10 sheet", sent sheet + 10, add 1', async () => {
+    confirm([entry({ name: 'Gelatin Sheets', price: 2.2, category_id: 'canned' })])
+    const others = [...screen.getByLabelText('Other unit to count Gelatin Sheets in').options].map((o) => o.value)
+    for (const u of ['sheet', 'set', 'pair', 'shaker']) expect(others).toContain(u)
+    type('Other unit to count Gelatin Sheets in', 'sheet')
+    expect(screen.getByLabelText('sheet per pack for Gelatin Sheets').value).toBe('')
+    expect(text()).toContain('Type how many sheet are in 1 pack.')
+    expect(button().disabled).toBe(true)
+    type('sheet per pack for Gelatin Sheets', '10')
+    expect(text()).toContain('= 10 sheet')
+    fireEvent.click(button())
+    await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    expect(sent()[0]).toMatchObject({ add: 1, new_stock_unit: 'sheet', new_pack_size: 10 })
   })
 
   it('eggs "1 box" → pcs 10: "= 10 pcs"; two packs × 4 = "= 8 pcs"', () => {
@@ -326,6 +341,21 @@ describe('MONEY "+ Add expense": "Count it at home in" (K1–K4, K10)', () => {
     expect(recordMoneyPurchase.mock.calls[0][0].payload.items[0]).toMatchObject({ name: 'Soft drink', unit: 'pack', quantity: 1, price: 3, add: 1, min_stock: 2, new_stock_unit: 'pcs', new_pack_size: 4 })
   })
 
+  it('K15: "Other…" offers sheet, set, pair and shaker; "1 pack" → sheet 10 → saved with sheet / 10, add 1', async () => {
+    form()
+    softDrink()
+    type('Name', 'Gelatin Sheets')
+    const others = [...screen.getByLabelText('Other unit to count Gelatin Sheets in').options].map((o) => o.value)
+    expect(others).toEqual(['', 'btl', 'can', 'roll', 'jar', 'tube', 'sachet', 'tablet', 'capsule', 'sheet', 'set', 'pair', 'shaker'])
+    type('Other unit to count Gelatin Sheets in', 'sheet')
+    expect(text()).toContain('sheet — below this it goes on the SHOP list')
+    type('sheet per pack for Gelatin Sheets', '10')
+    expect(text()).toContain('= 10 sheet')
+    save()
+    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
+    expect(recordMoneyPurchase.mock.calls[0][0].payload.items[0]).toMatchObject({ name: 'Gelatin Sheets', unit: 'pack', quantity: 1, add: 1, new_stock_unit: 'sheet', new_pack_size: 10 })
+  })
+
   it('never asked: Add to HOME off, "1 btl", an existing item (the 9H field)', () => {
     form()
     softDrink()
@@ -507,6 +537,94 @@ describe('HOME editor (K5, K8, K11)', () => {
     expect(unitSelect().value).toBe('pcs')
     expect(fieldUnder('Current stock').value).toBe('3')
     expect(text()).not.toContain('Bought in a different unit (')
+  })
+
+  it('K14: an order "1 bag": "Bought in a different unit" can\'t be turned off (with the reason), "pcs per bag" required; 1 bag = 10 pcs → 10 pcs', async () => {
+    const onSave = editor({ prefill: arrivalPrefill({ item_name: 'Rice cakes', quantity: 1, unit: 'bag', price: 5 }) })
+    type('Item category', 'canned')
+    const toggle = screen.getByRole('button', { name: 'Bought in a different unit' })
+    expect(toggle.disabled).toBe(true)
+    expect(text()).toContain("bag can't be a HOME unit — type how many pcs are in 1 bag.")
+    fireEvent.click(toggle)
+    expect(unitSelect().value).toBe('pcs')
+    expect(screen.getByText('Purchase unit').parentElement.querySelector('select').value).toBe('bag')
+    expect(fieldUnder('pcs per bag').value).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: 'Add to inventory' }))
+    expect(await screen.findByText('Quantity per pack must be more than 0.')).toBeTruthy()
+    expect(onSave).not.toHaveBeenCalled()
+    fireEvent.change(fieldUnder('pcs per bag'), { target: { value: '10' } })
+    expect(text()).toContain('1 bag × 10 = 10 pcs')
+    fireEvent.click(screen.getByRole('button', { name: 'Add to inventory' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][0]).toMatchObject({ name: 'Rice cakes', unit: 'pcs', current_stock: 10, packaging_unit: 'bag', quantity_per_pack: 10, price: 5, price_qty: 1, price_unit: 'bag' })
+  })
+
+  it('K14: an order "1 case" is locked the same way; an order "1 pack" can still be turned off (no reason shown)', () => {
+    editor({ prefill: arrivalPrefill({ item_name: 'Water', quantity: 1, unit: 'case', price: 4 }) })
+    expect(screen.getByRole('button', { name: 'Bought in a different unit' }).disabled).toBe(true)
+    expect(text()).toContain("case can't be a HOME unit — type how many pcs are in 1 case.")
+    cleanup()
+    editor({ prefill: arrivalPrefill({ item_name: 'Soft drink', quantity: 1, unit: 'pack', price: 3 }) })
+    const toggle = screen.getByRole('button', { name: 'Bought in a different unit' })
+    expect(toggle.disabled).toBe(false)
+    expect(text()).not.toContain("can't be a HOME unit")
+    fireEvent.click(toggle)
+    expect(unitSelect().value).toBe('pack')
+  })
+
+  it('K15: "Gelatin Sheets" and "Color Fade Prevention Sheet" in pack → "Convert with the pack size" to sheet: 2 pack × 10 = 20 sheet, minimum 1 pack → 10 sheet', async () => {
+    for (const name of ['Gelatin Sheets', 'Color Fade Prevention Sheet']) {
+      const onSave = editor({ item: { ...soft, id: name, name, category_id: 'canned', price: 2.2 } })
+      fireEvent.change(unitSelect(), { target: { value: 'sheet' } })
+      await screen.findByText(`Count "${name}" in sheet instead of pack?`)
+      fireEvent.click(screen.getByText('Convert with the pack size'))
+      fireEvent.change(screen.getByLabelText('sheet in 1 pack'), { target: { value: '10' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+      await waitFor(() => expect(unitSelect().value).toBe('sheet'))
+      expect(text()).toContain('Converted from pack: stock 20 sheet, minimum 10 sheet. 1 pack = 10 sheet.')
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][0]).toMatchObject({ name, unit: 'sheet', current_stock: 20, min_stock: 10, packaging_unit: 'pack', quantity_per_pack: 10, price: 2.2, price_unit: 'pack' })
+      expect(onSave.mock.calls[0][1]).toEqual({ converted: true })
+      cleanup()
+    }
+  })
+
+  it('K19: kg → gr "Convert the numbers": "€2.50 per 1 kg" stays per 1 kg, also a price saved without a unit; no warning', async () => {
+    for (const priceUnit of ['kg', null]) {
+      const onSave = editor({ item: { ...soft, name: 'Flour', unit: 'kg', current_stock: 2, min_stock: 1, price: 2.5, price_qty: 1, price_unit: priceUnit } })
+      fireEvent.change(unitSelect(), { target: { value: 'gr' } })
+      fireEvent.click(await screen.findByText('Convert the numbers'))
+      fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+      await waitFor(() => expect(unitSelect().value).toBe('gr'))
+      expect(text()).toContain('Converted from kg: stock 2000 gr, minimum 1000 gr.')
+      expect(screen.getByLabelText('Price per unit').value).toBe('kg')
+      expect(text()).not.toContain('The price was')
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][0]).toMatchObject({ unit: 'gr', current_stock: 2000, min_stock: 1000, price: 2.5, price_qty: 1, price_unit: 'kg' })
+      expect(onSave.mock.calls[0][1]).toEqual({ converted: true })
+      cleanup()
+    }
+  })
+
+  it('K19: L → ml keeps "€1.20 per 1 L"; pack → pcs without a pack size ("Keep the numbers as they are") still shows the warning', async () => {
+    const onSave = editor({ item: { ...soft, name: 'Milk', unit: 'L', current_stock: 1, min_stock: 1, price: 1.2, price_qty: 1, price_unit: null } })
+    fireEvent.change(unitSelect(), { target: { value: 'ml' } })
+    fireEvent.click(await screen.findByText('Convert the numbers'))
+    fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+    await waitFor(() => expect(unitSelect().value).toBe('ml'))
+    expect(text()).not.toContain('The price was')
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][0]).toMatchObject({ unit: 'ml', current_stock: 1000, min_stock: 1000, price: 1.2, price_unit: 'L' })
+    cleanup()
+    editor({ item: soft })
+    fireEvent.change(unitSelect(), { target: { value: 'pcs' } })
+    fireEvent.click(await screen.findByText('Keep the numbers as they are'))
+    fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+    await waitFor(() => expect(unitSelect().value).toBe('pcs'))
+    expect(text()).toContain('The price was €3.00 per 1 pack — it will be saved as €3.00 per 1 pcs. Check it.')
   })
 
   it('K11: a converted unit change shows one history row with the new stock only ("→ 8 pcs", "Unit changed"); other rows as before', () => {

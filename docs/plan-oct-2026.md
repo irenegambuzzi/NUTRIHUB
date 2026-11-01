@@ -4054,8 +4054,9 @@ sent). Another unit shows the required pack field of 9H (`PackSizeField`):
 1 {u}.", "It will be saved as the usual size for next time.".
 
 **K4 — the units offered** (`lib/newItemUnit.stockUnitChoices`): the
-purchase unit, pcs, then btl, can, roll, jar, tube, sachet, tablet, capsule
-(all in the app's unit list; no difference found). Never a measure, never
+purchase unit, pcs, then btl, can, roll, jar, tube, sachet, tablet, capsule,
+sheet, set, pair, shaker (all in the app's unit list; no difference found;
+sheet, set, pair, shaker added in the 01/11 follow-up, K15). Never a measure, never
 another package. On screen (`components/ui/StockUnitQuestion.jsx`): title
 "Count it at home in", two pills [purchase unit] [pcs] (radios, 36 px high)
 and a small drop-down "Other…" with the other count units (aria "Other unit
@@ -4252,13 +4253,14 @@ Shop, Home, Money.
 
 | What | Path | Exact labels |
 |---|---|---|
-| Question in Confirm purchase | Shop → List → "Confirm purchase ({n} in the cart)" → screen "Confirm purchase" → the line with grey "… · new in the pantry" | box "Count it at home in"; pills "pack" / "pcs" (radios; the first is the line's own unit: "box", "case"…); drop-down "Other…" (aria "Other unit to count {name} in") with btl, can, roll, jar, tube, sachet, tablet, capsule |
+| Question in Confirm purchase | Shop → List → "Confirm purchase ({n} in the cart)" → screen "Confirm purchase" → the line with grey "… · new in the pantry" | box "Count it at home in"; pills "pack" / "pcs" (radios; the first is the line's own unit: "box", "case"…); drop-down "Other…" (aria "Other unit to count {name} in") with btl, can, roll, jar, tube, sachet, tablet, capsule, sheet, set, pair, shaker |
 | — not chosen | same | "Choose how to count it at home."; bottom "Answer the question above to confirm."; button "Confirm purchase · €3.00" greyed |
 | — purchase unit | tap "pack" | nothing more; Confirm works (= today) |
 | — pcs / other | tap "pcs" (or pick from "Other…") | field "pcs per pack" (aria "pcs per pack for {name}"); empty: "Type how many pcs are in 1 pack."; typed 4: "= 4 pcs" and "It will be saved as the usual size for next time." |
 | — same name twice | two cart lines, same name | `"{name}" is in this purchase twice — count it in pcs at home here too.` |
 | Question in MONEY | Money → section Expenses → "Add expense" → card "ADD AN EXPENSE" → name, €, quantity, unit "pack", HOME item category, "Add to HOME" on ("New in HOME (shown as New Item).") | the same box under "Add to HOME" (aria "pcs per pack for {name}" / with several rows the same with the row's name); "Min [ ] pcs — below this it goes on the SHOP list"; after "Save purchase · €3.00": "Choose how to count it at home." / "Type how many pcs are in 1 pack." next to the row and above the button |
 | Before 030 known | — | no box; pressing the button reads first; offline: toast "You're offline — this needs a connection."; other failure: "Couldn't save — check your connection." |
+| K14 editor from an order in bag / case / carton / crate | same path as K5, an order "1 bag" | "Bought in a different unit" greyed (can't be tapped); under it "bag can't be a HOME unit — type how many pcs are in 1 bag."; "pcs per bag" empty; "Add to inventory" → "Quantity per pack must be more than 0." until typed |
 | K5 editor from an order | Money → section Orders → an order card "Arrived" (or Shop → List → "On the way" card "Arrived") → "It arrived!" → "Create a new item" → "Add an item" | "Unit (what you count stock in)" = "pieces (pcs)"; "Bought in a different unit" (on); "Purchase unit" = pack; "pcs per pack" empty; "Current stock" with "in pack ⇄" = 1; "Price (e.g. …)" = 3.00 per 1 pack; "Add to inventory" → if empty "Quantity per pack must be more than 0."; toast `"{name}" is now in HOME` + "Undo"; tapping "Bought in a different unit" off → Unit "pack", note "Counted in pack at home." |
 | K6 | Shop → List (or Shop) → "+ Add to SHOP list" → "ADD TO SHOP LIST" → unit "pack" for a name not in HOME | price row "€ 0.00" "per" [1] **pack** (plain text, not a drop-down) |
 | K7 | same, category Beverages, unit "pack" | no "is unusual for" line (unit "jar": `"jar" is unusual for Beverages (usually btl, can, ml, L).`) |
@@ -4270,6 +4272,59 @@ Shop, Home, Money.
 
 Not confirmed on a phone: everything in this table (written from the code
 and the render tests).
+
+**Decisions on the doubts (01/11): K13–K21.**
+
+- K13: kept as built — an item with that name already in HOME in another
+  unit → the 030 error, nothing saved.
+- K14: "It arrived!" → "Create a new item" from an order in case, carton,
+  crate or bag (not in HOME's unit list): "Bought in a different unit" can't
+  be turned off (disabled, with "{unit} can't be a HOME unit — type how many
+  {stock unit} are in 1 {unit}."), so "{stock unit} per {unit}" stays
+  required. Orders in pack / box: unchanged.
+- K15: the count units are ALL count units (pcs, btl, can, roll, jar, tube,
+  sachet, tablet, capsule, sheet, set, pair, shaker), one constant
+  (`COUNT_STOCK_UNITS`) for "Count it at home in" and for "Convert with the
+  pack size"; all 13 are in HOME's unit list (none left out).
+- K16: kept as built (the pack-size field of the conversion starts empty).
+- K17: kept as built (the conversion replaces an old multipack).
+- K18: kept as built (one history row "Unit changed" "→ {n} {unit}", also
+  when the stock was edited in the same save).
+- K19: "Edit item", kg ↔ gr / L ↔ ml with "Convert the numbers": a price per
+  the old unit (also one saved without a price unit) is saved still per the
+  old unit (€2.50 per 1 kg stays per 1 kg after kg → gr); no warning then.
+  The K8 warning stays where the old price unit can't be kept (pack → pcs
+  without a pack size).
+- K20: kept — the "same name twice in one purchase" rule.
+- K21: kept as built (an unknown order unit → pcs, no price).
+
+SQL 030 checked by Claude on 01/11 with a real diff against 029: only the listed lines differ.
+
+### Follow-up 01/11 to 9L (as built; code and tests only, no SQL)
+
+- K14 (`inventory/ItemEditor.jsx`): `packageLocked` = started from an order
+  in a package, multipack on, and the purchase unit not in `UNIT_VALUES`
+  (case, carton, crate, bag). The "Bought in a different unit" button is
+  disabled and the line under it reads e.g. "bag can't be a HOME unit —
+  type how many pcs are in 1 bag."; saving with "pcs per bag" empty still
+  says "Quantity per pack must be more than 0." (1 bag, 10 → 10 pcs, usual
+  bag 10, price per 1 bag). Changing "Purchase unit" to pack or box frees
+  the button (it is then a pack / box order).
+- K15 (`lib/newItemUnit.js`): `COUNT_STOCK_UNITS` + sheet, set, pair,
+  shaker. "Other…" in Confirm purchase and MONEY lists them after capsule;
+  "Edit item" pack → sheet offers "Convert with the pack size" ("sheet in 1
+  pack"; 2 pack × 10 = 20 sheet, minimum 1 → 10 sheet). 030 accepts any
+  `new_stock_unit` (no unit list in the SQL).
+- K19 (`inventory/ItemEditor.jsx` `applyUnit`): a saved item (not a group)
+  converted kg ↔ gr / L ↔ ml keeps `price_unit` = the price's unit or, when
+  it had none, the old unit ("per 1 kg" / "per 1 L" in the price row,
+  saved so). "Keep the numbers as they are" and new items: unchanged.
+- Tests 2041 → 2049 (112 files): `lib/newItemUnit.test.js` +1 (K15) and the
+  unit list test (13 units, every count unit of the app's list);
+  `components/newItemUnit.render.test.jsx` +7 (K15 Confirm and MONEY
+  sheet 10; K14 bag and case / pack; K15 Gelatin Sheets and Color Fade
+  Prevention Sheet → sheet; K19 kg → gr with "kg" and without a unit; K19
+  L → ml and the pack → pcs warning).
 
 ### iPhone checklist for round 9L
 

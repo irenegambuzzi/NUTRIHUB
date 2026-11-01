@@ -126,7 +126,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // item has nothing to lose. `perPack`: "Convert with the pack size" —
   // how many of the new unit are in 1 of the old one (a package, plan 9L
   // K8): stock and minimum × that, and the old unit becomes the purchase
-  // unit with that size; the price stays per the old unit.
+  // unit with that size; the price stays per the old unit. A saved item's
+  // kg ↔ gr / L ↔ ml conversion keeps the price per the old unit too (still
+  // offered as the metric partner, plan 9L K19): a price without a unit was
+  // per the old unit and would otherwise become per the new one.
   const applyUnit = (next, convert, perPack = null) => {
     const factor = perPack > 0 ? perPack : unitFactor(form.unit, next)
     const options = purchaseUnitOptions(next, form.packaging_unit)
@@ -134,8 +137,9 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (convert && factor !== null && (factor !== 1 || perPack > 0) && !form.stockInPacks) {
       const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * factor, next)
       const min = roundQuantity((parseDecimal(form.min_stock) || 0) * factor, next)
-      const pack = perPack > 0 ? { multipack: true, quantity_per_pack: perPack, price_unit: parseDecimal(form.price) > 0 ? form.price_unit || form.unit : form.price_unit } : {}
-      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min), ...pack }))
+      const pack = perPack > 0 ? { multipack: true, quantity_per_pack: perPack } : {}
+      const keepPrice = (perPack > 0 || (item && !isGroup)) && parseDecimal(form.price) > 0 ? { price_unit: form.price_unit || form.unit } : {}
+      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min), ...pack, ...keepPrice }))
       setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.${perPack > 0 ? ` 1 ${form.unit} = ${perPack} ${next}.` : ''}`)
       setConverted(Boolean(item))
     } else {
@@ -181,8 +185,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // "Bought in a different unit" on or off. Turned off in an item started
   // from an order in a package while its stock is counted in packs (K5):
   // the stock stays the same amount, counted in that package, when HOME
-  // can count in it (pack, box).
+  // can count in it (pack, box). In one HOME can't count in (case, carton,
+  // crate, bag) it can't be turned off: the size has to be typed (K14).
+  const packageLocked = fromPackage && form.multipack && !UNIT_VALUES.includes(form.packaging_unit)
   const toggleMultipack = () => {
+    if (packageLocked) return
     if (form.multipack && fromPackage && form.stockInPacks && UNIT_VALUES.includes(form.packaging_unit)) {
       setForm((f) => ({ ...f, multipack: false, stockInPacks: false, unit: f.packaging_unit, packaging_unit: purchaseUnitOptions(f.packaging_unit)[0] }))
       return setUnitNote(`Counted in ${form.packaging_unit} at home.`)
@@ -412,14 +419,20 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           <button
             type="button"
             onClick={toggleMultipack}
+            disabled={packageLocked}
             className={cn(
-              'w-full flex items-center gap-2 text-xs font-bold',
+              'w-full flex items-center gap-2 text-xs font-bold disabled:cursor-default',
               form.multipack ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'
             )}
           >
             <Package size={14} />
             {form.multipack ? 'Bought in a different unit' : 'Bought in a different unit? (1 pack = 12 pcs, 1 bottle = 1.5 L, …)'}
           </button>
+          {packageLocked && (
+            <p className="text-[11px] text-[var(--color-text-muted)]">
+              {form.packaging_unit} can't be a HOME unit — type how many {form.unit} are in 1 {form.packaging_unit}.
+            </p>
+          )}
           {form.multipack && (
             <>
               <div className="grid grid-cols-2 gap-2">
