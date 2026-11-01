@@ -5,6 +5,7 @@ import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { PackSizeField } from '../ui/PackSizeField'
+import { StockUnitQuestion } from '../ui/StockUnitQuestion'
 import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { NoCategoryLabel } from '../ui/NoCategoryLabel'
@@ -18,7 +19,7 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { editPatch, editedItem, pantryItemFor, purchaseLine, purchasePricing } from '../../lib/purchase'
+import { editPatch, editedItem, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
 import { variantOrder } from '../../lib/groups'
 import { shopUnits } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
@@ -27,6 +28,7 @@ import { localDateString, parseLocalDate } from '../../lib/week'
 import { usePurchase } from '../../hooks/usePurchase'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 import { checkExpenseParts, refuseUnknownParts, useExpensePartsReady } from '../../hooks/useExpenseParts'
+import { checkNewItemUnits, useNewItemUnitsReady } from '../../hooks/useNewItemUnits'
 import { round2 } from '../../lib/discounts'
 import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../lib/sharedParts'
 
@@ -59,9 +61,17 @@ import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../l
 // while it isn't known asks first (`checkParts`, K18): 029 there → the box
 // shows and nothing is saved yet; not there → confirmed as before; no
 // answer → nothing is saved (the usual offline message).
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts }) {
+// A line that makes a NEW HOME item in a package (plan 9L) asks "Count it
+// at home in" once supabase/030 is known (`unitsReady`, found by itself
+// when not given; null while it can't be told). Confirm with such a line
+// while it isn't known asks first (`checkUnits`), the same way as the parts.
+// A line that has a price but whose total can't be worked out from it
+// (K9, "?") blocks Confirm until its total is typed; a line without any
+// price doesn't.
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits }) {
   const { confirmPurchase } = usePurchase()
   const partsFound = useExpensePartsReady()
+  const unitsFound = useNewItemUnitsReady()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
   // One id per purchase: pressing Confirm again after a dropped connection
   // can't save it twice.
@@ -119,6 +129,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // What the check at Confirm found while it wasn't known.
   const [checked, setChecked] = useState(null)
   const ready = partsReady ?? partsFound ?? checked
+  // The same for supabase/030 (the new item's unit).
+  const [unitsChecked, setUnitsChecked] = useState(null)
+  const unitsKnown = unitsReady ?? unitsFound ?? unitsChecked
   // Edits by item id ({ quantity, unit, total, payer }). Also kept in a ref,
   // so Confirm pressed while a field is still focused sees the last digit.
   const [edits, setEdits] = useState({})
@@ -129,7 +142,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
-  const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item) })
+  const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item), unitsReady: unitsKnown })
   const allLines = itemsFor(edits).map(lineFor)
   // A group's lines together in one card, one line per variant (each its
   // own stock and its own expense), variants at 0 first.
@@ -149,7 +162,10 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const items = lines.map((l) => l.item)
   const pricing = purchasePricing(items, totalOf, discounts, coupon)
   const total = pricing.priced.paidTotal
-  const open = lines.filter((l) => !l.ready).length
+  // The same new name twice: the later lines must count it like the first.
+  const twiceTexts = twiceProblems(lines)
+  const twice = new Map(lines.map((l, i) => [l.item.id, twiceTexts[i]]))
+  const open = lines.filter((l) => !l.ready || twice.get(l.item.id)).length
   const unknown = items.filter((i) => totalOf(i) === null).length
   const leftInCart = allLines.length - lines.length
   // Who paid for the whole trip; null when it was shared out differently.
@@ -187,16 +203,23 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const latest = editsRef.current
     const confirmed = itemsFor(latest).filter(inTrip)
     const confirmedLines = confirmed.map(lineFor)
-    if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
+    if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready) || twiceProblems(confirmedLines).some(Boolean)) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
-    if (ready === null && sharedOf(confirmed, confirmedPricing).length) {
+    if (confirmed.some((i) => totalOf(i) === null)) return
+    // What isn't known yet is read first (029: the parts; 030: the new
+    // item's unit). Found → its fields show and nothing is saved yet; truly
+    // not there → saved as before; no answer → nothing is saved.
+    const askParts = ready === null && sharedOf(confirmed, confirmedPricing).length > 0
+    const askUnits = unitsKnown === null && confirmedLines.some((l) => l.asksStockUnit)
+    if (askParts || askUnits) {
       setBusy(true)
-      const found = await checkParts()
+      const [parts, units] = await Promise.all([askParts ? checkParts() : false, askUnits ? checkUnits() : false])
       setBusy(false)
-      if (found === null) return refuseUnknownParts()
-      setChecked(found)
-      if (found) return
+      if (parts === null || units === null) return refuseUnknownParts()
+      if (askParts) setChecked(parts)
+      if (askUnits) setUnitsChecked(units)
+      if (parts || units) return
     }
     const confirmedShared = splitOn ? sharedOf(confirmed, confirmedPricing) : []
     const confirmedSplit = confirmedShared.length ? checkSplit(split, sharedTotalOf(confirmedShared, confirmedPricing)) : null
@@ -231,6 +254,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     <PurchaseLine
       key={line.item.id}
       line={line}
+      twice={twice.get(line.item.id) ?? ''}
       ordered={openOrderOf(line.item)}
       onCancelOrder={onCancelOrder}
       inTrip={inTrip(line.item)}
@@ -379,6 +403,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> {pricing.priced.problem}
             </p>
           )}
+          {unknown > 0 && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> {NO_TOTAL_TEXT}
+            </p>
+          )}
           {open > 0 && (
             <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
@@ -392,7 +421,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || Boolean(splitCheck?.problem) || lines.length === 0}
+            disabled={busy || open > 0 || unknown > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || Boolean(splitCheck?.problem) || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
@@ -403,21 +432,23 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   )
 }
 
+const NO_TOTAL_TEXT = "The total can't be worked out from the price's unit — type the total paid."
+
 // One item: quantity, unit and line total to correct, payer, remove, and
 // its questions. Every change goes to the screen's edits at once (that's
 // what Confirm uses) and is also saved to the grocery entry when the field
 // is left, so the other phone sees it.
 // `ordered`: the order on the way for this entry (it can't be bought
 // here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
-function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
-  const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock } = line
+function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
+  const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock, stockUnit } = line
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
   const [fixing, setFixing] = useState(false)
 
   // A typed number that isn't one is kept as typed (and refused when
   // confirming), never swapped for the old value.
-  const numbersBad = Boolean(decimalProblem(quantityText) || decimalProblem(totalText) || decimalProblem(answer.pack?.text))
+  const numbersBad = Boolean(decimalProblem(quantityText) || decimalProblem(totalText) || decimalProblem(answer.pack?.text) || decimalProblem(stockUnit?.pack?.text))
   useEffect(() => {
     onNumberValidity(item.id, !numbersBad)
     return () => onNumberValidity(item.id, true)
@@ -451,7 +482,7 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
   }
 
   const unitPrice = formatUnitPrice(item)
-  const needsAnswer = needsPackSize || needsVariant || (expiredStock > 0 && typeof answer.discard !== 'boolean')
+  const needsAnswer = needsPackSize || needsVariant || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean')
 
   if (ordered) {
     return (
@@ -553,7 +584,7 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
           = {add} {pantry.unit} added to the stock
         </p>
       )}
-      {total === null && <p className="text-[10px] text-amber-300">The total can't be worked out from the price's unit — type the total paid.</p>}
+      {total === null && <p className="text-[10px] text-amber-300">{NO_TOTAL_TEXT}</p>}
 
       {group && (
         <div className={cn('rounded-xl border p-2 space-y-1.5', needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>
@@ -583,6 +614,9 @@ function PurchaseLine({ line, answer, total, discount, priced, onDiscount, categ
           )}
         </div>
       )}
+
+      {stockUnit && <StockUnitQuestion question={stockUnit} onChange={(newUnit) => onAnswer({ newUnit })} name={item.name} />}
+      {twice && <p className="text-[11px] text-amber-300">{twice}</p>}
 
       {line.pack && (
         <PackSizeField pack={line.pack} onChange={(text) => onAnswer({ pack: { text, unit: line.pack.unit } })} ariaLabel={`${line.pack.stockUnit} per ${line.pack.unit} for ${item.name}`} />

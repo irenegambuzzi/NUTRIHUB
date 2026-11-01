@@ -7,12 +7,13 @@ import { Input, Label, Select, Textarea } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { decimalProblem, firstDecimalProblem, moneyText, parseDecimal } from '../../lib/decimal'
 import { cn } from '../../lib/cn'
-import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS } from '../../data/constants'
+import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS, UNIT_VALUES } from '../../data/constants'
 import { purchaseUnitOptions } from '../../lib/units'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { checkMoveIntoGroup } from '../../lib/groups'
 import { roundQuantity, unitFactor } from '../../lib/inventory'
-import { priceUnitOptions } from '../../lib/pricing'
+import { money, priceUnitOptions } from '../../lib/pricing'
+import { COUNT_STOCK_UNITS, isPackageUnit } from '../../lib/newItemUnit'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { OneTimeToggle } from './OneTimeToggle'
@@ -25,7 +26,7 @@ import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 function initialState(item, group, prefill) {
   const perPack = Number(item?.quantity_per_pack) || ''
-  return {
+  const start = {
     name: item?.name ?? prefill?.name ?? '',
     category_id: item?.category_id ?? group?.category_id ?? '',
     subcategory_id: item?.subcategory_id ?? group?.subcategory_id ?? '',
@@ -46,6 +47,10 @@ function initialState(item, group, prefill) {
     usual_shop_id: item?.usual_shop_id ?? group?.usual_shop_id ?? '',
     one_time: Boolean(item?.one_time),
   }
+  // A new item started from something else (an order that arrived, plan
+  // 9L K5: its unit, quantity, package and price) takes what it says.
+  if (!item && prefill) for (const key of Object.keys(start)) if (key in prefill) start[key] = prefill[key]
+  return start
 }
 
 // Adding or editing a pantry item. For a new item the category is
@@ -55,13 +60,18 @@ function initialState(item, group, prefill) {
 // stock, expiry or batch of its own. `groups`: the groups an item can be
 // moved into; `group`: the group a new variant is made in; `variantCount`:
 // how many variants the edited group has. `prefill` ({ name }): a new item
-// that starts with this name and the category suggested for it.
+// that starts with this name and the category suggested for it; it may
+// also say the unit, the multipack fields, the stock and the price
+// (lib/newItemUnit.js arrivalPrefill).
 // `allParents`: every HOME main, the Durables tree too (HOME itself offers
 // only `parents`), so a name that looks durable can be pointed out.
 // `homeItems` (every HOME item) turns on the similar-name safety net (plan
 // 9G): a new name, or a renamed one, that is already in HOME is not saved
 // ("Go to …" opens that item instead, `onGoTo`); a similar one asks first.
 // `optionLabel`: the text of each item's button ("Go to …" by default).
+// `onSave(fields, { converted })`: `converted` when the stock was converted
+// to a new unit ("Convert the numbers" / "Convert with the pack size"), so
+// its history row says the new stock, not a difference (plan 9L K11).
 export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
@@ -77,6 +87,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [unitNote, setUnitNote] = useState('')
+  // The stock and minimum were converted to the unit now chosen.
+  const [converted, setConverted] = useState(false)
+  // Started from an order bought in a package ("It arrived!", plan 9L K5).
+  const [fromPackage] = useState(() => Boolean(!item && prefill?.multipack && prefill?.stockInPacks))
   const [expiryValid, setExpiryValid] = useState(true)
   const [groupNote, setGroupNote] = useState('')
   // The safety net's open question ({ kind: 'exact', item } or { kind:
@@ -109,19 +123,25 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
   // Changing the unit never changes a quantity by itself. For a saved item
   // the user is asked what happens to the stock and the minimum; a new
-  // item has nothing to lose.
-  const applyUnit = (next, convert) => {
-    const factor = unitFactor(form.unit, next)
+  // item has nothing to lose. `perPack`: "Convert with the pack size" —
+  // how many of the new unit are in 1 of the old one (a package, plan 9L
+  // K8): stock and minimum × that, and the old unit becomes the purchase
+  // unit with that size; the price stays per the old unit.
+  const applyUnit = (next, convert, perPack = null) => {
+    const factor = perPack > 0 ? perPack : unitFactor(form.unit, next)
     const options = purchaseUnitOptions(next, form.packaging_unit)
-    const packaging = form.packaging_unit === next ? options[0] : form.packaging_unit
-    if (convert && factor !== null && factor !== 1 && !form.stockInPacks) {
+    const packaging = perPack > 0 ? form.unit : form.packaging_unit === next ? options[0] : form.packaging_unit
+    if (convert && factor !== null && (factor !== 1 || perPack > 0) && !form.stockInPacks) {
       const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * factor, next)
       const min = roundQuantity((parseDecimal(form.min_stock) || 0) * factor, next)
-      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min) }))
-      setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.`)
+      const pack = perPack > 0 ? { multipack: true, quantity_per_pack: perPack, price_unit: parseDecimal(form.price) > 0 ? form.price_unit || form.unit : form.price_unit } : {}
+      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min), ...pack }))
+      setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.${perPack > 0 ? ` 1 ${form.unit} = ${perPack} ${next}.` : ''}`)
+      setConverted(Boolean(item))
     } else {
       setForm((f) => ({ ...f, unit: next, packaging_unit: packaging }))
       setUnitNote(item && next !== item.unit ? `Quantities weren't converted — check stock and minimum in ${next}.` : '')
+      setConverted(false)
     }
   }
 
@@ -134,19 +154,40 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (problem) return setError(`Fix the stock and minimum first. ${problem}`)
     const stock = parseDecimal(form.current_stock) || 0
     const min = parseDecimal(form.min_stock) || 0
+    // From a package to a count unit (pack → pcs): converted with how many
+    // are in 1 package, typed here (plan 9L K8); started with the size the
+    // multipack fields hold for that package, if any.
+    const byPack = isPackageUnit(form.unit) && COUNT_STOCK_UNITS.includes(next) && !form.stockInPacks
+    const knownSize = form.multipack && form.packaging_unit === form.unit && perPack > 0 ? perPack : null
     const options = [
       ...(factor !== null && factor !== 1
         ? [{ value: 'convert', label: 'Convert the numbers', hint: `${stock} ${form.unit} → ${roundQuantity(stock * factor, next)} ${next} (the same amount, counted differently)` }]
         : []),
+      ...(byPack ? [{ value: 'pack', label: 'Convert with the pack size', hint: `Stock and minimum × the ${next} in 1 ${form.unit} (the same amount, counted differently); the price stays per ${form.unit}.` }] : []),
       { value: 'keep', label: 'Keep the numbers as they are', hint: `${stock} ${form.unit} becomes ${stock} ${next} — a different amount` },
     ]
     const answer = await askDialog({
       title: `Count "${form.name || item.name}" in ${next} instead of ${form.unit}?`,
       message: `Stock is ${stock} ${form.unit} and the minimum ${min} ${form.unit}. Nothing changes until you save — choose what should happen to those numbers.`,
-      fields: [{ name: 'how', type: 'choice', options, value: options[0].value }],
+      fields: [
+        { name: 'how', type: 'choice', options, value: options[0].value },
+        ...(byPack ? [{ name: 'per', type: 'number', label: `${next} in 1 ${form.unit}`, min: 0, required: true, value: knownSize ? String(knownSize) : '', unit: next, shownWhen: { field: 'how', value: 'pack' } }] : []),
+      ],
       confirmLabel: 'Change unit',
     })
-    if (answer) applyUnit(next, answer.how === 'convert')
+    if (answer) applyUnit(next, answer.how !== 'keep', answer.how === 'pack' ? answer.per : null)
+  }
+
+  // "Bought in a different unit" on or off. Turned off in an item started
+  // from an order in a package while its stock is counted in packs (K5):
+  // the stock stays the same amount, counted in that package, when HOME
+  // can count in it (pack, box).
+  const toggleMultipack = () => {
+    if (form.multipack && fromPackage && form.stockInPacks && UNIT_VALUES.includes(form.packaging_unit)) {
+      setForm((f) => ({ ...f, multipack: false, stockInPacks: false, unit: f.packaging_unit, packaging_unit: purchaseUnitOptions(f.packaging_unit)[0] }))
+      return setUnitNote(`Counted in ${form.packaging_unit} at home.`)
+    }
+    setForm((f) => ({ ...f, multipack: !f.multipack, stockInPacks: false, packaging_unit: f.packaging_unit === f.unit ? purchaseUnitOptions(f.unit)[0] : f.packaging_unit }))
   }
 
   // Moving an item into a group: same unit, or a confirmed conversion, or
@@ -180,6 +221,15 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const unusualUnit = suggestedUnits.length > 0 && !suggestedUnits.includes(form.unit)
   const stockValue = parseDecimal(form.current_stock) || 0
   const baseStock = form.multipack && form.stockInPacks ? stockValue * perPack : stockValue
+  // The price is saved per a unit still offered: one that no longer is
+  // (e.g. "per 1 pack" after counting in pcs without a pack size) becomes
+  // the stock unit — said before saving (plan 9L K8). A price without a
+  // unit was per the item's own unit.
+  const priceValue = parseDecimal(form.price)
+  const savedPriceUnit = priceUnits.includes(form.price_unit) ? form.price_unit : form.unit
+  const pricedIn = form.price_unit || item?.unit || ''
+  const priceBasisText = (unit) => `${money(priceValue)} per ${parseDecimal(form.price_qty) || 1} ${unit}`
+  const priceUnitLost = priceValue > 0 && pricedIn && pricedIn !== savedPriceUnit ? `The price was ${priceBasisText(pricedIn)} — it will be saved as ${priceBasisText(savedPriceUnit)}. Check it.` : ''
 
   // A batch / lot that looks like a date (day, month and year split by
   // "/", "-" or ".") has to be a real one, checked for what was typed, not
@@ -216,33 +266,36 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
     const subcategoryId = form.subcategory_id || null
 
-    const { error: saveError } = await onSave({
-      name: form.name.trim(),
-      category_id: form.category_id || null,
-      subcategory_id: subcategoryId,
-      unit: form.unit,
-      packaging_unit: form.multipack ? form.packaging_unit : null,
-      quantity_per_pack: form.multipack ? perPack : null,
-      // A group has no stock, expiry or batch of its own.
-      ...(isGroup
-        ? item
-          ? {}
-          : { current_stock: 0, is_group: true }
-        : { current_stock: roundQuantity(baseStock, form.unit), expiry_date: form.expiry_date || null, batch_lot: form.batch_lot.trim() || null }),
-      // Only sent when it changes: until supabase/018 has been run the
-      // column doesn't exist.
-      ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
-      // A one-time item has no minimum: a new one gets 0, an edited one
-      // keeps what it had (the field is only hidden).
-      min_stock: oneTime && !item ? 0 : roundQuantity(form.min_stock, form.unit),
-      // A group can never be one-time (the database refuses it too).
-      ...(!isGroup ? { one_time: form.one_time } : {}),
-      notes: form.notes.trim() || null,
-      ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
-      ...(parseDecimal(form.price) > 0
-        ? { price: parseDecimal(form.price), price_qty: parseDecimal(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
-        : { price: null, price_qty: null, price_unit: null }),
-    })
+    const { error: saveError } = await onSave(
+      {
+        name: form.name.trim(),
+        category_id: form.category_id || null,
+        subcategory_id: subcategoryId,
+        unit: form.unit,
+        packaging_unit: form.multipack ? form.packaging_unit : null,
+        quantity_per_pack: form.multipack ? perPack : null,
+        // A group has no stock, expiry or batch of its own.
+        ...(isGroup
+          ? item
+            ? {}
+            : { current_stock: 0, is_group: true }
+          : { current_stock: roundQuantity(baseStock, form.unit), expiry_date: form.expiry_date || null, batch_lot: form.batch_lot.trim() || null }),
+        // Only sent when it changes: until supabase/018 has been run the
+        // column doesn't exist.
+        ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
+        // A one-time item has no minimum: a new one gets 0, an edited one
+        // keeps what it had (the field is only hidden).
+        min_stock: oneTime && !item ? 0 : roundQuantity(form.min_stock, form.unit),
+        // A group can never be one-time (the database refuses it too).
+        ...(!isGroup ? { one_time: form.one_time } : {}),
+        notes: form.notes.trim() || null,
+        ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
+        ...(parseDecimal(form.price) > 0
+          ? { price: parseDecimal(form.price), price_qty: parseDecimal(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
+          : { price: null, price_qty: null, price_unit: null }),
+      },
+      { converted }
+    )
     setSaving(false)
     // The toast explains; the editor stays open so Save can be pressed again.
     if (saveError) return
@@ -358,7 +411,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         <div className="rounded-2xl border border-[var(--color-border)] p-3 space-y-3">
           <button
             type="button"
-            onClick={() => setForm((f) => ({ ...f, multipack: !f.multipack, stockInPacks: false, packaging_unit: f.packaging_unit === f.unit ? purchaseUnitOptions(f.unit)[0] : f.packaging_unit }))}
+            onClick={toggleMultipack}
             className={cn(
               'w-full flex items-center gap-2 text-xs font-bold',
               form.multipack ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'
@@ -538,6 +591,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
             unitOptions={priceUnits}
           />
+          {priceUnitLost && (
+            <p className="text-[11px] text-yellow-300 flex items-start gap-1.5 mt-1">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {priceUnitLost}
+            </p>
+          )}
           <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Used as the estimate when this item goes on the grocery list.</p>
         </div>
 

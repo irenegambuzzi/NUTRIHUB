@@ -9,6 +9,7 @@ import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { PackSizeField } from '../ui/PackSizeField'
+import { StockUnitQuestion } from '../ui/StockUnitQuestion'
 import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
@@ -41,6 +42,7 @@ import {
   similarAsk,
   similarListEntry,
   SIMILAR_PROBLEM,
+  twiceProblems,
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
 import { exactKey, inHomeNote, pickLabel, shopEntryFor, similarOnListText } from '../../lib/similarItems'
@@ -55,6 +57,7 @@ import { recordMoneyPurchase } from '../../hooks/usePurchase'
 import { addExpenseOnce } from '../../hooks/useExpenses'
 import { useShops } from '../../hooks/useShops'
 import { checkExpenseParts, refuseUnknownParts } from '../../hooks/useExpenseParts'
+import { checkNewItemUnits, useNewItemUnitsReady } from '../../hooks/useNewItemUnits'
 
 // MONEY "Add expense": one receipt. On top the store, date and payer of
 // the whole purchase; below one row per item — name, the price as on the
@@ -75,7 +78,11 @@ import { checkExpenseParts, refuseUnknownParts } from '../../hooks/useExpensePar
 // (K18) — saving Shared asks first (`checkParts`): 029 there → the fields
 // show and nothing is saved yet; not there → saved as before; no answer →
 // nothing is saved (the usual offline message).
-export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false, checkParts = checkExpenseParts }) {
+// A row that makes a NEW HOME item bought in a package asks "Count it at
+// home in" (plan 9L) once supabase/030 is known (`unitsReady`, found by
+// itself when not given); while it isn't, saving such a row asks first
+// (`checkUnits`), in the same way.
+export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits }) {
   // One id per form: pressing Save again after a dropped connection can't
   // save the purchase (or the expense) twice.
   const [id] = useState(() => crypto.randomUUID())
@@ -92,6 +99,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // What the check at Save found while `partsReady` wasn't known.
   const [checked, setChecked] = useState(null)
   const ready = partsReady ?? checked
+  const unitsFound = useNewItemUnitsReady()
+  const [unitsChecked, setUnitsChecked] = useState(null)
+  const unitsKnown = unitsReady ?? unitsFound ?? unitsChecked
   const [managing, setManaging] = useState(null) // the row key whose budget category opened Manage
   const { ready: shopsReady } = useShops()
 
@@ -110,7 +120,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
 
   // A row is locked out of HOME when its HOME category or its budget
   // category is a durable one (lib/durable.js), so it needs both lists.
-  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx)), coupon), [rows, pantryItems, budgetCtx, coupon])
+  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx, { unitsReady: unitsKnown })), coupon), [rows, pantryItems, budgetCtx, coupon, unitsKnown])
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
   // The similar-name safety net (plan 9G), for rows added to HOME: a name
@@ -118,7 +128,8 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // the form can be saved. Worked out from the name as it is now, so Save
   // checks again whatever the row shows.
   const asks = lines.map((line) => similarAsk(line, pantryItems))
-  const problems = lines.map((line, i) => (asks[i] ? SIMILAR_PROBLEM : rowProblem(line, { plain })))
+  const twice = twiceProblems(lines)
+  const problems = lines.map((line, i) => (asks[i] ? SIMILAR_PROBLEM : rowProblem(line, { plain }) || twice[i]))
   const total = purchaseTotal(lines)
   // Each person's part of what is paid by Shared: required for every new
   // Shared expense, checked again whenever a price or discount changes.
@@ -164,11 +175,20 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     setTried(true)
     if (busy || formProblem) return
     setBusy(true)
-    if (paidBy === SHARED && total > 0 && ready === null) {
-      const found = await checkParts()
-      if (found === null) refuseUnknownParts()
-      else setChecked(found)
-      if (found !== false) return setBusy(false)
+    // What isn't known yet is read first (029: the parts; 030: the new
+    // item's unit). Found → its fields show and nothing is saved yet; truly
+    // not there → saved as before; no answer → nothing is saved.
+    const askParts = paidBy === SHARED && total > 0 && ready === null
+    const askUnits = unitsKnown === null && lines.some((l) => l.asksStockUnit)
+    if (askParts || askUnits) {
+      const [parts, units] = await Promise.all([askParts ? checkParts() : false, askUnits ? checkUnits() : false])
+      if (parts === null || units === null) {
+        refuseUnknownParts()
+        return setBusy(false)
+      }
+      if (askParts) setChecked(parts)
+      if (askUnits) setUnitsChecked(units)
+      if (parts || units) return setBusy(false)
     }
     const { error } = plain ? await saveExpense(lines[0]) : await savePurchase()
     setBusy(false)
@@ -353,6 +373,7 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
   const entryNote = listEntryNote(line, listEntry)
   const label = (what) => (single ? what : `${what} of item ${index + 1}`)
   const badNumber = [row.priceText, row.quantityText, row.minText].find((t) => decimalProblem(t)) ?? ''
+  const itemName = row.name.trim() || (single ? 'this item' : `item ${index + 1}`)
   const chips = chipsFor(row.name, home)
   // The budget category came from the first chip, not from a pick by hand
   // nor the HOME mapping (with Add to HOME on only a purpose category, or
@@ -503,6 +524,8 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
 
       {line.pack && <PackSizeField pack={line.pack} onChange={(text) => onChange({ packSizeText: text, packUnit: line.pack.unit })} ariaLabel={label(`${line.pack.stockUnit} per ${line.pack.unit}`)} />}
 
+      {home && line.stockUnit && <StockUnitQuestion question={line.stockUnit} onChange={(newUnit) => onChange({ newUnit })} name={itemName} />}
+
       {home && line.isNew && (
         <div className="space-y-1">
           <OneTimeToggle checked={row.oneTime} onChange={(oneTime) => onChange({ oneTime })} />
@@ -510,7 +533,7 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
             <div className="flex items-center gap-2">
               <span className="text-xs text-[var(--color-text-muted)]">Min</span>
               <DecimalInput value={row.minText} onChange={(e) => onChange({ minText: e.target.value })} aria-label={label('Minimum stock')} className="w-16 text-sm p-2 text-right" />
-              <span className="text-[11px] text-[var(--color-text-muted)]">{row.unit} — below this it goes on the SHOP list</span>
+              <span className="text-[11px] text-[var(--color-text-muted)]">{line.minUnit} — below this it goes on the SHOP list</span>
             </div>
           )}
         </div>

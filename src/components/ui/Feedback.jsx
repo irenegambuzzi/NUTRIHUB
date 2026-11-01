@@ -5,7 +5,7 @@ import { Button } from './Button'
 import { DateField } from './DateField'
 import { Input, Label, Select } from './Field'
 import { cn } from '../../lib/cn'
-import { closeDialog, dialogErrors, dismissToast, getDialog, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
+import { closeDialog, dialogErrors, dismissToast, fieldShown, getDialog, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
 // Toasts sit above the mobile tab bar; the dialog covers everything.
 //
@@ -178,7 +178,7 @@ function DialogForm({ dialog }) {
         {dialog.message && <p className="text-xs text-[var(--color-text-soft)]">{dialog.message}</p>}
       </div>
 
-      {dialog.fields.map((f, i) => (
+      {dialog.fields.map((f, i) => fieldShown(f, values) && (
         <div key={f.name} className="space-y-1.5">
           {f.label && <Label htmlFor={`dialog-${f.name}`}>{f.label}</Label>}
           {f.type === 'choice' ? (

@@ -243,6 +243,21 @@ describe('askDialog', () => {
     expect(dialogErrors(fields, { packSize: '500', expiryDate: '', stock: 'discard' })).toEqual({})
   })
 
+  it('a field shown only for one choice (shownWhen, plan 9L K8) is checked and answered only then', async () => {
+    const asked = [
+      { name: 'how', type: 'choice', value: 'pack', options: [{ value: 'pack' }, { value: 'keep' }] },
+      { name: 'per', type: 'number', min: 0, required: true, shownWhen: { field: 'how', value: 'pack' } },
+    ]
+    expect(dialogErrors(asked, { how: 'pack', per: '' })).toEqual({ per: 'Enter a number above 0.' })
+    expect(dialogErrors(asked, { how: 'keep', per: '' })).toEqual({})
+    const kept = askDialog({ title: 'Unit', fields: asked })
+    closeDialog({ how: 'keep', per: '4' })
+    await expect(kept).resolves.toEqual({ how: 'keep', per: null })
+    const packed = askDialog({ title: 'Unit', fields: asked })
+    closeDialog({ how: 'pack', per: '4' })
+    await expect(packed).resolves.toEqual({ how: 'pack', per: 4 })
+  })
+
   it('reads decimal commas and rejects text', () => {
     expect(parseNumber('2,5')).toBe(2.5)
     expect(parseNumber(' 12 ')).toBe(12)

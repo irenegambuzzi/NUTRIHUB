@@ -10,7 +10,8 @@ import { CategoryChips } from '../ui/CategoryChips'
 import { PriceFields } from '../inventory/PriceFields'
 import { PayerPicker, UnitOptions } from './shared'
 import { NameSuggestions } from './NameSuggestions'
-import { EXTRA_PACKAGING_UNITS, normName } from '../../lib/grocery'
+import { normName } from '../../lib/grocery'
+import { isPackageUnit } from '../../lib/newItemUnit'
 import { DEFAULT_UNIT, SUGGESTED_UNITS } from '../../data/constants'
 import { cn } from '../../lib/cn'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
@@ -311,10 +312,13 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
             setPriceDraft((d) => ({ ...d, ...patch }))
           }}
           unitOptions={formPriceUnits}
+          plainSingleUnit
           line={{ quantity: formQuantity, unit }}
           pack={formPack}
         />
-        {suggestedUnits.length > 0 && !suggestedUnits.includes(unit) && !EXTRA_PACKAGING_UNITS.includes(unit) && (
+        {/* The usual units are stock units; a package (pack, box, case…) is
+            how it is bought, so it never gets the warning here (plan 9L K7). */}
+        {suggestedUnits.length > 0 && !suggestedUnits.includes(unit) && !isPackageUnit(unit) && (
           <p className={cn('text-[11px] flex items-center gap-1.5 -mt-1', STATUS_STYLES.low.text)}>
             <AlertTriangle size={12} /> "{unit}" is unusual for {categoryName(categoryId)} (usually {suggestedUnits.join(', ')}).
           </p>

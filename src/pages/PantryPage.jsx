@@ -177,7 +177,7 @@ export function PantryPage() {
 
   const openGroupEditor = (next) => (ready ? setEditor(next) : setGroupNotice(true))
 
-  const handleSave = (fields) => (editor?.item ? updateItem(editor.item, fields) : addItem(fields))
+  const handleSave = (fields, how) => (editor?.item ? updateItem(editor.item, fields, how) : addItem(fields))
 
   return (
     <div className="space-y-4">

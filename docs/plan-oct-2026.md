@@ -32,6 +32,7 @@ Contents
    - 9K. Shared parts (decided 31/10–01/11, as built; NOTE 3 phase 1,
      SQL 029) and the SHOP search field (NOTE 1); follow-up 01/11: K14–K21,
      K8b, and the order of the next rounds
+   - 9L. Units for new items (decided 01/11, as built; NEW NOTE 1, SQL 030)
 10. Risks and decisions
 
 ---
@@ -3983,15 +3984,18 @@ fake database that can't answer now means "not known".
 
 **Next rounds (decided 01/11), in this order.**
 
-1. iPhone test of 9K (after 029 has been checked and run).
-2. **NEW NOTE 1 — units and pack contents in SHOP "+ Add to SHOP list".**
+1. ~~iPhone test of 9K (after 029 has been checked and run).~~ **Done
+   01/11/2026: all OK.**
+2. ~~**NEW NOTE 1 — units and pack contents in SHOP "+ Add to SHOP list".**
    The household buys e.g. soft drinks as "1 pack" (4 cans / bottles) but
    wants HOME stock counted in pcs. Today the form has no "pcs per pack"
    field (by design since 9H), the price unit next to "Unit price / Total
    price" seems to follow the quantity unit (not verified), and a NEW item
    created by "Confirm purchase" takes the purchase unit as its stock unit
-   (so it counts packs). Read-only analysis first.
-3. Round 6D (one item, many names; section 9D).
+   (so it counts packs). Read-only analysis first.~~ **Analysed 01/11
+   (`tmp-export/units-readonly-report.md`), built 01/11 — section 9L**
+   (SQL 030 written, not run yet).
+3. Round 6D (one item, many names; section 9D). **Next.**
 4. **MONEY display round**: notes 4 + 5 (in the plan's "Later" / 9F
    notes) plus NEW NOTES 2 + 3: in Money, the charts first; then "Totals
    per category" as a closed bar that opens on tap (like "History (N)" in
@@ -4004,7 +4008,272 @@ Trips & Holidays (round 7) and AI (round 8) stay postponed.
 
 ### iPhone checklist for round 9K
 
+iPhone test of 9K done 01/11/2026: all OK.
+
 Written by Claude after 029 has been checked and run.
+
+### 9L. Units for new items (decided 01/11, as built)
+
+NEW NOTE 1. Analysis: `tmp-export/units-readonly-report.md` (01/11, read
+only, sections A–J). The household chose **option B** (ask when a purchase
+CREATES the HOME item) and decisions K1–K12 below; where they differ from
+the report, they win. SQL: `supabase/030_new_item_units.sql` (not run yet;
+the household runs it after Claude has checked it, after 029). The app is
+deployed before 030 and works exactly as today until 030 is known. No new
+browser storage, no new offline queue. Only `confirm_shopping_trip` is
+replaced; `reopen_shopping_trip`, `arrive_order`, `unarrive_order` and every
+other function are untouched.
+
+Words: "package unit" = `PACKAGING_UNITS` (pack, box, case, carton, crate,
+bag; `data/constants.js`, the existing list, exactly this one; tested by
+`lib/newItemUnit.isPackageUnit`). "Stock unit" = `pantry_items.unit`. "Usual
+pack size" = `packaging_unit` + `quantity_per_pack` (9H).
+
+**K1 — option B, only where a purchase creates a NEW HOME item.**
+
+- SHOP "Confirm purchase": a line with the grey text "new in the pantry"
+  (`purchase.purchaseLine` `isNew`: no linked item and no normal item with
+  the same name, capitals and outer spaces ignored, never a group — the way
+  `confirm_shopping_trip` decides it).
+- MONEY "+ Add expense": a row with "Add to HOME" on, not locked, whose note
+  is "New in HOME (shown as New Item)." (`moneyPurchase.rowLine` `isNew`).
+- Never on: a restock (the 9H pack field as today), a durable / service
+  line, a group or variant line ("New variant…" takes the group's unit), a
+  finished 1× item revived by name, "+ Add to SHOP list", Order online,
+  MONEY "Add order".
+
+**K2** Only for a package unit: never for pcs, btl, can, jar, roll…, never
+for gr / kg / ml / L.
+
+**K3 — no default.** The line can't be saved until a unit is chosen: the
+box says **"Choose how to count it at home."** (also next to the MONEY Save
+button; in SHOP the bottom says "Answer the question above to confirm.").
+The purchase unit itself = exactly today's result (no field, nothing extra
+sent). Another unit shows the required pack field of 9H (`PackSizeField`):
+"{stock unit} per {purchase unit}", "= {n} {s}", "Type how many {s} are in
+1 {u}.", "It will be saved as the usual size for next time.".
+
+**K4 — the units offered** (`lib/newItemUnit.stockUnitChoices`): the
+purchase unit, pcs, then btl, can, roll, jar, tube, sachet, tablet, capsule
+(all in the app's unit list; no difference found). Never a measure, never
+another package. On screen (`components/ui/StockUnitQuestion.jsx`): title
+"Count it at home in", two pills [purchase unit] [pcs] (radios, 36 px high)
+and a small drop-down "Other…" with the other count units (aria "Other unit
+to count {name} in"); it wraps at 375 px, no sideways scroll.
+
+**Result** (soft drink, not in HOME, "1 pack" €3.00, chosen pcs, 4 per
+pack): new HOME item counted in pcs, stock 4, usual pack "pack" × 4, last
+normal price €3.00 per 1 pack (shown "≈ €0.75 / pcs"), history "+4 pcs"
+"Bought", New Item label as today; the line keeps quantity 1, unit pack,
+stock_added 4, stock_unit pcs → MONEY opened purchase and Receipts "1 pack ·
+4 pcs"; the expense exactly as today (€3.00, discounts, coupon, Shared
+parts). MONEY "Min [ ] {unit}" follows the chosen unit (the minimum is sent
+in it). Next purchase "2 pack" €6.00 → the item exists → 9H field starts at
+4 → +8 pcs. Eggs "1 box" €2.90 → pcs 10 → 10 pcs, usual box 10; tissues "1
+pack" €2.40 → roll 6 → 6 roll; beef slices "1 pack" → "pack" → 1 pack, no
+usual size (= today); water "1 btl", "500 gr", a durable → no question.
+
+**What is sent.** A line counted in another unit sends `new_stock_unit` and
+`new_pack_size` (`newItemKeys`); `add` stays in the unit bought (1 pack), so
+the 029 function (030 not run) ignores the keys and makes exactly today's
+"1 pack", never a wrong stock. The keys are sent only once 030 is known.
+
+**The same new name twice in one purchase** (new, a safety rule): the first
+line makes the item, the next ones add to it. As soon as one of them has the
+question, a later one must be counted in the first one's unit (or bought in
+it): else it is blocked with `"{name}" is in this purchase twice — count it
+in {unit} at home here too.` (`newItemUnit.sameNameProblems`,
+`purchase.twiceProblems`, `moneyPurchase.twiceProblems`). Each line may have
+its own pack size (pcs × 4 and pcs × 6 → +4 and +12).
+
+**K5 — "It arrived!" → "Create a new item" starts from the order**
+(`newItemUnit.arrivalPrefill`, `ItemEditor` `prefill`): an order not in a
+package ("3 pcs", "2 btl") → that stock unit (a unit HOME can't count in →
+pcs, without the price), "Current stock" = the quantity; an order in a
+package ("1 pack") → "Bought in a different unit" on, "Purchase unit" = the
+order's unit, "pcs per pack" EMPTY (saving says "Quantity per pack must be
+more than 0." until it is typed — already so before 9L: the editor never
+saved multipack with an empty size), stock unit pcs, "Current stock" = the
+quantity counted in packs ("in pack ⇄"). Turning the multipack section off
+there (stock in packs, package unit in HOME's list: pack, box) counts it in
+the package: Unit becomes "pack", the stock number stays ("Counted in pack
+at home."). Price: the order's normal price (`list_price ?? price`) for its
+quantity and unit. Everything else of 9J unchanged (safety net, Undo, the
+new item deleted while untouched).
+
+**K6** "+ Add to SHOP list": the price row's unit ("per" [1] [unit]) with
+only one option is plain text (aria "Price per unit"), same place, same
+saved value (`PriceFields` `plainSingleUnit`, passed only by `AddItemForm`).
+The card editor (`EntryControls`) and the HOME editor keep the select.
+
+**K7** "+ Add to SHOP list": no "unusual unit" warning for a package unit
+(`isPackageUnit`, was only case / carton / crate / bag). The HOME editor's
+warning is unchanged.
+
+**K8 — HOME "Edit item", changing "Unit (what you count stock in)".**
+
+- Old unit a package, new one a count unit of K4 (pack → pcs): the question
+  `Count "{name}" in {new} instead of {old}?` also offers **"Convert with the
+  pack size"** (hint "Stock and minimum × the {new} in 1 {old} (the same
+  amount, counted differently); the price stays per {old}.") with the field
+  **"{new} in 1 {old}"** (shown only for that choice, required: "Enter a
+  number above 0."; prefilled when the multipack fields hold a size for
+  that package). Result: stock × n, minimum × n, multipack on with Purchase
+  unit = the old unit and size n, the price still per the old unit (2 pack,
+  min 1, €3.00 per 1 pack, 4 → 8 pcs, min 4 pcs, €3.00 per 1 pack ≈ €0.75 /
+  pcs). Note: "Converted from pack: stock 8 pcs, minimum 4 pcs. 1 pack = 4
+  pcs." "Keep the numbers as they are" unchanged. (`askDialog` fields may
+  now have `shownWhen`.)
+- Whenever saving would change the price's unit because it is no longer
+  offered (a price without a unit was per the item's own unit), a yellow
+  line under the price before saving: "The price was €3.00 per 1 pack — it
+  will be saved as €3.00 per 1 pcs. Check it."
+- Variants and groups: unchanged (the select stays disabled).
+
+**K9 — Confirm purchase blocked by a total that can't be worked out.** The
+two cases are told apart: `lineTotal` is `null` for a line WITH a price
+whose unit can't be converted ("2 pack" at €0.75 per pcs, no usual size) and
+`0` for a line without a price. Only the first blocks "Confirm purchase ·
+€…" (the line and the bottom say "The total can't be worked out from the
+price's unit — type the total paid."); typing the total frees it. A line
+without a price: as today.
+
+**K10 — before 030.** `hooks/useNewItemUnits.js` (like 9K K18): one small
+select of `shopping_trip_items.stock_unit`; it answers → true; 42703 /
+PGRST204 naming `stock_unit` → false; anything else / offline → null, read
+again when the connection comes back; once true, known for the app start.
+While null or false the question is hidden. "Confirm purchase" / "Add
+expense · €…" / "Save purchase · €…" with a line that WOULD be asked while
+it is null: read first — true → the question shows, nothing saved; false →
+saved as today; no answer → nothing saved, "You're offline — this needs a
+connection." / "Couldn't save — check your connection." (the 9K messages).
+
+**K11 — history of a converted unit.** "Convert with the pack size" and
+the kg ↔ gr / L ↔ ml "Convert the numbers" write ONE history row with the
+new reason `converted`, label **"Unit changed"**, shown in Home → History
+with the new stock only ("→ 8 pcs"), never the difference (the row still
+stores it: change 6). Before 9L the kg ↔ gr conversion wrote one "Adjusted"
+row ("+1998 gr → 2000 gr"). "Keep the numbers as they are" keeps today's
+behaviour: no row while the numbers stay the same; a stock then typed by
+hand is one "Adjusted" row. `stock_logs.reason` has no check constraint, so
+no SQL; the New Item rule reads only purchased / restocked.
+
+**K12** No data fix: items counted in pack / box are converted by hand with
+K8.
+
+**SQL `supabase/030_new_item_units.sql`.** `alter table shopping_trip_items
+add column if not exists stock_unit text` (the stock unit of the item when
+the line added it, new or existing item; null for a line without an item
+and for every line before 030; `purchasedPackLabel` uses it when present,
+else the item's current unit as before) and `create or replace function
+confirm_shopping_trip` from the 029 version. One transaction (`begin; …
+commit;`), checks that 015 and 029 have run, safe to run twice, no data
+change, no other function / policy / grant; same signature, `search_path =
+public`, household check (42501), security invoker, grants kept (closed to
+anon / public). One check SELECT, 9 rows, each "ok": the column; the
+function writes stock_unit, has the new-item keys, still writes each
+person's part (029), search_path, invoker, household check, anon none; and
+"purchase lines with stock_unit (0 the first time)". Last line `-- End of
+030`. When the keys are sent but an item with that name is found (an
+earlier line of the same purchase, or the other phone): counted in
+new_stock_unit → add × new_pack_size; in the line's unit → add as sent;
+otherwise the error `"{name}" is in HOME already, counted in {unit} (added
+meanwhile?) — check the line and save again.` and nothing is saved (the
+screen stays open; after the reload the line shows "restocks …" with the 9H
+field). Only one key, the unit bought itself, or a size ≤ 0 → ignored.
+
+Every changed line of `confirm_shopping_trip` (030 compared with 029, from
+`diff -U0` of the two function bodies; the test "030" checks the same with
+its own line diff):
+
+| Where (line in the 029 function body) | Change | For a payload without the new keys |
+|---|---|---|
+| declare (after 31) | + comment, `v_new_unit text;`, `v_new_pack numeric;`, `v_stock_unit text;` | — |
+| per line, after `v_line := …` (97) | + comment; `v_new_unit := nullif(v_item->>'new_stock_unit', '');`, `v_new_pack := nullif(v_item->>'new_pack_size', '')::numeric;`, both set back to null unless both are there, the unit differs from the line's and the size is > 0; `v_stock_unit := null;` | Both null. |
+| existing item, after `v_stock := coalesce(pi.current_stock, 0);` (128) | + `v_stock_unit := pi.unit;` + comment + `if v_new_unit is not null then` (found in that unit → `v_add := v_add * v_new_pack`; not in the line's unit either → `raise exception …`) `end if;` | Skipped (`v_new_unit` null). |
+| new item, before its insert (159) | + comment, `v_stock_unit := coalesce(v_new_unit, g.unit);`, `if v_new_unit is not null then v_add := v_add * v_new_pack; end if;` | `v_stock_unit` = `g.unit`, `v_add` unchanged. |
+| `insert into pantry_items (…, one_time, min_stock)` (159) | `→ (…, one_time, min_stock, packaging_unit, quantity_per_pack)` | — |
+| its values `…, v_add, g.unit,` (161) | `g.unit` → `v_stock_unit` | The same value. |
+| its values `…, coalesce((v_item->>'min_stock')::numeric, 0)` (167) | + `, case when v_new_unit is not null then g.unit end, v_new_pack` | Both null = what 029 leaves (no usual size). |
+| its history row `values (v_pantry, …, g.unit, 'purchased')` (173) | `g.unit` → `v_stock_unit` | The same value. |
+| line insert (196, 200, 206) | + comment; column list `…, coupon_share` → `…, coupon_share, stock_unit`; values `…, 0)` → `…, 0), case when v_pantry is not null then v_stock_unit end` | Only the new column is written (the item's unit, or null without an item). |
+
+Everything else — the expense insert with each person's part (029), the
+1× / minimum / price / payer fields, the SHOP checks, the MONEY branch, the
+SHOP entry updates, the photos and the total — is the 029 text line for
+line. Reopen / Undo purchase / the Undo toast still delete a new item made
+by the purchase exactly (`pantry_created`), tested.
+
+**Files.** New: `supabase/030_new_item_units.sql`, `src/lib/newItemUnit.js`
+(+ test), `src/hooks/useNewItemUnits.js`, `src/components/ui/
+StockUnitQuestion.jsx`. Changed: `lib/purchase.js` (`purchaseLine`
+`unitsReady` / `stockUnit` / `isNew` / `asksStockUnit`, `confirmationPayload`,
+`twiceProblems`), `lib/moneyPurchase.js` (`emptyRow.newUnit`, `rowLine`
+`unitsReady` / `stockUnit` / `minUnit`, `rowProblem`, payload,
+`twiceProblems`), `lib/packSize.js` (`purchasedPackLabel` reads
+`stock_unit`), `lib/feedback.js` + `ui/Feedback.jsx` (`shownWhen`),
+`grocery/ConfirmPurchase.jsx` (K1–K4, K9, K10; props `unitsReady`,
+`checkUnits`), `expenses/PurchaseForm.jsx` (K1–K4, K10; same props),
+`expenses/ArrivedDialog.jsx` (K5), `inventory/ItemEditor.jsx` (K5, K8,
+`onSave(fields, { converted })`), `inventory/PriceFields.jsx` (K6),
+`grocery/AddItemForm.jsx` (K6, K7), `hooks/usePantryItems.js` (K11
+`updateItem(item, fields, { converted })`), `pages/PantryPage.jsx`,
+`inventory/HistoryView.jsx` (K11).
+
+**Tests: 1981 → 2041 (108 → 112 files).** New `lib/newItemUnit.test.js`
+(21: the unit lists, when it is asked, no default, the purchase unit = today,
+pcs 4 / box 10 / roll 6 / 2 × 4 = 8, answers for another unit, SHOP and
+MONEY lines and payloads, every "never asked" case, before 030, labels with
+`stock_unit`, the arrival prefill, the column check, the same name twice),
+`components/newItemUnit.render.test.jsx` (21: Confirm purchase every state,
+the drop-down, eggs / two packs, never asked, before 030, K10 true / false /
+no answer / offline / nothing to ask, the same name twice; K9 blocked and
+freed, no price not blocked; MONEY every state, Min unit, never asked, K10;
+K6 / K7; K8 convert, keep + price warning, kg → gr / pcs → btl / variant;
+K5 in the editor; K11 history row), `components/newItemArrival.render.test.
+jsx` (2: "It arrived!" → "Create a new item" from "1 pack" and "2 btl",
+Undo), `hooks/unitConvertHistory.test.jsx` (3: K11 rows). Changed:
+`lib/feedback.test.js` +1 (`shownWhen`), `components/packSizeHistory.
+render.test.jsx` (a line with `stock_unit` whose item is gone, MONEY and
+Receipts), `supabase/migrations.test.js` block "030" (12, PGlite: only the
+listed objects, one transaction; the function = 029 but the listed lines
+(line diff); before 030 the column is missing and the 029 function makes
+"1 pack" from a payload with the keys; run twice, every check ok, other
+functions / policies / grants / data unchanged, anon nothing; a stranger
+refused; SHOP and MONEY payloads without the keys = 029 + stock_unit, Reopen
+too; with the keys: 4 pcs + usual pack 4 + history in pcs + line "1 pack ·
+4 pcs", beef slices in packs, Reopen deletes exactly; the next "2 pack" →
++8; MONEY eggs 10 pcs / tissues 6 roll with Shared parts; the same name
+twice, found in the unit bought, found in another unit → refused and
+nothing changed; one key alone ignored), and the 9J check allows 030.
+
+**Labels and paths (for Claude's test instructions).** Left menu: Plan,
+Shop, Home, Money.
+
+| What | Path | Exact labels |
+|---|---|---|
+| Question in Confirm purchase | Shop → List → "Confirm purchase ({n} in the cart)" → screen "Confirm purchase" → the line with grey "… · new in the pantry" | box "Count it at home in"; pills "pack" / "pcs" (radios; the first is the line's own unit: "box", "case"…); drop-down "Other…" (aria "Other unit to count {name} in") with btl, can, roll, jar, tube, sachet, tablet, capsule |
+| — not chosen | same | "Choose how to count it at home."; bottom "Answer the question above to confirm."; button "Confirm purchase · €3.00" greyed |
+| — purchase unit | tap "pack" | nothing more; Confirm works (= today) |
+| — pcs / other | tap "pcs" (or pick from "Other…") | field "pcs per pack" (aria "pcs per pack for {name}"); empty: "Type how many pcs are in 1 pack."; typed 4: "= 4 pcs" and "It will be saved as the usual size for next time." |
+| — same name twice | two cart lines, same name | `"{name}" is in this purchase twice — count it in pcs at home here too.` |
+| Question in MONEY | Money → section Expenses → "Add expense" → card "ADD AN EXPENSE" → name, €, quantity, unit "pack", HOME item category, "Add to HOME" on ("New in HOME (shown as New Item).") | the same box under "Add to HOME" (aria "pcs per pack for {name}" / with several rows the same with the row's name); "Min [ ] pcs — below this it goes on the SHOP list"; after "Save purchase · €3.00": "Choose how to count it at home." / "Type how many pcs are in 1 pack." next to the row and above the button |
+| Before 030 known | — | no box; pressing the button reads first; offline: toast "You're offline — this needs a connection."; other failure: "Couldn't save — check your connection." |
+| K5 editor from an order | Money → section Orders → an order card "Arrived" (or Shop → List → "On the way" card "Arrived") → "It arrived!" → "Create a new item" → "Add an item" | "Unit (what you count stock in)" = "pieces (pcs)"; "Bought in a different unit" (on); "Purchase unit" = pack; "pcs per pack" empty; "Current stock" with "in pack ⇄" = 1; "Price (e.g. …)" = 3.00 per 1 pack; "Add to inventory" → if empty "Quantity per pack must be more than 0."; toast `"{name}" is now in HOME` + "Undo"; tapping "Bought in a different unit" off → Unit "pack", note "Counted in pack at home." |
+| K6 | Shop → List (or Shop) → "+ Add to SHOP list" → "ADD TO SHOP LIST" → unit "pack" for a name not in HOME | price row "€ 0.00" "per" [1] **pack** (plain text, not a drop-down) |
+| K7 | same, category Beverages, unit "pack" | no "is unusual for" line (unit "jar": `"jar" is unusual for Beverages (usually btl, can, ml, L).`) |
+| K8 question | Home → Items → the item tile → pencil (title "Edit") → "Edit item" → "Unit (what you count stock in)" → "pieces (pcs)" | `Count "{name}" in pcs instead of pack?`; choices "Convert with the pack size" (with field "pcs in 1 pack") and "Keep the numbers as they are"; buttons "Cancel" / "Change unit"; empty field: "Enter a number above 0."; then the note "Converted from pack: stock 8 pcs, minimum 4 pcs. 1 pack = 4 pcs."; "Save changes" |
+| K8 price warning | same, "Keep the numbers as they are" | under the price: "The price was €3.00 per 1 pack — it will be saved as €3.00 per 1 pcs. Check it." |
+| K9 | Shop → List → "Confirm purchase (…)", a line "2 pack" priced per pcs with no usual size | on the line and at the bottom "The total can't be worked out from the price's unit — type the total paid."; header "· 1 without a total"; "Confirm purchase · €…" greyed until "Total for {name}" is typed |
+| K11 | Home → History | row "{name}" · "Unit changed · {date}" and "→ 8 pcs" (no "+6 pcs") |
+| "1 pack · 4 pcs" | Money → section Expenses → the purchase row (tap to open) → under the item; Shop → Receipts → the purchase | "1 pack · 4 pcs" (two: "2 pack · 4 pcs each · 8 pcs") |
+
+Not confirmed on a phone: everything in this table (written from the code
+and the render tests).
+
+### iPhone checklist for round 9L
+
+Written by Claude after 030 has been checked and run.
 
 ---
 

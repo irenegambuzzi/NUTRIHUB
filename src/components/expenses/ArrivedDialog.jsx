@@ -11,6 +11,7 @@ import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast, discardUnusedIt
 import { newVariantFields } from '../../lib/groups'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { arrivalPickLabel } from '../../lib/similarItems'
+import { arrivalPrefill } from '../../lib/newItemUnit'
 import { localDateString } from '../../lib/week'
 
 const CHOICES = [
@@ -137,7 +138,7 @@ export function ArrivedDialog({ order, onClose }) {
   if (mode === 'new') {
     return (
       <ItemEditor
-        prefill={{ name: order.item_name }}
+        prefill={arrivalPrefill(order)}
         parents={parents}
         subsByParent={subsByParent}
         onAddCategory={addCategory}

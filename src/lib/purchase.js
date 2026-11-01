@@ -4,6 +4,7 @@ import { firstOutVariant } from './groups'
 import { couponFields, lineDiscountFields, priceLines } from './discounts'
 import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
 import { partFields } from './sharedParts'
+import { asksStockUnit, newItemKeys, sameNameProblems, stockUnitQuestion } from './newItemUnit'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -30,8 +31,10 @@ export function purchasedQuantity(pantry, item, packSize) {
 
 // One cart item, as the confirm screen shows it. answer: { pack,
 // discard (true = throw the expired stock away, false = keep it),
-// expiryDate, variantId / newVariantName } from the user; `pack` is the
-// pack field as typed ({ text, unit }: the unit it was typed for).
+// expiryDate, variantId / newVariantName, newUnit } from the user; `pack`
+// is the pack field as typed ({ text, unit }: the unit it was typed for),
+// `newUnit` the answer to "Count it at home in" ({ unit, stockUnit, text },
+// lib/newItemUnit.js).
 //   pack            – the line's pack field (lib/packSize.js), or null: how
 //                     many stock units are in 1 package for this purchase,
 //                     started with the item's usual size. A first-time
@@ -43,13 +46,21 @@ export function purchasedQuantity(pantry, item, packSize) {
 //                     variant is taken until the user chooses
 //   expired         – the pantry item has expired (with stock: must choose
 //                     to throw it away or keep it; the new date is optional)
+//   stockUnit       – a line that makes a NEW HOME item in a package
+//                     (plan 9L, only once supabase/030 is known: `unitsReady`
+//                     true): how to count it at home, and with another unit
+//                     its usual pack size; null otherwise. "New" is decided
+//                     as confirm_shopping_trip decides it: no linked item and
+//                     no normal item with the same name (never a group)
+//   asksStockUnit   – the line would get that question once 030 is known
+//                     (to check first while that isn't known)
 //   ready           – every question that must be answered is
 // `pantry` is the item (or group) the line restocks, for showing; `target`
 // the item whose stock really changes — the chosen variant for a group.
 // A durable line (its HOME category is in the Durables tree, or
 // `durableBudget`: its budget category is a durable one, lib/durable.js)
 // is an expense only: no HOME item, no stock (plan 9F).
-export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = false } = {}) {
+export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = false, unitsReady = null } = {}) {
   const durable = isDurable(item) || durableBudget
   const entry = durable ? null : pantryItemFor(item, pantryItems)
   const group = entry?.is_group ? entry : null
@@ -67,6 +78,9 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
   const expired = Boolean(chosen) && expiryState(chosen) === 'expired'
   const expiredStock = expired ? Number(chosen.current_stock) || 0 : 0
   const needsExpiryChoice = expiredStock > 0 && typeof answer.discard !== 'boolean'
+  const isNew = !durable && !entry
+  const stockUnit = isNew ? stockUnitQuestion({ unit: item.unit, quantity, answer: answer.newUnit, ready: unitsReady }) : null
+  const needsStockUnit = Boolean(stockUnit?.blocking)
   return {
     item,
     pantry: chosen ?? entry,
@@ -81,8 +95,20 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
     expired,
     expiredStock,
     needsExpiryChoice,
-    ready: !needsPackSize && !needsExpiryChoice && !needsVariant,
+    stockUnit,
+    needsStockUnit,
+    isNew,
+    asksStockUnit: isNew && asksStockUnit(item.unit),
+    ready: !needsPackSize && !needsExpiryChoice && !needsVariant && !needsStockUnit,
   }
+}
+
+// Per line, what the same new name twice says (lib/newItemUnit.js
+// sameNameProblems; '' for every other line).
+export function twiceProblems(lines) {
+  const fresh = lines.filter((l) => l.isNew)
+  const problems = new Map(sameNameProblems(fresh.map((l) => ({ name: l.item.name, unit: l.item.unit, question: l.stockUnit }))).map((p, i) => [fresh[i], p]))
+  return lines.map((l) => problems.get(l) ?? '')
 }
 
 // The discounts of the confirm screen worked out: each item's own discount
@@ -112,6 +138,8 @@ export function purchasePricing(items, totalOf, discounts = {}, coupon = null) {
 // `partsByItem`: the parts of the Shared lines (plan 9K: item id → { [code]:
 // € }, lib/sharedParts.js spreadParts). Lines of a person, and every line
 // without it, send none.
+// A line making a new item counted in another unit (plan 9L) sends
+// new_stock_unit / new_pack_size; `add` stays in the line's unit.
 export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null, partsByItem = null }) {
   return {
     ...(pricing ? couponFields(pricing.priced) : {}),
@@ -121,7 +149,7 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
     photo_ids: photoIds,
     shop_id: shopId || null,
     paid_by: paidBy || null,
-    items: lines.map(({ item, target, durable, add, expired, pack }) => {
+    items: lines.map(({ item, target, durable, add, expired, pack, stockUnit }) => {
       const answer = answers[item.id] ?? {}
       const priced = pricing?.byItem.get(item.id) ?? null
       const row = {
@@ -142,6 +170,7 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
       }
       // The item's usual size only the first time (it has none yet).
       if (target) Object.assign(row, firstTimePatch(pack))
+      Object.assign(row, newItemKeys(stockUnit))
       return row
     }),
   }

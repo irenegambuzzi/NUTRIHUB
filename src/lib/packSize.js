@@ -108,15 +108,18 @@ export function packAmountLabel(quantity, unit, perPack, stockUnit) {
 }
 
 // A purchase line (shopping_trip_items: quantity, unit, stock_added) bought
-// in packages of `item` (its HOME item, for the stock unit), as above; the
-// size per package is what really went into HOME (stock_added ÷ quantity),
-// whatever was typed then. null when the line wasn't bought in packages or
-// doesn't say enough (an old line, a deleted item): it shows as before.
+// in packages, as above; the size per package is what really went into
+// HOME (stock_added ÷ quantity), whatever was typed then. The stock unit is
+// the one the line kept (`stock_unit`, supabase/030: the item's unit when
+// the stock was added), else that of `item`, its HOME item now. null when
+// the line wasn't bought in packages or doesn't say enough (an old line, a
+// deleted item): it shows as before.
 export function purchasedPackLabel(line, item) {
   const quantity = Number(line?.quantity)
   const added = Number(line?.stock_added)
-  if (!(quantity > 0) || !(added > 0) || !hasPackField(item, line.unit)) return null
-  return packAmountLabel(quantity, normalizeUnit(line.unit), added / quantity, item.unit)
+  const stockUnit = line?.stock_unit || item?.unit
+  if (!(quantity > 0) || !(added > 0) || !hasPackField({ unit: stockUnit }, line.unit)) return null
+  return packAmountLabel(quantity, normalizeUnit(line.unit), added / quantity, stockUnit)
 }
 
 // An order with a pack size (orders.pack_size) and its HOME item's stock

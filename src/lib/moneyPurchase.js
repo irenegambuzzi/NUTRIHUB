@@ -11,6 +11,7 @@ import { firstTimePatch, packField, packMissingText, packStartText, packTextFor 
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
 import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
 import { partFields } from './sharedParts'
+import { asksStockUnit, newItemKeys, newStockUnit, sameNameProblems, stockUnitQuestion } from './newItemUnit'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -30,6 +31,9 @@ const round2 = (n) => Math.round(n * 100) / 100
 //               / filled in from the last purchase of that name
 //   packSizeText / packUnit   the pack field as typed, and the unit it was
 //               typed for (another unit starts the field again, plan 9H)
+//   newUnit     the answer to "Count it at home in" for a new item bought in
+//               a package (plan 9L, lib/newItemUnit.js): { unit, stockUnit,
+//               text }, or null
 export function emptyRow(key) {
   return {
     key,
@@ -53,6 +57,7 @@ export function emptyRow(key) {
     variantId: undefined,
     packSizeText: '',
     packUnit: null,
+    newUnit: null,
     discountKind: 'percent',
     discountText: '',
     similarAnswer: '',
@@ -158,7 +163,12 @@ export const budgetOf = (row, ctx) => {
 //               size is still missing)
 //   isNew       a new HOME item is made (with 1× and Min)
 //   revives     a finished 1× item comes back
-export function rowLine(row, pantryItems, ctx) {
+//   stockUnit   for a new item bought in a package, once supabase/030 is
+//               known (`unitsReady` true): how to count it at home (plan 9L);
+//               null otherwise. `asksStockUnit`: it would be asked (to check
+//               first while 030 isn't known yet)
+//   minUnit     the unit the minimum is typed in: the new item's stock unit
+export function rowLine(row, pantryItems, ctx, { unitsReady = null } = {}) {
   const quantity = parseDecimal(row.quantityText)
   const total = parseDecimal(row.priceText)
   const lock = lockOf(row, ctx)
@@ -173,6 +183,8 @@ export function rowLine(row, pantryItems, ctx) {
   const pack = home && target ? packField({ item: target, unit: row.unit, quantity: count, text: packTextFor({ text: row.packSizeText, unit: row.packUnit }, row.unit, packStartText(target, row.unit)) }) : null
   const add = !home ? 0 : target ? purchasedQuantity(target, { quantity: count, unit: row.unit }, pack?.value) : count
   const minStock = parseDecimal(row.minText)
+  const isNew = home && !match
+  const stockUnit = isNew ? stockUnitQuestion({ unit: row.unit, quantity: count, answer: row.newUnit, ready: unitsReady }) : null
   return {
     row,
     quantity: quantity > 0 ? round2(quantity) : 1,
@@ -186,7 +198,10 @@ export function rowLine(row, pantryItems, ctx) {
     target,
     add,
     pack,
-    isNew: home && !match,
+    isNew,
+    stockUnit,
+    asksStockUnit: isNew && asksStockUnit(row.unit),
+    minUnit: newStockUnit(stockUnit, row.unit),
     revives: Boolean(target) && isFinished(target),
     // MONEY doesn't ask what to do with expired stock (SHOP's Confirm
     // does): the stock is added and the row says to check it in HOME.
@@ -195,6 +210,14 @@ export function rowLine(row, pantryItems, ctx) {
     needsVariant: Boolean(group) && !target,
     needsPackSize: Boolean(target) && add === null,
   }
+}
+
+// Per row, what the same new name twice says (lib/newItemUnit.js
+// sameNameProblems; '' for every other row).
+export function twiceProblems(lines) {
+  const fresh = lines.filter((l) => l.isNew)
+  const problems = new Map(sameNameProblems(fresh.map((l) => ({ name: l.row.name, unit: l.row.unit, question: l.stockUnit }))).map((p, i) => [fresh[i], p]))
+  return lines.map((l) => problems.get(l) ?? '')
 }
 
 // The lines with what is really paid. Each line's own discount comes
@@ -253,7 +276,7 @@ export function listEntryNote(line, listEntry) {
 export function rowProblem(line, { plain = false } = {}) {
   const { row } = line
   if (!plain && !row.name.trim()) return 'Type what you bought.'
-  if (decimalProblem(row.priceText) || decimalProblem(row.quantityText) || decimalProblem(row.minText) || decimalProblem(line.pack?.text)) return 'Fix the numbers in red.'
+  if (decimalProblem(row.priceText) || decimalProblem(row.quantityText) || decimalProblem(row.minText) || decimalProblem(line.pack?.text) || decimalProblem(line.stockUnit?.pack?.text)) return 'Fix the numbers in red.'
   if (!row.priceText.trim()) return line.home ? 'Enter the price (0 if it was free).' : 'Enter the price.'
   if (!(line.total > 0) && !(line.home && line.total === 0)) return 'Enter a price above 0.'
   if (line.priced?.problem) return line.priced.problem
@@ -262,6 +285,7 @@ export function rowProblem(line, { plain = false } = {}) {
   if (!(parseDecimal(row.quantityText) > 0)) return 'Enter a quantity above 0.'
   if (line.needsVariant) return `Choose which variant of "${line.group.name}" gets the stock.`
   if (line.needsPackSize) return packMissingText(line.pack)
+  if (line.stockUnit?.problem) return line.stockUnit.problem
   if (line.isNew && !row.categoryId) return 'Pick a HOME item category, or turn Add to HOME off.'
   return ''
 }
@@ -286,7 +310,9 @@ const paidOf = (line) => {
 // → the expense category id; `entryOf(line)` → its listEntryFor result.
 // Add to HOME off → `durable: true` (an expense only, like an appliance in
 // SHOP). On → the HOME item (or chosen variant) and the stock in its own
-// unit; a new item gets its category, 1× and minimum. The typed price is
+// unit; a new item gets its category, 1× and minimum (in its stock unit),
+// and, counted in another unit than the one bought (plan 9L),
+// new_stock_unit / new_pack_size — `add` stays in the unit bought. The typed price is
 // the normal price for the quantity bought (the HOME item's last price,
 // `list_total` of the line); `line_total` is what was paid (the expense):
 // the price less the line's own discount and its part of the coupon.
@@ -329,6 +355,7 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
       if (line.isNew) {
         item.one_time = Boolean(row.oneTime)
         item.min_stock = line.minStock
+        Object.assign(item, newItemKeys(line.stockUnit))
       }
       // The item's usual size only the first time (it has none yet).
       if (line.target) Object.assign(item, firstTimePatch(line.pack))

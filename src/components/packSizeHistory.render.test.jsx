@@ -15,13 +15,16 @@ const lines = [
   { id: 'l1', trip_id: 't1', position: 1, name: 'Cat Wet Food', quantity: 2, unit: 'box', stock_added: 60, pantry_item_id: 'cat', expense_id: 'e1', line_total: 20 },
   { id: 'l2', trip_id: 't1', position: 2, name: 'Cat Wet Food', quantity: 1, unit: 'box', stock_added: 30, pantry_item_id: 'cat', expense_id: 'e2', line_total: 10 },
   { id: 'l3', trip_id: 't1', position: 3, name: 'Old line', quantity: null, unit: null, stock_added: 30, pantry_item_id: 'cat', expense_id: 'e3', line_total: 5 },
+  // Plan 9L (030): a new item made in pcs from "1 pack"; the line keeps its stock unit, so it reads the same after the item is gone.
+  { id: 'l4', trip_id: 't1', position: 4, name: 'Soft drink', quantity: 1, unit: 'pack', stock_added: 4, stock_unit: 'pcs', pantry_item_id: 'gone', expense_id: 'e4', line_total: 3 },
 ]
 const expenses = [
   { id: 'e1', trip_id: 't1', category_id: 'g', amount: 20, paid_by: 'irene', expense_date: '2026-10-28', description: 'Cat Wet Food' },
   { id: 'e2', trip_id: 't1', category_id: 'g', amount: 10, paid_by: 'irene', expense_date: '2026-10-28', description: 'Cat Wet Food 1' },
   { id: 'e3', trip_id: 't1', category_id: 'g', amount: 5, paid_by: 'irene', expense_date: '2026-10-28', description: 'Old line' },
+  { id: 'e4', trip_id: 't1', category_id: 'g', amount: 3, paid_by: 'irene', expense_date: '2026-10-28', description: 'Soft drink' },
 ]
-const trip = { id: 't1', trip_date: '2026-10-28', source: 'shop', total: 35 }
+const trip = { id: 't1', trip_date: '2026-10-28', source: 'shop', total: 38 }
 
 const fake = (rows) => ({ useRows: () => ({ rows, loaded: true }), getSnapshot: () => ({ rows, loaded: true }) })
 vi.mock('../lib/stores', async (original) => ({
@@ -50,7 +53,7 @@ describe('a purchase bought in packages, in the history', () => {
     const byExpense = new Map(lines.map((l) => [l.expense_id, l]))
     const { container } = render(
       <PurchaseGroup
-        group={{ date: '2026-10-28', items: expenses, total: 35 }}
+        group={{ date: '2026-10-28', items: expenses, total: 38 }}
         trip={trip}
         shop={null}
         mainOf={() => ({ id: 'g', name: 'Groceries' })}
@@ -67,6 +70,7 @@ describe('a purchase bought in packages, in the history', () => {
     expect(text).toContain('2 box · 30 pcs each · 60 pcs')
     expect(text).toContain('1 box · 30 pcs')
     expect(text).not.toContain('1 box · 30 pcs each')
+    expect(text).toContain('1 pack · 4 pcs')
   })
 
   it('MONEY: without the HOME item (deleted) the line shows as before', () => {
@@ -93,5 +97,6 @@ describe('a purchase bought in packages, in the history', () => {
     expect(html).toContain('2 box · 30 pcs each · 60 pcs')
     expect(html).toContain('1 box · 30 pcs')
     expect(html.match(/30 pcs/g)).toHaveLength(2)
+    expect(html).toContain('1 pack · 4 pcs')
   })
 })

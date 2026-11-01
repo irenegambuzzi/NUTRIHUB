@@ -123,6 +123,8 @@ export function toastLoadError(error, retry, source) {
 //   select – a drop-down: options [{ value, label }], required: true to insist
 //   date   – optional unless required: true
 //   number – min (exclusive lower bound), unit shown after the input
+// Any field may have `shownWhen: { field, value }`: it is shown (and
+// checked) only while that other field has that value, else it answers null.
 // Resolves to { name: value } when confirmed, or null when cancelled.
 // `opener`: what had the keyboard focus when it was asked (kept when one
 // question replaces another), so the focus can go back there afterwards.
@@ -144,10 +146,14 @@ export function initialDialogValues(fields) {
   return Object.fromEntries(fields.map((f) => [f.name, f.value ?? '']))
 }
 
+// Whether a field is shown for these values (see `shownWhen` above).
+export const fieldShown = (f, values) => !f.shownWhen || values?.[f.shownWhen.field] === f.shownWhen.value
+
 // What's wrong with the entered values, by field name (empty when fine).
 export function dialogErrors(fields, values) {
   const errors = {}
   for (const f of fields) {
+    if (!fieldShown(f, values)) continue
     const raw = String(values[f.name] ?? '').trim()
     if (f.type === 'number' && (raw || f.required)) {
       const n = parseNumber(raw)
@@ -174,7 +180,8 @@ export function closeDialog(values) {
   const out = {}
   for (const f of current.fields) {
     const v = values?.[f.name]
-    out[f.name] = f.type === 'number' ? (String(v ?? '').trim() ? parseNumber(v) : null) : f.type === 'date' ? v || null : v
+    if (!fieldShown(f, values)) out[f.name] = null
+    else out[f.name] = f.type === 'number' ? (String(v ?? '').trim() ? parseNumber(v) : null) : f.type === 'date' ? v || null : v
   }
   current.resolve(out)
 }

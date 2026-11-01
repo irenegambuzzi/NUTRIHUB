@@ -7,7 +7,11 @@ import { cn } from '../../lib/cn'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { deleteStockLogs, useStockLogs } from '../../hooks/usePantryItems'
 
-const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded' }
+const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded', converted: 'Unit changed' }
+
+// A unit change that converted the stock (2 pack → 8 pcs, plan 9L K11)
+// shows only the new stock: the difference of the numbers means nothing.
+const showsChange = (log) => log.reason !== 'converted'
 
 // Filters combine: item + reason + date range. Entries can be deleted one
 // by one or several at once (Select), with Undo; that removes only the
@@ -156,10 +160,12 @@ export function HistoryView() {
                     {new Date(log.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </p>
                 </div>
-                <span className={cn('font-mono font-bold', change >= 0 ? STATUS_STYLES.ok.text : STATUS_STYLES.out.text)}>
-                  {change >= 0 ? '+' : ''}
-                  {change} {log.unit}
-                </span>
+                {showsChange(log) && (
+                  <span className={cn('font-mono font-bold', change >= 0 ? STATUS_STYLES.ok.text : STATUS_STYLES.out.text)}>
+                    {change >= 0 ? '+' : ''}
+                    {change} {log.unit}
+                  </span>
+                )}
                 <span className="font-mono text-[var(--color-text-muted)] w-20 text-right">
                   → {Number(log.new_stock)} {log.unit}
                 </span>

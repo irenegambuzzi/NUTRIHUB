@@ -141,8 +141,11 @@ export function usePantryItems() {
 
   // Saved from the item editor. The field changes and the stock change
   // are saved together (the fields are put back if the stock fails).
+  // `converted`: the editor converted the stock to the new unit (plan 9L
+  // K11): its one history row is 'converted' ("Unit changed"), shown with
+  // the new stock only ("→ 8 pcs"), never as a difference.
   const updateItem = useCallback(
-    async (item, fields) => {
+    async (item, fields, { converted = false } = {}) => {
       const { current_stock: stock, ...patch } = pickFields(fields)
       // The edited stock is applied as a change from what the form started
       // with, so a concurrent change by someone else isn't overwritten.
@@ -167,7 +170,7 @@ export function usePantryItems() {
               const original = Object.fromEntries(Object.keys(patch).map((k) => [k, item[k] ?? null]))
               onFail(async () => must(await updateRows('pantry_items', item.id, original)))
             }
-            return delta ? stockChangeWithLog(saved, [{ change: delta, reason: 'edited' }]) : { item: saved, logIds: [] }
+            return delta ? stockChangeWithLog(saved, [{ change: delta, reason: converted && saved.unit !== item.unit ? 'converted' : 'edited' }]) : { item: saved, logIds: [] }
           }),
         { retry: false, onFail: fetchItems }
       )

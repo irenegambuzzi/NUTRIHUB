@@ -9,7 +9,9 @@ import { lineTotal, money, priceBasis, unitPriceFromTotal } from '../../lib/pric
 // can). With `line` (quantity + unit being bought) it also shows the line
 // total and lets the user type the total instead of the unit price.
 //   value: { price, price_qty, price_unit }   (strings while editing)
-export function PriceFields({ value, onChange, unitOptions, line, pack, compact = false }) {
+// `plainSingleUnit`: with only one unit to offer, it is shown as plain text
+// in the select's place ("Add to SHOP list", plan 9L K6).
+export function PriceFields({ value, onChange, unitOptions, line, pack, compact = false, plainSingleUnit = false }) {
   const [mode, setMode] = useState('unit')
   const [totalDraft, setTotalDraft] = useState('')
   const basisUnit = value.price_unit || unitOptions[0]
@@ -70,13 +72,19 @@ export function PriceFields({ value, onChange, unitOptions, line, pack, compact 
             className={cn('w-16 shrink-0', size)}
             aria-label="Price per quantity"
           />
-          <Select value={basisUnit} onChange={(e) => onChange({ price_unit: e.target.value })} className={cn('w-20 shrink-0', size)} aria-label="Price per unit">
-            {unitOptions.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </Select>
+          {plainSingleUnit && unitOptions.length === 1 ? (
+            <span className="w-20 shrink-0 text-sm text-[var(--color-text)] px-2" aria-label="Price per unit">
+              {basisUnit}
+            </span>
+          ) : (
+            <Select value={basisUnit} onChange={(e) => onChange({ price_unit: e.target.value })} className={cn('w-20 shrink-0', size)} aria-label="Price per unit">
+              {unitOptions.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
       ) : (
         <DecimalInput
