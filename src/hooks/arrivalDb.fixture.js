@@ -5,6 +5,9 @@
 // them) and increment_stock. Deleting a HOME item unlinks what pointed to
 // it, as the foreign keys do. Every call is kept in `calls`; `failWhen(call)`
 // makes a call fail once it returns true (a dropped connection).
+// `{ units: true }`: unarrive_order as supabase/031 replaces it — the
+// arrival's stock converted from the unit of its own history row to the
+// item's unit now, or not taken out at all when it can't be (plan 9M).
 
 const DEFAULTS = {
   orders: { status: 'on_the_way', stock_added: 0, arrived_item_id: null, arrived_log_id: null, arrived_date: null, pantry_item_id: null, grocery_item_id: null, pack_size: null, arrival_pack_before: null, group_id: null, group_share: 0 },
@@ -13,10 +16,19 @@ const DEFAULTS = {
   grocery_items: { completed: false, in_cart: false, auto_generated: false, pantry_item_id: null, trip_id: null, quantity: 1, unit: 'pcs' },
 }
 
+// supabase/031: the same unit → 1; kg ↔ gr, L ↔ ml; the item's usual pack.
+function unitFactor031(from, pi) {
+  if (!pi) return null
+  if ((from ?? null) === (pi.unit ?? null)) return 1
+  const metric = { 'kg>gr': 1000, 'L>ml': 1000, 'gr>kg': 0.001, 'ml>L': 0.001 }[`${from}>${pi.unit}`]
+  if (metric) return metric
+  return pi.packaging_unit === from && Number(pi.quantity_per_pack) > 0 ? Number(pi.quantity_per_pack) : null
+}
+
 const same = (a, b) => (a ?? null) === (b ?? null) || (a != null && b != null && String(a) === String(b))
 const round = (n) => Math.round(n * 100) / 100
 
-export function arrivalDb() {
+export function arrivalDb({ units = false } = {}) {
   const tables = { orders: [], pantry_items: [], stock_logs: [], grocery_items: [], expenses: [], order_groups: [] }
   const calls = []
   let clock = Date.parse('2026-10-30T09:00:00Z')
@@ -133,7 +145,8 @@ export function arrivalDb() {
     if (o.status !== 'arrived') return { ...o }
     if (o.arrived_item_id && o.stock_added > 0) {
       const pi = db.row('pantry_items', o.arrived_item_id)
-      if (pi) pi.current_stock = round(Math.max(0, (Number(pi.current_stock) || 0) - o.stock_added))
+      const factor = units ? unitFactor031(db.row('stock_logs', o.arrived_log_id)?.unit ?? pi?.unit, pi) : 1
+      if (pi && factor != null) pi.current_stock = round(Math.max(0, (Number(pi.current_stock) || 0) - o.stock_added * factor))
     }
     if (o.arrived_log_id) tables.stock_logs = tables.stock_logs.filter((l) => l.id !== o.arrived_log_id)
     Object.assign(o, { status: 'on_the_way', arrived_date: null, stock_added: 0, arrived_item_id: null, arrived_log_id: null })

@@ -11,6 +11,7 @@ import { allExpenseStores, groceryStore, pantryStore, shopStore, tripItemStore, 
 import { shopsAvailable } from '../lib/shops'
 import { refreshStartedStores } from '../lib/tableStore'
 import { purchaseUndo } from '../lib/trips'
+import { reopenNotes } from '../lib/reopenUnits'
 import { splitPurchase } from './useMerge'
 
 // Every list that a confirmation or reopen changes, reloaded afterwards.
@@ -32,18 +33,59 @@ async function expenseCategories(lines) {
 // it took off the list are "to buy" again. Expenses merged into it are
 // never deleted: they become single expenses again (the database does it).
 // Parts already deleted by hand are skipped (stock never goes below 0);
-// `note` says which, after it's done.
+// `note` says which, after it's done. From supabase/031 an item the
+// purchase created stays when it also got stock or an order from
+// elsewhere, and stock whose unit changed is converted (or not taken out
+// at all): its lines and items are read before and after, and a toast
+// names each such item (lib/reopenUnits.js; never before 031).
 export async function reopenTrip(tripId, note = null, source = 'shop') {
-  const result = await attempt(async () => must(await supabase.rpc('reopen_shopping_trip', { trip_id: tripId })), { onFail: reloadAll })
+  let seen = null
+  const result = await attempt(
+    async () => {
+      seen = await readPurchaseItems(tripId)
+      return must(await supabase.rpc('reopen_shopping_trip', { trip_id: tripId }))
+    },
+    { onFail: reloadAll }
+  )
   if (!result.error) {
     const done = source === 'money' ? 'Purchase undone — its expenses are deleted and HOME stock is back as before.' : 'Purchase reopened — the items are back in the cart.'
     showToast({ message: note ? `${done} ${note}` : done })
+    for (const message of await notesAfterReopen(seen)) showToast({ message })
     await reloadAll()
     await followUp('the shopping list', async () => {
       for (const item of pantryStore.getSnapshot().rows) await syncShoppingForItem(item)
     })
   }
   return result
+}
+
+// The purchase's lines, their HOME items and own history rows, read just
+// before Reopen (the lines go with it). Null when they can't be read: the
+// purchase is reopened all the same, only without the notes.
+async function readPurchaseItems(tripId) {
+  try {
+    const lines = must(await supabase.from('shopping_trip_items').select('*').eq('trip_id', tripId))
+    const ids = [...new Set(lines.map((l) => l.pantry_item_id).filter(Boolean))]
+    if (!ids.length) return null
+    const before = must(await supabase.from('pantry_items').select('*').in('id', ids))
+    const logIds = lines.flatMap((l) => l.log_ids ?? [])
+    const logs = logIds.length ? must(await supabase.from('stock_logs').select('id, unit, reason').in('id', logIds)) : []
+    return { lines, ids, before, logs }
+  } catch (error) {
+    console.error(error)
+    return null
+  }
+}
+
+async function notesAfterReopen(seen) {
+  if (!seen) return []
+  try {
+    const after = must(await supabase.from('pantry_items').select('*').in('id', seen.ids))
+    return reopenNotes({ ...seen, after })
+  } catch (error) {
+    console.error(error)
+    return []
+  }
 }
 
 // Asks, then undoes a purchase the way its source needs (lib/trips.js
@@ -64,7 +106,7 @@ export async function askUndoPurchase(trip, { count, total, gone = null }) {
   if (kind === 'undo') {
     const ok = await confirmDialog({
       title: 'Undo this purchase?',
-      message: `The expenses of its ${things} are deleted, and the stock it added to HOME is taken back (an item it created is removed again). Expenses merged into it stay, as single expenses.${gone ? ` ${gone}` : ''}`,
+      message: `The expenses of its ${things} are deleted, and the stock it added to HOME is taken back (an item it created is removed again, unless it also got stock or an order from elsewhere). Expenses merged into it stay, as single expenses.${gone ? ` ${gone}` : ''}`,
       confirmLabel: 'Undo purchase',
     })
     return ok ? reopenTrip(trip.id, gone, 'money') : null

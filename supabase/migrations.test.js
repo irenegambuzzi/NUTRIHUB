@@ -25,6 +25,8 @@ const { PARTS_NOTICE, PEOPLE, checkSplit, emptySplit, missingPartsColumn, partCo
 // For 030: a new item counted in another unit than the one bought, as the app asks it (lib/newItemUnit.js).
 const { missingStockUnitColumn } = await import('../src/lib/newItemUnit.js')
 const { purchasedPackLabel } = await import('../src/lib/packSize.js')
+// For 031: what the app tells after Reopen / Back on the way (lib/reopenUnits.js).
+const { arrivalNotTakenOutText, keptNotTakenOutText, keptText, notTakenOutText, reopenNotes, unarriveNote } = await import('../src/lib/reopenUnits.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -3472,10 +3474,13 @@ describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (n
     }
   }, 120000)
 
-  it('no SQL file after 028 touches them (029 and 030 replace only confirm_shopping_trip), and arrive_order / unarrive_order are still the ones of 021', async () => {
+  it('no SQL file after 028 touches them (029 and 030 replace only confirm_shopping_trip; 031 replaces unarrive_order, tested in its own block, and never arrive_order), and here arrive_order / unarrive_order are still the ones of 021', async () => {
     const later = fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f) && f >= '029').sort()
-    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql'])
-    for (const f of later) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/arrive_order/)
+    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql', '031_reopen_created_items.sql'])
+    for (const f of later.filter((f) => f < '031')) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/arrive_order/)
+    const v031 = fs.readFileSync(path.join(dir, '031_reopen_created_items.sql'), 'utf8').replace(/--.*$/gm, '')
+    expect([...v031.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['reopen_shopping_trip', 'unarrive_order'])
+    expect(v031).not.toMatch(/\barrive_order/)
     const sql = fs.readFileSync(path.join(dir, '021_connected_flow.sql'), 'utf8')
     for (const name of ['arrive_order', 'unarrive_order']) {
       const body = sql.match(new RegExp(`create or replace function ${name}\\([\\s\\S]*?as \\$\\$([\\s\\S]*?)\\$\\$;`))[1]
@@ -4312,5 +4317,603 @@ describe('030: units for a new item made by a purchase — one column on purchas
       expect(await row(`select unit, current_stock::float as stock, packaging_unit, quantity_per_pack from pantry_items where name = 'Napkins 030'`)).toEqual({ unit: 'pack', stock: 1, packaging_unit: null, quantity_per_pack: null })
       expect(await reopen(fx, id)).toBe(1)
     }
+  })
+})
+
+// 031: the lines of reopen_shopping_trip (023) and unarrive_order (021) that 031 changes, from a real diff (comments left out of the added ones).
+const REOPEN_REMOVED = [
+  "      if ti.pantry_created then",
+  "        delete from pantry_items where id = ti.pantry_item_id;",
+  "      else",
+  "        update pantry_items p set",
+  "          current_stock = greatest(0, coalesce(p.current_stock, 0) - ti.stock_added) + ti.stock_discarded,",
+  "          price = (ti.pantry_before->>'price')::numeric,",
+  "          price_qty = (ti.pantry_before->>'price_qty')::numeric,",
+  "          price_unit = ti.pantry_before->>'price_unit',",
+  "          payer = ti.pantry_before->>'payer',",
+  "          last_purchased_at = (ti.pantry_before->>'last_purchased_at')::timestamptz,",
+  "          expiry_date = (ti.pantry_before->>'expiry_date')::date,",
+  "          packaging_unit = ti.pantry_before->>'packaging_unit',",
+  "          quantity_per_pack = (ti.pantry_before->>'quantity_per_pack')::numeric",
+  "        where p.id = ti.pantry_item_id;",
+]
+const REOPEN_ADDED = [
+  "  pi pantry_items;",
+  "  v_unit text;",
+  "  v_factor numeric;",
+  "  v_elsewhere boolean;",
+  "  v_trip_logs uuid[];",
+  "  select coalesce(array_agg(l.id), '{}') into v_trip_logs",
+  "  from shopping_trip_items i cross join lateral unnest(i.log_ids) as l(id)",
+  "  where i.trip_id = reopen_shopping_trip.trip_id;",
+  "      select * into pi from pantry_items p where p.id = ti.pantry_item_id for update;",
+  "      if found then",
+  "        v_unit := coalesce(ti.stock_unit, (select l.unit from stock_logs l where l.id = any(ti.log_ids) and l.reason = 'purchased' order by l.created_at limit 1));",
+  "        v_factor := case",
+  "          when v_unit is null then case when ti.unit is not distinct from pi.unit then 1 end",
+  "          when v_unit is not distinct from pi.unit then 1",
+  "          when (v_unit, pi.unit) in (('kg', 'gr'), ('L', 'ml')) then 1000",
+  "          when (v_unit, pi.unit) in (('gr', 'kg'), ('ml', 'L')) then 0.001",
+  "          when pi.packaging_unit = v_unit and pi.quantity_per_pack > 0 then pi.quantity_per_pack",
+  "        end;",
+  "        v_unit := coalesce(v_unit, ti.unit);",
+  "        v_elsewhere := ti.pantry_created and (",
+  "          exists (select 1 from stock_logs l where l.item_id = pi.id and not (l.id = any(v_trip_logs)) and l.change > 0 and l.reason <> 'converted')",
+  "          or exists (",
+  "            select 1 from stock_logs l where l.item_id = pi.id and not (l.id = any(v_trip_logs)) and l.reason = 'converted'",
+  "              and not exists (",
+  "                select 1 from unnest(array[1, 1000, 0.001, pi.quantity_per_pack]) as f(n)",
+  "                where f.n > 0 and l.new_stock - l.change >= 0",
+  "                  and abs(l.new_stock - (l.new_stock - l.change) * f.n) <= 0.0001 * greatest(abs(l.new_stock), 1)",
+  "              )",
+  "          )",
+  "          or exists (select 1 from shopping_trip_items o where o.pantry_item_id = pi.id and o.trip_id <> reopen_shopping_trip.trip_id)",
+  "          or exists (select 1 from orders o where o.pantry_item_id = pi.id or o.arrived_item_id = pi.id)",
+  "        );",
+  "        if ti.pantry_created and not v_elsewhere then",
+  "          delete from grocery_items g",
+  "          where g.pantry_item_id = pi.id and g.auto_generated and not g.completed and not coalesce(g.in_cart, false)",
+  "            and not exists (select 1 from orders o where o.grocery_item_id = g.id and o.status = 'on_the_way')",
+  "            and not exists (select 1 from shopping_trip_items i where i.trip_id = reopen_shopping_trip.trip_id and i.grocery_item_id = g.id);",
+  "          delete from stock_logs l where l.item_id = pi.id;",
+  "          delete from pantry_items where id = ti.pantry_item_id;",
+  "        elsif ti.pantry_created then",
+  "          if v_factor is not null then",
+  "            update pantry_items p set current_stock = greatest(0, coalesce(p.current_stock, 0) - ti.stock_added * v_factor)",
+  "            where p.id = pi.id;",
+  "          end if;",
+  "        else",
+  "          update pantry_items p set",
+  "            current_stock = case when v_factor is null then p.current_stock",
+  "                                 else greatest(0, coalesce(p.current_stock, 0) - ti.stock_added * v_factor) + ti.stock_discarded * v_factor end,",
+  "            price = (ti.pantry_before->>'price')::numeric,",
+  "            price_qty = (ti.pantry_before->>'price_qty')::numeric,",
+  "            price_unit = case when v_unit is distinct from p.unit and ti.pantry_before->>'price' is not null",
+  "                              then coalesce(ti.pantry_before->>'price_unit', v_unit) else ti.pantry_before->>'price_unit' end,",
+  "            payer = ti.pantry_before->>'payer',",
+  "            last_purchased_at = (ti.pantry_before->>'last_purchased_at')::timestamptz,",
+  "            expiry_date = (ti.pantry_before->>'expiry_date')::date,",
+  "            packaging_unit = case when v_unit is distinct from p.unit then p.packaging_unit else ti.pantry_before->>'packaging_unit' end,",
+  "            quantity_per_pack = case when v_unit is distinct from p.unit then p.quantity_per_pack else (ti.pantry_before->>'quantity_per_pack')::numeric end",
+  "          where p.id = pi.id;",
+  "        end if;",
+]
+const UNARRIVE_REMOVED = [
+  "      v_stock := greatest(0, coalesce(pi.current_stock, 0) - o.stock_added);",
+  "      update pantry_items set current_stock = v_stock where id = pi.id;",
+]
+const UNARRIVE_ADDED = [
+  "  v_unit text;",
+  "  v_factor numeric;",
+  "      v_unit := coalesce((select l.unit from stock_logs l where l.id = o.arrived_log_id), pi.unit);",
+  "      v_factor := case",
+  "        when v_unit is not distinct from pi.unit then 1",
+  "        when (v_unit, pi.unit) in (('kg', 'gr'), ('L', 'ml')) then 1000",
+  "        when (v_unit, pi.unit) in (('gr', 'kg'), ('ml', 'L')) then 0.001",
+  "        when pi.packaging_unit = v_unit and pi.quantity_per_pack > 0 then pi.quantity_per_pack",
+  "      end;",
+  "      if v_factor is not null then",
+  "        v_stock := greatest(0, coalesce(pi.current_stock, 0) - o.stock_added * v_factor);",
+  "        update pantry_items set current_stock = v_stock where id = pi.id;",
+  "      end if;",
+]
+
+describe('031: Reopen of items a purchase created, and unit changes after a purchase or an arrival — reopen_shopping_trip and unarrive_order replaced', () => {
+  const file = '031_reopen_created_items.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  const [C1, C2] = PEOPLE.map(partColumn)
+  // fx gets 031; base stays at 030, to compare what must not change.
+  let fx, base, before
+  const on = (d) => ({
+    rows: async (text, params) => (await d.query(text, params)).rows,
+    row: async (text, params) => (await d.query(text, params)).rows[0],
+  })
+  const rows = (text, params) => on(fx).rows(text, params)
+  const row = (text, params) => on(fx).row(text, params)
+  async function as(d, role, userId, fn) {
+    await d.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await d.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await d.exec('reset role')
+    }
+  }
+  const member = (d, fn) => as(d, 'authenticated', MEMBER, fn)
+  const fails = async (fn) => {
+    try {
+      await fn()
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  const confirm = (d, payload) => member(d, async () => (await d.query(`select * from confirm_shopping_trip($1::jsonb)`, [payload])).rows[0])
+  const arrive = (d, order, item, qty) => member(d, async () => (await d.query(`select arrive_order($1, $2, $3, '2026-11-01') as r`, [order, item, qty])).rows[0].r)
+  const uuids = (ids) => `{${ids.join(',')}}`
+  // Reopen as the app does it (usePurchase.reopenTrip): the lines, their
+  // items and the purchase's own history rows read before, the items after,
+  // and what the toasts say (lib/reopenUnits.reopenNotes).
+  async function reopen(d, tripId) {
+    const r = on(d)
+    const lines = await r.rows(`select * from shopping_trip_items where trip_id = $1`, [tripId])
+    const ids = [...new Set(lines.map((l) => l.pantry_item_id).filter(Boolean))]
+    const items = async () => (ids.length ? r.rows(`select * from pantry_items where id = any($1::uuid[])`, [uuids(ids)]) : [])
+    const was = await items()
+    const logIds = lines.flatMap((l) => l.log_ids ?? [])
+    const logs = logIds.length ? await r.rows(`select id, unit, reason from stock_logs where id = any($1::uuid[])`, [uuids(logIds)]) : []
+    const n = await member(d, async () => (await d.query(`select reopen_shopping_trip($1) as n`, [tripId])).rows[0].n)
+    return { n, notes: reopenNotes({ lines, before: was, after: await items(), logs }) }
+  }
+  // "Back on the way" as the app does it (useOrders.unarriveOrder): the
+  // item and the arrival's own history row before, the item after.
+  async function backOnTheWay(d, orderId) {
+    const r = on(d)
+    const order = await r.row(`select * from orders where id = $1`, [orderId])
+    const item = order.arrived_item_id ? await r.row(`select * from pantry_items where id = $1`, [order.arrived_item_id]) : null
+    const log = order.arrived_log_id ? ((await r.row(`select id, unit from stock_logs where id = $1`, [order.arrived_log_id])) ?? null) : null
+    await member(d, () => d.query(`select * from unarrive_order($1)`, [orderId]))
+    const after = item ? await r.row(`select * from pantry_items where id = $1`, [item.id]) : null
+    return unarriveNote({ order, before: item, after, log })
+  }
+  const body = (text, name) => {
+    const start = text.indexOf(`create or replace function ${name}(`)
+    return text.slice(start, text.indexOf('end $$;', start) + 7).split('\n')
+  }
+  // A real line diff (longest common subsequence): the lines only in `a`
+  // and the lines only in `b`, in order.
+  const lineDiff = (a, b) => {
+    const n = a.length
+    const m = b.length
+    const lcs = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
+    const removed = []
+    const added = []
+    let i = 0
+    let j = 0
+    while (i < n && j < m) {
+      if (a[i] === b[j]) {
+        i++
+        j++
+      } else if (lcs[i + 1][j] >= lcs[i][j + 1]) removed.push(a[i++])
+      else added.push(b[j++])
+    }
+    return { removed: [...removed, ...a.slice(i)], added: [...added, ...b.slice(j)] }
+  }
+
+  const BUDGET = '31000000-0000-4000-8000-0000000000b1'
+  const id = (n) => `31000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+  const addItem = (d, itemId, name, unit, stock, extra = {}) =>
+    d.query(`insert into pantry_items (id, name, unit, current_stock, category_id, price, price_qty, price_unit, packaging_unit, quantity_per_pack) values ($1, $2, $3, $4, 'beverages', $5, $6, $7, $8, $9)`, [
+      itemId,
+      name,
+      unit,
+      stock,
+      extra.price ?? null,
+      extra.price_qty ?? null,
+      extra.price_unit ?? null,
+      extra.packaging_unit ?? null,
+      extra.quantity_per_pack ?? null,
+    ])
+  const addEntry = (d, entryId, name, { quantity = 1, unit = 'pack', price = 3, pantry = null, inCart = true, auto = false } = {}) =>
+    d.query(`insert into grocery_items (id, name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, auto_generated, category_id, payer) values ($1, $2, $3, $4, $5, $3, $4, $6, $7, $8, 'beverages', 'shared')`, [entryId, name, quantity, unit, price, pantry, inCart, auto])
+  const addOrder = (d, orderId, name, { pantry = null, entry = null, status = 'on_the_way' } = {}) =>
+    d.query(`insert into orders (id, item_name, price, pantry_item_id, grocery_item_id, status) values ($1, $2, 5, $3, $4, $5)`, [orderId, name, pantry, entry, status])
+  // A SHOP purchase of cart entries ([{ entry, add, total, pantry, extra }]),
+  // as confirmationPayload sends it.
+  const shop = (d, tripId, lines) =>
+    confirm(d, {
+      id: tripId,
+      trip_date: '2026-11-01',
+      at: '2026-11-01T10:00:00Z',
+      items: lines.map((l) => ({ grocery_item_id: l.entry, line_total: l.total ?? 3, payer: 'shared', expense_category_id: BUDGET, durable: false, pantry_item_id: l.pantry ?? null, add: l.add, ...l.extra })),
+    })
+  const idOf = async (d, name) => (await on(d).row(`select id from pantry_items where name = $1`, [name]))?.id ?? null
+  // HOME "Edit item" → "Convert with the pack size" (n of `to` in 1 of the
+  // old unit), as usePantryItems.updateItem saves it (plan 9L K8 / K11):
+  // counted in `to`, stock and minimum × n, the usual pack = the old unit ×
+  // n, the price still per the old unit, one "Unit changed" row.
+  async function convert(d, itemId, to, n) {
+    const p = await on(d).row(`select name, unit, current_stock::float as stock from pantry_items where id = $1`, [itemId])
+    const next = p.stock * n
+    await d.query(`update pantry_items set unit = $2, current_stock = $3, min_stock = min_stock * $4, packaging_unit = $5, quantity_per_pack = $4, price_unit = coalesce(price_unit, $5) where id = $1`, [itemId, to, next, n, p.unit])
+    await d.query(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, $2, $3, $4, $5, 'converted')`, [itemId, p.name, Math.round((next - p.stock) * 100) / 100, next, to])
+  }
+  // "Keep the numbers as they are": only the unit changes, no history row (9L K11).
+  const keepNumbers = (d, itemId, to) => d.query(`update pantry_items set unit = $2 where id = $1`, [itemId, to])
+  // − / + on the tile, or a stock typed in "Edit item": the stock and its one
+  // history row (lib/inventory.stockChangeWithLog).
+  async function change(d, itemId, delta, reason) {
+    const p = await on(d).row(`update pantry_items set current_stock = greatest(0, current_stock + $2) where id = $1 returning name, unit, current_stock`, [itemId, delta])
+    await d.query(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, $2, $3, $4, $5, $6)`, [itemId, p.name, delta, p.current_stock, p.unit, reason])
+  }
+  const itemOf = (d, name) => on(d).row(`select unit, current_stock::float as stock, packaging_unit, quantity_per_pack::float as per, price::float as price, price_unit from pantry_items where name = $1`, [name])
+  const logsOf = (d, name) => on(d).rows(`select item_id is not null as linked, change::float as change, new_stock::float as stock, unit, reason from stock_logs where item_name = $1 order by created_at, change`, [name])
+  const entryOf = (d, entryId) => on(d).row(`select completed, in_cart, pantry_item_id is not null as linked from grocery_items where id = $1`, [entryId])
+  const expensesOf = async (d, tripId) => (await on(d).row(`select count(*)::int as n from expenses where trip_id = $1`, [tripId])).n
+  // Everything a case touches, by its name tag, without ids made by the database.
+  const everything = async (d, tag) => {
+    const r = on(d).rows
+    const like = `% ${tag}`
+    return {
+      pantry: await r(`select name, unit, current_stock::float as stock, min_stock::float as min, packaging_unit, quantity_per_pack::float as per, price::float as price, price_qty::float as qty, price_unit, payer, expiry_date::text as expiry from pantry_items where name like $1 order by name`, [like]),
+      logs: await r(`select item_name, item_id is not null as linked, change::float as change, new_stock::float as stock, unit, reason from stock_logs where item_name like $1 order by item_name, change, reason`, [like]),
+      grocery: await r(`select id, completed, in_cart, pantry_item_id is not null as linked, expense_id is not null as has_expense, trip_id from grocery_items where name like $1 order by id`, [like]),
+      expenses: await r(`select description, amount::float as amount, paid_by, trip_id, merged_at is not null as merged, ${C1}::float as a, ${C2}::float as b from expenses where description like $1 order by description, amount`, [like]),
+      orders: await r(`select id, status, stock_added::float as added, arrived_item_id is not null as arrived_in, arrived_log_id is not null as logged from orders where item_name like $1 order by id`, [like]),
+      lines: await r(`select trip_id, position, name, stock_added::float as added, stock_unit, pantry_created from shopping_trip_items where name like $1 order by trip_id, position`, [like]),
+    }
+  }
+  const untouched = async () => ({
+    functions: await rows(`select p.proname, md5(p.prosrc) as src, p.proconfig::text as config, p.prosecdef, p.proacl::text as acl from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname not in ('reopen_shopping_trip', 'unarrive_order') order by 1, 2`),
+    replaced: await rows(`select p.proname, p.proconfig::text as config, p.prosecdef, p.proacl::text as acl, pg_get_function_identity_arguments(p.oid) as args, pg_get_function_result(p.oid) as result from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname in ('reopen_shopping_trip', 'unarrive_order') order by 1`),
+    policies: await rows(`select tablename, policyname, cmd, roles::text, qual, with_check from pg_policies order by 1, 2`),
+    grants: await rows(`select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by 1, 2, 3`),
+    functionGrants: await rows(`select routine_name, grantee, privilege_type from information_schema.role_routine_grants where routine_schema = 'public' order by 1, 2, 3`),
+    columns: await rows(`select table_name, column_name, data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' order by 1, 2`),
+    data: await rows(
+      ['pantry_items', 'stock_logs', 'grocery_items', 'expenses', 'shopping_trips', 'shopping_trip_items', 'orders']
+        .map((t) => `select '${t}' as t, md5(coalesce(string_agg(to_jsonb(x)::text, ',' order by x.id), '')) as h from ${t} x`)
+        .join(' union all ')
+    ),
+  })
+
+  beforeAll(async () => {
+    const make = async () => {
+      const d = await newDatabase()
+      for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-9]|30)_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+        await d.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+      }
+      await d.query(`insert into expense_categories (id, name) values ($1, 'Groceries 031')`, [BUDGET])
+      // A purchase from before 031, never changed by it.
+      await addEntry(d, id(901), 'Before 031 x', {})
+      await shop(d, id(902), [{ entry: id(901), add: 1 }])
+      return d
+    }
+    ;[fx, base] = await Promise.all([make(), make()])
+    before = await untouched()
+  }, 180000)
+
+  it('replaces only reopen_shopping_trip and unarrive_order — in one transaction; no table, column, policy, grant or data change; ends with one check and "-- End of 031"', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    // Outside the function bodies, and outside the check's texts.
+    const outside = code.replace(/as \$\$[\s\S]*?end \$\$;/g, '').replace(/'(?:[^']|'')*'/g, "''")
+    expect([...code.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['reopen_shopping_trip', 'unarrive_order'])
+    expect(code).not.toMatch(/create table|alter table|drop |policy|\bgrant\b|\brevoke\b|security definer|truncate|confirm_shopping_trip|\barrive_order/i)
+    expect(outside).not.toMatch(/\b(insert into|update \w+ set|delete from)\b/i)
+    const at = (text) => code.indexOf(text)
+    expect(code.match(/^begin;$/gm)).toHaveLength(1)
+    expect(code.match(/^commit;$/gm)).toHaveLength(1)
+    expect(at('begin;')).toBeLessThan(at('create or replace function'))
+    expect(at('commit;')).toBeGreaterThan(code.lastIndexOf('end $$;'))
+    expect(code.match(/^select /gm)).toHaveLength(1)
+    expect(at('commit;')).toBeLessThan(code.search(/^select /m))
+    expect(sql.trimEnd().split('\n').at(-1)).toBe('-- End of 031')
+  })
+
+  it('reopen_shopping_trip: the 023 version (the last one) except exactly these lines (a real line diff)', () => {
+    const { removed, added } = lineDiff(body(fs.readFileSync(path.join(dir, '023_oct_2026_features.sql'), 'utf8'), 'reopen_shopping_trip'), body(sql, 'reopen_shopping_trip'))
+    expect(removed).toEqual(REOPEN_REMOVED)
+    expect(added.filter((l) => !/^\s*--/.test(l))).toEqual(REOPEN_ADDED)
+    // Nothing later than 023 defines it.
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(2[4-9]|30)_.*\.sql$/.test(f))) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/create or replace function reopen_shopping_trip/)
+  })
+
+  it('unarrive_order: the 021 version (the last one) except exactly these lines (a real line diff)', () => {
+    const { removed, added } = lineDiff(body(fs.readFileSync(path.join(dir, '021_connected_flow.sql'), 'utf8'), 'unarrive_order'), body(sql, 'unarrive_order'))
+    expect(removed).toEqual(UNARRIVE_REMOVED)
+    expect(added.filter((l) => !/^\s*--/.test(l))).toEqual(UNARRIVE_ADDED)
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(2[2-9]|30)_.*\.sql$/.test(f))) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/create or replace function unarrive_order/)
+  })
+
+  it('before 031 (the app is deployed first): Reopen deletes the created item but leaves its "Unit changed" row, and the app says nothing new', async () => {
+    await addEntry(base, id(801), 'Plonk before', {})
+    await shop(base, id(802), [{ entry: id(801), add: 1 }])
+    await convert(base, await idOf(base, 'Plonk before'), 'pcs', 4)
+    expect(await reopen(base, id(802))).toEqual({ n: 1, notes: [] })
+    expect(await idOf(base, 'Plonk before')).toBeNull()
+    expect(await logsOf(base, 'Plonk before')).toEqual([{ linked: false, change: 3, stock: 4, unit: 'pcs', reason: 'converted' }])
+    await base.query(`delete from stock_logs where item_name = 'Plonk before'`)
+    await base.query(`delete from grocery_items where id = $1`, [id(801)])
+  })
+
+  it('run twice: every check is ok; other functions, policies, grants, columns and data unchanged; anon gets nothing', async () => {
+    const first = await run()
+    const second = await run()
+    expect(first.map((r) => [r.object, r.status])).toEqual([
+      ["function reopen_shopping_trip(uuid): converts the line's stock to the item's unit (031)", 'ok'],
+      ['function reopen_shopping_trip(uuid): a created item untouched: all its history goes with it', 'ok'],
+      ['function reopen_shopping_trip(uuid): a created item untouched: its automatic "to buy" entries go too', 'ok'],
+      ['function reopen_shopping_trip(uuid): returns integer', 'ok'],
+      ['function reopen_shopping_trip(uuid): search_path = public', 'ok'],
+      ['function reopen_shopping_trip(uuid): security invoker', 'ok'],
+      ['function reopen_shopping_trip(uuid): household check (42501)', 'ok'],
+      ['function reopen_shopping_trip(uuid): anon none, authenticated can run it', 'ok'],
+      ["function unarrive_order(uuid): converts the arrival's stock to the item's unit (031)", 'ok'],
+      ['function unarrive_order(uuid): returns orders', 'ok'],
+      ['function unarrive_order(uuid): search_path = public', 'ok'],
+      ['function unarrive_order(uuid): security invoker', 'ok'],
+      ['function unarrive_order(uuid): household check (42501)', 'ok'],
+      ['function unarrive_order(uuid): anon none, authenticated can run it', 'ok'],
+    ])
+    expect(second).toEqual(first)
+    expect(first.length).toBeLessThan(100)
+    expect(await untouched()).toEqual(before)
+    for (const call of [`select reopen_shopping_trip('${id(902)}')`, `select unarrive_order('${id(902)}')`]) {
+      expect(await as(fx, 'anon', null, () => fails(() => fx.query(call)))).toMatch(/permission denied/)
+    }
+  })
+
+  it('the household check: a logged-in stranger is refused (42501) by both, and nothing changes', async () => {
+    const snapshot = await untouched()
+    for (const call of [`select reopen_shopping_trip('${id(902)}')`, `select unarrive_order('${id(902)}')`]) {
+      expect(await as(fx, 'authenticated', STRANGER, () => fails(() => fx.query(call)))).toMatch(/Not allowed: log in with the household account/)
+    }
+    expect(await untouched()).toEqual(snapshot)
+  })
+
+  it('1: created "1 pack", "Unit changed" to 4 pcs, then Reopen → the item, ALL its history and its automatic "to buy" entry are gone; entries in a cart, ordered or typed by hand stay; its own entry is back in the cart; the expense is gone', async () => {
+    const [entry, trip, auto, inCart, typed, ordered, order] = [id(11), id(12), id(13), id(14), id(15), id(16), id(17)]
+    await addEntry(fx, entry, 'Plonk 031 c1')
+    await shop(fx, trip, [{ entry, add: 1 }])
+    const plonk = await idOf(fx, 'Plonk 031 c1')
+    await convert(fx, plonk, 'pcs', 4)
+    expect(await itemOf(fx, 'Plonk 031 c1')).toMatchObject({ unit: 'pcs', stock: 4, packaging_unit: 'pack', per: 4 })
+    await addEntry(fx, auto, 'Plonk 031 c1', { pantry: plonk, inCart: false, auto: true })
+    await addEntry(fx, inCart, 'Plonk 031 c1', { pantry: plonk, inCart: true, auto: true })
+    await addEntry(fx, typed, 'Plonk 031 c1', { pantry: plonk, inCart: false, auto: false })
+    await addEntry(fx, ordered, 'Plonk 031 c1', { pantry: plonk, inCart: false, auto: true })
+    await addOrder(fx, order, 'Ordered 031 c1', { entry: ordered })
+    expect(await expensesOf(fx, trip)).toBe(1)
+    expect(await reopen(fx, trip)).toEqual({ n: 1, notes: [] })
+    expect(await idOf(fx, 'Plonk 031 c1')).toBeNull()
+    expect(await logsOf(fx, 'Plonk 031 c1')).toEqual([])
+    expect(await entryOf(fx, auto)).toBeUndefined()
+    expect(await entryOf(fx, entry)).toEqual({ completed: false, in_cart: true, linked: false })
+    expect(await entryOf(fx, inCart)).toEqual({ completed: false, in_cart: true, linked: false })
+    expect(await entryOf(fx, typed)).toEqual({ completed: false, in_cart: false, linked: false })
+    expect(await entryOf(fx, ordered)).toEqual({ completed: false, in_cart: false, linked: false })
+    expect(await expensesOf(fx, trip)).toBe(0)
+    expect(await row(`select count(*)::int as n from shopping_trips where id = $1`, [trip])).toEqual({ n: 0 })
+  })
+
+  it('2: created "2 pack", one "Used", then Reopen → the item and all its history are gone', async () => {
+    await addEntry(fx, id(21), 'Plonk 031 c2', { quantity: 2 })
+    await shop(fx, id(22), [{ entry: id(21), add: 2 }])
+    await change(fx, await idOf(fx, 'Plonk 031 c2'), -1, 'used')
+    expect((await logsOf(fx, 'Plonk 031 c2')).map((l) => l.reason)).toEqual(['purchased', 'used'])
+    expect(await reopen(fx, id(22))).toEqual({ n: 1, notes: [] })
+    expect(await idOf(fx, 'Plonk 031 c2')).toBeNull()
+    expect(await logsOf(fx, 'Plonk 031 c2')).toEqual([])
+  })
+
+  it('3: created "1 pack", another purchase +2 pack, Reopen of the first → kept with 2 pack; the other purchase\'s history, line and expense untouched', async () => {
+    await addEntry(fx, id(31), 'Plonk 031 c3')
+    await shop(fx, id(32), [{ entry: id(31), add: 1 }])
+    const plonk = await idOf(fx, 'Plonk 031 c3')
+    await addEntry(fx, id(33), 'Plonk 031 c3', { quantity: 2, price: 6, pantry: plonk })
+    await shop(fx, id(34), [{ entry: id(33), add: 2, total: 6, pantry: plonk }])
+    expect(await itemOf(fx, 'Plonk 031 c3')).toMatchObject({ unit: 'pack', stock: 3 })
+    expect(await reopen(fx, id(32))).toEqual({ n: 1, notes: [keptText('Plonk 031 c3', '1 pack')] })
+    expect(keptText('Plonk 031 c3', '1 pack')).toBe('"Plonk 031 c3" stays in HOME — it also got stock or an order from elsewhere; this purchase\'s 1 pack were taken out.')
+    expect(await itemOf(fx, 'Plonk 031 c3')).toMatchObject({ unit: 'pack', stock: 2 })
+    expect(await logsOf(fx, 'Plonk 031 c3')).toEqual([{ linked: true, change: 2, stock: 3, unit: 'pack', reason: 'purchased' }])
+    expect(await rows(`select amount::float as amount from expenses where trip_id = $1`, [id(34)])).toEqual([{ amount: 6 }])
+    expect(await rows(`select pantry_item_id = $2 as same, stock_added::float as added from shopping_trip_items where trip_id = $1`, [id(34), plonk])).toEqual([{ same: true, added: 2 }])
+    expect(await entryOf(fx, id(31))).toEqual({ completed: false, in_cart: true, linked: true })
+    expect(await expensesOf(fx, id(32))).toBe(0)
+  })
+
+  it('4: created "1 pack", converted to 4 pcs (1 pack = 4), another purchase +8 pcs (12 pcs), Reopen of the first → 8 pcs, kept with "1 pack = 4"', async () => {
+    await addEntry(fx, id(41), 'Plonk 031 c4')
+    await shop(fx, id(42), [{ entry: id(41), add: 1 }])
+    const plonk = await idOf(fx, 'Plonk 031 c4')
+    await convert(fx, plonk, 'pcs', 4)
+    await addEntry(fx, id(43), 'Plonk 031 c4', { quantity: 2, price: 6, pantry: plonk })
+    await shop(fx, id(44), [{ entry: id(43), add: 8, total: 6, pantry: plonk }])
+    expect(await itemOf(fx, 'Plonk 031 c4')).toMatchObject({ unit: 'pcs', stock: 12 })
+    expect(await reopen(fx, id(42))).toEqual({ n: 1, notes: [keptText('Plonk 031 c4', '4 pcs')] })
+    expect(await itemOf(fx, 'Plonk 031 c4')).toMatchObject({ unit: 'pcs', stock: 8, packaging_unit: 'pack', per: 4 })
+    expect((await logsOf(fx, 'Plonk 031 c4')).map((l) => [l.reason, l.change, l.unit])).toEqual([
+      ['converted', 3, 'pcs'],
+      ['purchased', 8, 'pcs'],
+    ])
+  })
+
+  it('5–7: created, then "Adjusted" +2, a "+" restock, or an order pointing to it (any status) → kept, this purchase\'s 1 pack taken out', async () => {
+    const cases = [
+      ['c5', (p) => change(fx, p, 2, 'edited'), 2],
+      ['c6', (p) => change(fx, p, 1, 'restocked'), 1],
+      ['c7', (p) => addOrder(fx, id(79), 'Order 031 c7', { pantry: p, status: 'cancelled' }), 0],
+    ]
+    for (const [k, [tag, touch, more]] of cases.entries()) {
+      const name = `Plonk 031 ${tag}`
+      await addEntry(fx, id(50 + k * 2), name)
+      await shop(fx, id(51 + k * 2), [{ entry: id(50 + k * 2), add: 1 }])
+      await touch(await idOf(fx, name))
+      expect(await reopen(fx, id(51 + k * 2))).toEqual({ n: 1, notes: [keptText(name, '1 pack')] })
+      expect(await itemOf(fx, name)).toMatchObject({ unit: 'pack', stock: more })
+    }
+  })
+
+  it('8: an existing item 1 pack + a purchase of 1 pack, converted to 8 pcs (1 pack = 4), Reopen → 4 pcs, the usual "1 pack = 4" kept, the price still per 1 pack (030: 7 pcs and no usual size)', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(81), 'Fizz 031 c8', 'pack', 1, { price: 3, price_qty: 1 })
+      await addEntry(d, id(82), 'Fizz 031 c8', { pantry: id(81) })
+      await shop(d, id(83), [{ entry: id(82), add: 1, pantry: id(81) }])
+      await convert(d, id(81), 'pcs', 4)
+      expect(await itemOf(d, 'Fizz 031 c8')).toEqual({ unit: 'pcs', stock: 8, packaging_unit: 'pack', per: 4, price: 3, price_unit: 'pack' })
+    }
+    expect(await reopen(fx, id(83))).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(fx, 'Fizz 031 c8')).toEqual({ unit: 'pcs', stock: 4, packaging_unit: 'pack', per: 4, price: 3, price_unit: 'pack' })
+    expect(await reopen(base, id(83))).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(base, 'Fizz 031 c8')).toEqual({ unit: 'pcs', stock: 7, packaging_unit: null, per: null, price: 3, price_unit: null })
+  })
+
+  it('9: converted with "Keep the numbers as they are" and no usual size → nothing taken out, and the app says so (030: taken out in the wrong unit, nothing said)', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(91), 'Gum 031 c9', 'pack', 1)
+      await addEntry(d, id(92), 'Gum 031 c9', { pantry: id(91) })
+      await shop(d, id(93), [{ entry: id(92), add: 1, pantry: id(91) }])
+      await keepNumbers(d, id(91), 'pcs')
+    }
+    expect(await reopen(fx, id(93))).toEqual({ n: 1, notes: [notTakenOutText('Gum 031 c9')] })
+    expect(notTakenOutText('Gum 031 c9')).toBe('"Gum 031 c9": this purchase\'s stock couldn\'t be taken out (its unit changed) — check it in HOME.')
+    expect(await itemOf(fx, 'Gum 031 c9')).toMatchObject({ unit: 'pcs', stock: 2 })
+    expect(await logsOf(fx, 'Gum 031 c9')).toEqual([])
+    expect(await reopen(base, id(93))).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(base, 'Gum 031 c9')).toMatchObject({ unit: 'pcs', stock: 1 })
+
+    // A created item kept (another purchase), its unit changed the same way: kept, nothing taken out.
+    await addEntry(fx, id(94), 'Gum 031 c9b')
+    await shop(fx, id(95), [{ entry: id(94), add: 1 }])
+    const gum = await idOf(fx, 'Gum 031 c9b')
+    await addEntry(fx, id(96), 'Gum 031 c9b', { pantry: gum })
+    await shop(fx, id(97), [{ entry: id(96), add: 1, pantry: gum }])
+    await keepNumbers(fx, gum, 'pcs')
+    expect(await reopen(fx, id(95))).toEqual({ n: 1, notes: [keptNotTakenOutText('Gum 031 c9b')] })
+    expect(await itemOf(fx, 'Gum 031 c9b')).toMatchObject({ unit: 'pcs', stock: 2 })
+  })
+
+  it('10: lines saved before 030 (stock_unit empty) with no unit change → exactly as today: an existing item with expired stock thrown away, a 9H "2 pack" × 4 into pcs, a new item', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(101), 'Milk 031 c10', 'btl', 2, { price: 1, price_qty: 1, price_unit: 'btl' })
+      await addItem(d, id(102), 'Cola 031 c10', 'pcs', 3, { packaging_unit: 'pack', quantity_per_pack: 4 })
+      await addEntry(d, id(103), 'Milk 031 c10', { unit: 'btl', price: 1.2, pantry: id(101) })
+      await addEntry(d, id(104), 'Cola 031 c10', { quantity: 2, price: 6, pantry: id(102) })
+      await addEntry(d, id(105), 'Bread 031 c10', { unit: 'pcs', price: 2 })
+      await shop(d, id(106), [
+        { entry: id(103), add: 1, total: 1.2, pantry: id(101), extra: { discard_expired: true } },
+        { entry: id(104), add: 8, total: 6, pantry: id(102) },
+        { entry: id(105), add: 1, total: 2 },
+      ])
+      await d.query(`update shopping_trip_items set stock_unit = null where trip_id = $1`, [id(106)])
+    }
+    expect(await everything(fx, 'c10')).toEqual(await everything(base, 'c10'))
+    expect(await itemOf(fx, 'Milk 031 c10')).toMatchObject({ stock: 1 })
+    expect(await itemOf(fx, 'Cola 031 c10')).toMatchObject({ stock: 11 })
+    expect(await reopen(fx, id(106))).toEqual({ n: 3, notes: [] })
+    expect(await reopen(base, id(106))).toEqual({ n: 3, notes: [] })
+    const after = await everything(fx, 'c10')
+    expect(after).toEqual(await everything(base, 'c10'))
+    expect(after.pantry.map((p) => [p.name, p.stock, p.price])).toEqual([
+      ['Cola 031 c10', 3, null],
+      ['Milk 031 c10', 2, 1],
+    ])
+    expect(after.logs).toEqual([])
+  })
+
+  it('10b (Kata ragu): a line before 030 whose "Bought" row was deleted by hand, "2 pack" into an item counted in pcs → nothing taken out and said so (030: −8 pcs)', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(111), 'Cola 031 c10b', 'pcs', 3, { packaging_unit: 'pack', quantity_per_pack: 4 })
+      await addEntry(d, id(112), 'Cola 031 c10b', { quantity: 2, price: 6, pantry: id(111) })
+      await shop(d, id(113), [{ entry: id(112), add: 8, total: 6, pantry: id(111) }])
+      await d.query(`update shopping_trip_items set stock_unit = null where trip_id = $1`, [id(113)])
+      await d.query(`delete from stock_logs where item_id = $1`, [id(111)])
+    }
+    expect(await reopen(fx, id(113))).toEqual({ n: 1, notes: [notTakenOutText('Cola 031 c10b')] })
+    expect(await itemOf(fx, 'Cola 031 c10b')).toMatchObject({ stock: 11 })
+    expect(await reopen(base, id(113))).toEqual({ n: 1, notes: [] })
+    expect(await itemOf(base, 'Cola 031 c10b')).toMatchObject({ stock: 3 })
+  })
+
+  it('11: "Back on the way" after an arrival of +1 pack and a conversion to pcs (1 pack = 4) → −4 pcs; not convertible → nothing taken out and said so; no unit change → as 021', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(121), 'Soap 031 c11', 'pack', 2)
+      await addOrder(d, id(122), 'Soap 031 c11')
+      await arrive(d, id(122), id(121), 1)
+      await convert(d, id(121), 'pcs', 4)
+      await addItem(d, id(123), 'Wipes 031 c11', 'pack', 2)
+      await addOrder(d, id(124), 'Wipes 031 c11')
+      await arrive(d, id(124), id(123), 1)
+      await keepNumbers(d, id(123), 'pcs')
+      await addItem(d, id(125), 'Tea 031 c11', 'pcs', 2)
+      await addOrder(d, id(126), 'Tea 031 c11', { pantry: id(125) })
+      await arrive(d, id(126), id(125), 3)
+    }
+    expect(await itemOf(fx, 'Soap 031 c11')).toMatchObject({ unit: 'pcs', stock: 12, per: 4 })
+    expect(await backOnTheWay(fx, id(122))).toBeNull()
+    expect(await itemOf(fx, 'Soap 031 c11')).toMatchObject({ unit: 'pcs', stock: 8, packaging_unit: 'pack', per: 4 })
+    expect(await backOnTheWay(base, id(122))).toBeNull()
+    expect(await itemOf(base, 'Soap 031 c11')).toMatchObject({ unit: 'pcs', stock: 11 })
+
+    expect(await backOnTheWay(fx, id(124))).toBe(arrivalNotTakenOutText('Wipes 031 c11'))
+    expect(arrivalNotTakenOutText('Wipes 031 c11')).toBe('"Wipes 031 c11": this arrival\'s stock couldn\'t be taken out (its unit changed) — check it in HOME.')
+    expect(await itemOf(fx, 'Wipes 031 c11')).toMatchObject({ unit: 'pcs', stock: 3 })
+    expect(await backOnTheWay(base, id(124))).toBeNull()
+    expect(await itemOf(base, 'Wipes 031 c11')).toMatchObject({ unit: 'pcs', stock: 2 })
+
+    expect(await backOnTheWay(fx, id(126))).toBeNull()
+    expect(await backOnTheWay(base, id(126))).toBeNull()
+    const after = await everything(fx, 'c11')
+    expect(after.orders.map((o) => o.status)).toEqual(['on_the_way', 'on_the_way', 'on_the_way'])
+    expect(after.logs.filter((l) => l.reason === 'purchased')).toEqual([])
+    expect(after.pantry.find((p) => p.name === 'Tea 031 c11')).toMatchObject({ stock: 2 })
+    expect({ ...after, pantry: after.pantry.filter((p) => p.name === 'Tea 031 c11') }).toEqual({ ...(await everything(base, 'c11')), pantry: (await everything(base, 'c11')).pantry.filter((p) => p.name === 'Tea 031 c11') })
+  })
+
+  it('12: Shared parts (029), merged expenses, a MONEY purchase closing a "to buy" entry, and the 9J arrival rules → exactly as 030', async () => {
+    for (const d of [fx, base]) {
+      await addItem(d, id(131), 'Rice 031 c12', 'gr', 500, { price: 2.5, price_qty: 1, price_unit: 'kg' })
+      await addEntry(d, id(132), 'Rice 031 c12', { unit: 'kg', price: 2.5, pantry: id(131) })
+      await addEntry(d, id(133), 'Soda 031 c12', { price: 3 })
+      await shop(d, id(134), [
+        { entry: id(132), add: 1000, total: 2.5, pantry: id(131), extra: { [C1]: 1.25, [C2]: 1.25 } },
+        { entry: id(133), add: 1, total: 3, extra: { [C1]: 1, [C2]: 2 } },
+      ])
+      await d.query(`insert into expenses (id, category_id, amount, description, paid_by, expense_date) values ($1, $2, 2, 'Snack 031 c12', 'shared', '2026-11-01')`, [id(135), BUDGET])
+      await member(d, () => d.query(`select merge_expenses_into_purchase($1::jsonb)`, [{ trip_id: id(134), expense_ids: [id(135)] }]))
+      // MONEY: a new item, closing its automatic "to buy" entry.
+      await addEntry(d, id(136), 'Eggs 031 c12', { unit: 'box', inCart: false, auto: true })
+      await confirm(d, {
+        id: id(137),
+        trip_date: '2026-11-01',
+        source: 'money',
+        paid_by: 'shared',
+        items: [{ name: 'Eggs 031 c12', category_id: 'dairy', quantity: 1, unit: 'box', price: 2.9, price_qty: 1, price_unit: 'box', line_total: 2.9, payer: 'shared', expense_category_id: BUDGET, durable: false, pantry_item_id: null, add: 1, list_entry_id: id(136) }],
+      })
+      // 9J: an arrival into a new item made by the app (stock 0 first), then Back on the way.
+      await addItem(d, id(138), 'Catnip 031 c12', 'pcs', 0)
+      await addOrder(d, id(139), 'Catnip 031 c12')
+      await arrive(d, id(139), id(138), 2)
+    }
+    expect(await everything(fx, 'c12')).toEqual(await everything(base, 'c12'))
+    expect(await rows(`select ${C1}::float as a, ${C2}::float as b from expenses where trip_id = $1 and description = 'Soda 031 c12'`, [id(134)])).toEqual([{ a: 1, b: 2 }])
+    for (const d of [fx, base]) {
+      expect(await reopen(d, id(134))).toEqual({ n: 2, notes: [] })
+      expect(await reopen(d, id(137))).toEqual({ n: 1, notes: [] })
+      expect(await backOnTheWay(d, id(139))).toBeNull()
+    }
+    const after = await everything(fx, 'c12')
+    expect(after).toEqual(await everything(base, 'c12'))
+    expect(after.expenses).toEqual([{ description: 'Snack 031 c12', amount: 2, paid_by: 'shared', trip_id: null, merged: false, a: null, b: null }])
+    expect(after.pantry.map((p) => [p.name, p.stock])).toEqual([
+      ['Catnip 031 c12', 0],
+      ['Rice 031 c12', 500],
+    ])
+    expect(after.grocery.find((g) => g.id === id(136))).toEqual({ id: id(136), completed: false, in_cart: false, linked: false, has_expense: false, trip_id: null })
+    expect(after.logs).toEqual([])
   })
 })

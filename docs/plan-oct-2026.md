@@ -33,6 +33,8 @@ Contents
      SQL 029) and the SHOP search field (NOTE 1); follow-up 01/11: K14–K21,
      K8b, and the order of the next rounds
    - 9L. Units for new items (decided 01/11, as built; NEW NOTE 1, SQL 030)
+   - 9M. Reopen of items a purchase created (decided 01/11, as built; SQL
+     031): K25–K31
 10. Risks and decisions
 
 ---
@@ -3995,7 +3997,11 @@ fake database that can't answer now means "not known".
    (so it counts packs). Read-only analysis first.~~ **Analysed 01/11
    (`tmp-export/units-readonly-report.md`), built 01/11 — section 9L**
    (SQL 030 written, not run yet).
-3. Round 6D (one item, many names; section 9D). **Next.**
+2b. ~~Reopen / Undo purchase of items a purchase created, and unit changes
+   after a purchase or an arrival (seen in the iPhone test of 9L).~~
+   **Analysed 01/11 (`tmp-export/reopen-history-readonly-report.md`), built
+   01/11 — section 9M** (SQL 031 written, not run yet).
+3. Round 6D (one item, many names; section 9D). **Next, after 9M.**
 4. **MONEY display round**: notes 4 + 5 (in the plan's "Later" / 9F
    notes) plus NEW NOTES 2 + 3: in Money, the charts first; then "Totals
    per category" as a closed bar that opens on tap (like "History (N)" in
@@ -4364,6 +4370,280 @@ purchase lines with stock_unit).
 ### iPhone checklist for round 9L
 
 Written by Claude after 030 has been checked and run.
+
+iPhone test of 9L done 01/11/2026: all OK except the leftover history row after Reopen (→ 9M).
+
+### 9M. Reopen of items a purchase created (decided 01/11, as built)
+
+Seen on the iPhone in the 9L test (01/11): SHOP "Confirm purchase" made a
+new HOME item (1 pack), "Edit item" converted it to 4 pcs, "Reopen
+purchase" deleted the item and its "Bought" row, but the "Unit changed" row
+stayed in Home → History. Analysis: `tmp-export/reopen-history-readonly-
+report.md` (01/11, read only, A–H). The household chose **option D** and
+K25–K31 below; where they differ from the report, they win. SQL:
+`supabase/031_reopen_created_items.sql` (not run yet; the household runs it
+after Claude has checked it, after 030). The app is deployed before 031 and
+works exactly as today until it has run, also with an older app version on
+the other phone. No new browser storage, no new offline queue.
+
+Last definitions (checked with `grep` on every `supabase/*.sql`):
+`reopen_shopping_trip` — `supabase/023_oct_2026_features.sql` lines
+567–648 (024–030 don't touch it); `unarrive_order` —
+`supabase/021_connected_flow.sql` lines 336–376 (022–030 don't touch it).
+Both are security invoker. 031 replaces only these two.
+
+**K25 — option D.** Reopen / "Undo purchase" / the Undo toast (all
+`reopen_shopping_trip`), a line that CREATED its item (`pantry_created`):
+
+- not touched from elsewhere (K26) → the item is deleted with EVERY history
+  row of it (`stock_logs.item_id` = the item) and its automatic "to buy"
+  SHOP entries (K31): "this purchase never happened";
+- touched from elsewhere → the item is KEPT: only this line's stock comes
+  out (converted, K27), only this line's own history rows (`log_ids`) go,
+  the other rows stay, and a toast says so (see "Texts").
+
+**K26 — "touched from elsewhere"** = any of: a history row of the item that
+is not a row of this purchase's lines and put stock in (`change > 0`, any
+reason but `converted`: Bought by another purchase or an arrival,
+Restocked by "+" / "Add bought stock", Adjusted up); another purchase's line
+pointing to the item; ANY order pointing to it (`pantry_item_id` or
+`arrived_item_id`, any status). Not elsewhere: Used, Discarded, a "Unit
+changed" row that is a plain conversion. A "Unit changed" row whose numbers
+are NOT a plain conversion (new stock ≠ old × 1, × 1000, × 0.001 or × the
+item's pack size now, within 0.0001 of the new stock — e.g. a stock typed in
+the same save, 9L K18) counts as elsewhere: the item is kept (Kata ragu).
+
+**K27 — the stock of a kept item after a unit change.** The line's
+`stock_added` is converted from the unit it was counted in —
+`shopping_trip_items.stock_unit` (030); for an older line the unit of its own
+"Bought" row; without either, the line's own unit, and then ONLY when that
+is the item's unit (Kata ragu) — to the item's unit now: same unit → as is;
+kg ↔ gr, L ↔ ml → × 1000 / × 0.001; the item's usual pack (`packaging_unit`
+= that unit, `quantity_per_pack` = n > 0) → × n. No conversion → nothing is
+taken out (the stock is not touched at all) and a toast says to check it.
+Example: bought 1 pack, converted to 4 pcs (1 pack = 4), another purchase
++8 pcs → 12 pcs; Reopen of the first → 8 pcs.
+
+**K28** No data fix for history rows that already have no item.
+
+**K29** Home → History: every row whose item no longer exists (`item_id`
+empty) shows a small grey **"deleted item"** after the date ("Unit changed ·
+1 Nov 2026, 10:00 · deleted item"). App only. The HOME trash stays as it is
+(history kept, Undo relinks it).
+
+**K30 — the same conversion for EXISTING items (031).**
+
+- `reopen_shopping_trip`, an item not created by the line: `stock_added`
+  (and the expired stock thrown away at the purchase, `stock_discarded`) is
+  converted as K27 before it is taken out (put back). Item 1 pack +
+  purchase 1 pack = 2 pack, converted to 8 pcs (1 pack = 4), Reopen → 8 − 4
+  = 4 pcs. When the unit changed after the purchase (the line's unit ≠ the
+  item's unit now), the usual pack size of NOW is kept (never the one in
+  `pantry_before`), and a price that had no unit before the purchase is put
+  back per the unit it was counted in then ("€3.00 per 1 pack", not per 1
+  pcs; Kata ragu). Price, price quantity, payer, last bought and expiry are
+  put back from `pantry_before` as today. No conversion → the stock is not
+  touched, toast. Lines without a unit change (also those before 030,
+  `stock_unit` empty, with their "Bought" row) → exactly as today.
+- `unarrive_order` ("Back on the way", the Arrived Undo): the arrival's
+  `stock_added` is converted from the unit of the arrival's own history row
+  (`orders.arrived_log_id` → `stock_logs.unit`; that row gone → the item's
+  unit, as today). No conversion → nothing taken out, toast. No unit change
+  → exactly as today.
+
+**K31** An item deleted by K25 also loses its automatic "to buy" SHOP
+entries, the rule of the HOME trash (decision 37): `auto_generated`, not
+bought, not in a cart, no order on the way for it — never one typed by hand,
+and never the SHOP entry of any line of this purchase. The purchase line's
+own entry still goes back to the cart (SHOP purchase) or to "to buy" (MONEY
+purchase) as today, no longer linked (the foreign key unlinks it).
+
+**What the app knows (no new return type).** Both functions keep their
+return type (`integer` / `orders`), so an older app version works as
+before. `usePurchase.reopenTrip` reads the purchase's lines, their HOME
+items and the lines' own history rows just before the call, and the items
+just after it; `useOrders.unarriveOrder` / `undoArrival` read the arrival's
+item and its own history row before, the item after.
+`lib/reopenUnits.js` (pure, the rules of 031) then says what to tell:
+
+- a created item still there afterwards was kept — before 031 the database
+  always deletes it, so this never shows before 031;
+- stock that couldn't be converted is named only when the item's stock is
+  what 031 leaves AND not what the database before 031 would have made of
+  it — so before 031 nothing new is said.
+
+When a read fails, the purchase is reopened (the order put back) all the
+same, without the note.
+
+**Texts** (English, exact):
+
+- `"{item}" stays in HOME — it also got stock or an order from elsewhere;
+  this purchase's {qty} were taken out.` ({qty} in the item's unit now, "4
+  pcs"; without stock added: `"{item}" stays in HOME — it also got stock or
+  an order from elsewhere.`)
+- `"{item}": this purchase's stock couldn't be taken out (its unit changed)
+  — check it in HOME.`
+- kept and not convertible: `"{item}" stays in HOME — it also got stock or
+  an order from elsewhere; this purchase's stock couldn't be taken out (its
+  unit changed) — check it in HOME.`
+- "Back on the way" / the Arrived Undo: `"{item}": this arrival's stock
+  couldn't be taken out (its unit changed) — check it in HOME.` The Arrived
+  Undo toast after a unit change says what really came out (`"Soap" is on
+  the way again — 4 pcs taken out of "Soap"`); without a unit change as
+  before.
+- Each note is its own toast, after "Purchase reopened — the items are back
+  in the cart." / "Purchase undone — its expenses are deleted and HOME stock
+  is back as before." (unchanged).
+- Question "Undo this purchase?" (would now be wrong): "… the stock it added
+  to HOME is taken back (an item it created is removed again**, unless it
+  also got stock or an order from elsewhere**). …". "Reopen this purchase?"
+  ("… the stock, history and expenses from this purchase are undone.") and
+  the "Part of a purchase" hints stay: still right.
+
+**SQL `supabase/031_reopen_created_items.sql`.** `create or replace` of
+`reopen_shopping_trip` (from 023) and `unarrive_order` (from 021). One
+transaction (`begin; … commit;`), checks that 015 and 030 have run
+(`shopping_trip_items.stock_unit`), safe to run twice, no data change, no
+other function / table / policy / grant; same signatures and return types,
+`search_path = public`, household check (42501), security invoker, grants
+kept (create or replace keeps them: closed to anon / public, open to
+authenticated). One check SELECT, 14 rows, each "ok": per function the 031
+part, the return type, search_path, invoker, household check, anon none
+(reopen also: all history of an untouched created item, its automatic
+entries). Last line `-- End of 031`.
+
+Every changed line of `reopen_shopping_trip` (031 compared with 023 lines
+567–648, from `diff -U0` of the two function bodies; the test "031" checks
+the same with its own line diff):
+
+| Where (line in 023) | Change | A line without a unit change, an item not created |
+|---|---|---|
+| declare, after `v_source text;` (576) | + comment, `pi pantry_items;`, `v_unit text;`, `v_factor numeric;`, `v_elsewhere boolean;`, `v_trip_logs uuid[];` | — |
+| after the `merged` refusal (590) | + comment, `select coalesce(array_agg(l.id), '{}') into v_trip_logs from shopping_trip_items i cross join lateral unnest(i.log_ids) …` (the history rows of every line of this purchase) | Read only. |
+| inside `if ti.pantry_item_id is not null then` (596–609: `if ti.pantry_created then delete …; else update … end if;`, 14 lines) | replaced by: lock the item (`select * into pi … for update`; gone → skipped, as before); `v_unit` = `stock_unit`, else the line's "Bought" row's unit; `v_factor` (null unit → 1 only when the line's unit is the item's; same unit 1; kg/L → 1000; gr/ml → 0.001; usual pack → its size; else null); `v_unit := coalesce(v_unit, ti.unit)`; `v_elsewhere` (K26); created and not elsewhere → delete its automatic "to buy" entries (K31), all its history, the item; created and elsewhere → `current_stock − stock_added × factor` (nothing when null); otherwise the 023 update with `current_stock` = (null → unchanged, else `greatest(0, stock − added × f) + discarded × f`), `price_unit` / `packaging_unit` / `quantity_per_pack` from `pantry_before` unless the unit changed (then: the price's unit or the unit counted in; the pack size of now), `where p.id = pi.id` | `v_factor` = 1, unit unchanged: the same values as 023 (`stock − added + discarded`, every field from `pantry_before`). |
+
+Everything else — the household check, the lock on the purchase, the
+`merged` refusal, the order of the lines, `delete from stock_logs where id =
+any(ti.log_ids)`, the expense delete, the three SHOP entry branches, merged
+expenses split off, the purchase delete and the count — is the 023 text
+line for line.
+
+Every changed line of `unarrive_order` (031 compared with 021 lines
+336–376):
+
+| Where (line in 021) | Change | No unit change |
+|---|---|---|
+| declare, after `pi pantry_items;` (344) | + comment, `v_unit text;`, `v_factor numeric;` | — |
+| `v_stock := greatest(0, … − o.stock_added);` and its `update` (360–361) | + comment; `v_unit := coalesce((select l.unit from stock_logs l where l.id = o.arrived_log_id), pi.unit);` `v_factor := case …` (same rules as reopen); `if v_factor is not null then v_stock := greatest(0, … − o.stock_added * v_factor); update … end if;` | `v_factor` = 1: the 021 values. |
+
+Everything else (the household check, the lock, "not arrived → as it is",
+the arrival's history row deleted, the order back on the way, its SHOP
+entry) is the 021 text line for line.
+
+**Files.** New: `supabase/031_reopen_created_items.sql`,
+`src/lib/reopenUnits.js` (+ test). Changed: `hooks/usePurchase.js`
+(`reopenTrip` reads before / after and shows the notes; the "Undo this
+purchase?" text), `hooks/useOrders.js` (`unarriveOrder`, `undoArrival`:
+`readArrivalItem`, `arrivalUndone`), `components/inventory/HistoryView.jsx`
+(K29), `hooks/arrivalDb.fixture.js` (`{ units: true }` plays 031's
+`unarrive_order`).
+
+**Tests: 2056 → 2095 (112 → 115 files).** New `lib/reopenUnits.test.js`
+(13: every factor, a line's unit, the "Bought" row, an arrival; the exact
+texts; kept with 4 pcs / 1 pack / no stock; kept and not convertible; a
+created item gone; not convertible said only with 031's result; converted
+or unchanged → nothing; a line before 030 by its "Bought" row; the arrival
+note; what really came out), `hooks/reopenNotes.test.js` (8: Reopen with 031
+→ kept toast, with 023 → nothing new; not convertible with 031 / 023 (MONEY);
+lines not readable → reopened without notes; the two questions; "Back on the
+way" 031 converted → 8 pcs, not convertible → toast, 021 → nothing new; the
+Arrived Undo "4 pcs taken out" / not convertible), `components/
+historyDeletedItem.render.test.jsx` (1: K29). Changed: `supabase/
+migrations.test.js` block "031" (17, PGlite: only the two functions, one
+transaction, nothing outside them; each = its last version except the listed
+lines (line diff), nothing later defines them; before 031 the "Unit changed"
+row is left and nothing is said; run twice, every check ok, other functions /
+policies / grants / columns / data unchanged, anon refused; a stranger refused
+(42501) by both; cases 1–12 below), and the 9J guard allows 031 (it replaces
+`unarrive_order`, never `arrive_order`).
+
+Cases checked in block "031" (every number):
+
+1. created "1 pack", "Unit changed" → 4 pcs, Reopen → the item, all its
+   history and its automatic "to buy" entry gone; an automatic entry in a
+   cart, one ordered online and one typed by hand stay (unlinked); the
+   purchase's own entry back in the cart (unlinked); the expense gone.
+2. created "2 pack", one "Used" → item and history gone.
+3. created 1 pack + another purchase +2 pack, Reopen of the first → kept, 2
+   pack; the other purchase's "Bought" row, line and €6.00 expense untouched;
+   toast "… this purchase's 1 pack were taken out."
+4. created 1 pack, converted (1 pack = 4), another purchase +8 pcs (12 pcs),
+   Reopen of the first → 8 pcs, usual pack 4 kept; toast "4 pcs".
+5–7. created + "Adjusted" +2 → 2 pack; + "+" restock +1 → 1 pack; + an order
+   pointing to it (cancelled) → 0 pack; all kept.
+8. existing 1 pack + purchase 1 pack, converted to 8 pcs → 4 pcs, "pack × 4"
+   kept, price €3.00 per pack (030: 7 pcs, no usual size, price unit gone).
+9. "Keep the numbers as they are", no usual size → 2 pcs stays, toast (030:
+   1 pcs, nothing said); a kept created item the same way → kept, toast.
+10. lines before 030 (`stock_unit` emptied), no unit change: an existing item
+   with expired stock thrown away, a 9H "2 pack" × 4, a new item → exactly
+   030's result after the purchase and after Reopen.
+10b. a line before 030 whose "Bought" row was deleted by hand, "2 pack" into
+   pcs → nothing taken out, toast (030: −8 pcs) (Kata ragu).
+11. "Back on the way": +1 pack arrived, converted (1 pack = 4) → 12 → 8 pcs
+   (021: 11); "Keep the numbers" → stays 3 pcs, toast (021: 2); no unit
+   change → as 021.
+12. Shared parts (029), a merged expense, a MONEY purchase closing an
+   automatic "to buy" entry (back to "to buy", not deleted), a 9J arrival into
+   a new item → exactly 030's result.
+
+**Labels and paths (for Claude's test instructions).** Left menu: Plan,
+Shop, Home, Money.
+
+| What | Path | Exact labels |
+|---|---|---|
+| Receipts Reopen (SHOP purchase) | Shop → "Receipts" → the purchase card | "Reopen purchase" → "Reopen this purchase?" ("The {n} item(s) (€…) go back to the cart, and the stock, history and expenses from this purchase are undone.") → "Cancel" / "Reopen" → toast "Purchase reopened — the items are back in the cart." |
+| Receipts Undo (MONEY purchase) | same card, a purchase made in Money | "Undo purchase" → "Undo this purchase?" ("The expenses of its {n} item(s) (€…) are deleted, and the stock it added to HOME is taken back (an item it created is removed again, unless it also got stock or an order from elsewhere). Expenses merged into it stay, as single expenses.") → "Undo purchase" → toast "Purchase undone — its expenses are deleted and HOME stock is back as before." |
+| MONEY Undo purchase | Money → section Expenses → the purchase row (tap to open) → bottom of the opened row | "Undo purchase" (MONEY) / "Reopen purchase" (SHOP) / "Split"; the same questions |
+| MONEY "Part of a purchase" | Money → Expenses → opened purchase → trash "Delete expense" on one expense | question "Part of a purchase"; choices "Reopen purchase" (SHOP) / "Undo the whole purchase" (MONEY) / "Delete expense only" → "Continue" |
+| Undo toast after a purchase | right after Shop → List → "Confirm purchase" / Money → "Add expense" → "Save purchase · €…" | "Purchase confirmed · {n} item(s) · €…" / "Purchase saved · {n} item(s) · €…" with "Undo" |
+| New toasts after any of these (031 only) | — | `"{item}" stays in HOME — it also got stock or an order from elsewhere; this purchase's {qty} were taken out.` / `"{item}": this purchase's stock couldn't be taken out (its unit changed) — check it in HOME.` / `"{item}" stays in HOME — it also got stock or an order from elsewhere; this purchase's stock couldn't be taken out (its unit changed) — check it in HOME.` |
+| "Back on the way" | Money → section Orders → "History (N)" → an arrived order card → "Back on the way" | question `Put "{name}" back on the way?` → "Put back on the way"; no toast as before, except (031) `"{item}": this arrival's stock couldn't be taken out (its unit changed) — check it in HOME.` |
+| Arrived Undo | the toast after Arrived / "It arrived!" → "Undo" | `"{name}" is on the way again — {qty} taken out of "{name}"` (after a unit change: what really came out, e.g. "4 pcs"); (031, not convertible) `"{name}" is on the way again` + the arrival toast above |
+| Home → History, K29 | Home → "History" (tab next to "Items") | a row of a deleted item: "{name}" · "Unit changed · {date} · **deleted item**" (grey) "→ 4 pcs" |
+| History trash | same, the trash at the end of a row (aria "Delete this entry for {name}") | no question; toast "Deleted" with "Undo" |
+| HOME "Edit item" unit conversion | Home → Items → the tile → pencil (title "Edit") → "Edit item" → "Unit (what you count stock in)" → "pieces (pcs)" | `Count "{name}" in pcs instead of pack?` → "Convert with the pack size" + "pcs in 1 pack" / "Keep the numbers as they are" → "Change unit" → "Save changes" |
+| "+" restock on a tile | Home → Items → the tile → "+" (title "Add {step} {unit}") or the package button (title "Add bought stock") → "Quantity bought" → "Add to stock" | History "Restocked" |
+| "Edit item" stock typing | same editor → "Current stock" → "Save changes" | History "Adjusted" |
+
+Not confirmed on a phone: everything in this table (written from the code
+and the tests). The "Back on the way" place ("History (N)" in Money →
+Orders) is not confirmed.
+
+**Kata ragu (asked in the round's message, built the safe way).**
+
+1. An old line (before 030) whose "Bought" row was deleted by hand, bought
+   in another unit than the item's (9H "2 pack" → +8 pcs): nothing is taken
+   out + toast (K27 literally — "else the line's unit", pack → × 4 — would
+   take 8 × 4 = 32 pcs instead of 8).
+2. A pack size changed by hand after the purchase WITHOUT a unit change:
+   Reopen still puts back the one from before the purchase (as today) — the
+   database can't tell it from a first-time size the purchase saved (9H).
+3. A price that had no unit before the purchase, the unit changed after it:
+   put back per the unit counted in then ("€3.00 per 1 pack").
+4. Not convertible (existing item): the stock is not touched at all — also
+   expired stock thrown away at the purchase is not put back; price, payer,
+   last bought and expiry are put back as today.
+5. A "Unit changed" row is "elsewhere" unless its numbers are a plain
+   conversion — also when a LOWER stock was typed in the same save (kept).
+6. "Back on the way" question: "Its arrival added 1 pcs …" after pack → pcs
+   (the arrival's number with the item's unit now) — not changed in 9M.
+7. An arrival whose own history row was deleted by hand: taken out as today
+   (counted in the item's unit now).
+
+### iPhone checklist for round 9M
+
+Written by Claude after 031 has been checked and run.
 
 ---
 

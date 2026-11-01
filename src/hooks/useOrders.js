@@ -9,6 +9,7 @@ import { groupDiscount, groupMembers, groupPayload, placeOf, undoGroupPayload } 
 import { shopsAvailable } from '../lib/shops'
 import { isOffline } from '../lib/connection'
 import { ENTRY_GRACE_MS } from '../lib/newItems'
+import { arrivalFactor, takenOutQuantity, unarriveNote } from '../lib/reopenUnits'
 import { groupOf, saveOrderGroup, sayKept } from './useOrderGroups'
 
 const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
@@ -383,9 +384,10 @@ export async function undoArrival({ order, arrived, madeId = null }) {
       if (!sameArrival(now, arrived)) return (state = { changed: true })
       const made = madeId ? await madeByArrival(now, madeId) : null
       const item = now.arrived_item_id ? pantryStore.getSnapshot().rows.find((r) => r.id === now.arrived_item_id) ?? null : null
+      const seen = await readArrivalItem(now)
       const row = must(await supabase.rpc('unarrive_order', { order_id: order.id }))
       if (row?.id) orderStore.upsertLocal([row])
-      state = { now, made, item }
+      state = { now, made, item, seen }
     },
     { retry: false, onFail: refreshFlow }
   )
@@ -395,7 +397,8 @@ export async function undoArrival({ order, arrived, madeId = null }) {
     await refreshFlow()
     return { error: null, changed: true }
   }
-  const { now, made, item } = state
+  const { now, made, item, seen } = state
+  const undone = await arrivalUndone(now, seen)
   await restoreArrivalPack(now)
   if (packColumnsReady(order) && (Number(now.pack_size) || null) !== (Number(order.pack_size) || null)) {
     await followUp('the pack size', async () => orderStore.upsertLocal(must(await supabase.from('orders').update({ pack_size: order.pack_size ?? null }).eq('id', order.id).select())))
@@ -403,9 +406,10 @@ export async function undoArrival({ order, arrived, madeId = null }) {
   const gone = made ? await deleteMadeItem(made) : false
   await refreshFlow()
   await syncListFor(order, gone ? made.group_id : now.arrived_item_id ?? madeId)
-  const qty = Number(now.stock_added) > 0 ? `${Number(now.stock_added)} ${item?.unit ?? made?.unit ?? ''}`.trim() : ''
+  const qty = undone.qty ?? (Number(now.stock_added) > 0 ? `${Number(now.stock_added)} ${item?.unit ?? made?.unit ?? ''}`.trim() : '')
   const taken = takenOutText({ qty, item, made: madeId ? made ?? item : null, gone })
   showToast({ message: `"${order.item_name}" is on the way again${taken ? ` — ${taken}` : ''}` })
+  if (undone.note) showToast({ message: undone.note })
   return { error: null }
 }
 
@@ -458,20 +462,57 @@ export async function itemMadeByArrival(order) {
 // itemMadeByArrival) is deleted again; the SHOP list is judged again for
 // the item. The pack size stays (the next Arrived starts with it).
 export async function unarriveOrder(order, { made = null } = {}) {
+  let seen = null
   const result = await attempt(
     async () => {
+      seen = await readArrivalItem(order)
       const row = must(await supabase.rpc('unarrive_order', { order_id: order.id }))
       if (row?.id) orderStore.upsertLocal([row])
     },
     { onFail: refreshFlow }
   )
   if (!result.error) {
+    const { note } = await arrivalUndone(order, seen)
+    if (note) showToast({ message: note })
     await restoreArrivalPack(order)
     const gone = made ? await deleteMadeItem(made) : false
     await refreshFlow()
     await syncListFor(order, gone ? made.group_id : order.arrived_item_id)
   }
   return result
+}
+
+// The item an arrival put stock into and the arrival's own history row,
+// read just before unarrive_order (which deletes that row), so what it
+// did can be told afterwards (plan 9M). Null when nothing was added or
+// they can't be read: the order goes back on the way all the same.
+async function readArrivalItem(order) {
+  if (!order?.arrived_item_id || !(Number(order.stock_added) > 0)) return null
+  try {
+    const item = must(await supabase.from('pantry_items').select('*').eq('id', order.arrived_item_id).maybeSingle())
+    const log = order.arrived_log_id ? must(await supabase.from('stock_logs').select('id, unit').eq('id', order.arrived_log_id).maybeSingle()) : null
+    return item ? { item, log } : null
+  } catch (error) {
+    console.error(error)
+    return null
+  }
+}
+
+// After unarrive_order: `note` when supabase/031 took nothing out because
+// the item's unit changed and can't be converted (lib/reopenUnits.js), and
+// `qty`, what really came out when the unit changed ("4 pcs"; null: say
+// it as before, in the arrival's numbers).
+async function arrivalUndone(order, seen) {
+  if (!seen) return { note: null, qty: null }
+  try {
+    const after = must(await supabase.from('pantry_items').select('*').eq('id', seen.item.id).maybeSingle())
+    const note = unarriveNote({ order, before: seen.item, after, log: seen.log })
+    if (note) return { note, qty: '' }
+    return { note: null, qty: arrivalFactor(seen.log, seen.item) !== 1 ? takenOutQuantity(seen.item, after) : null }
+  } catch (error) {
+    console.error(error)
+    return { note: null, qty: null }
+  }
 }
 
 // The item gets back the usual size it had before the arrival

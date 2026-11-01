@@ -13,6 +13,11 @@ const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', ed
 // shows only the new stock: the difference of the numbers means nothing.
 const showsChange = (log) => log.reason !== 'converted'
 
+// A row whose HOME item no longer exists (deleted with the HOME trash, or
+// before supabase/031 by Reopen): the record stays, marked (plan 9M, K29).
+const DELETED_ITEM_LABEL = 'deleted item'
+const itemGone = (log) => 'item_id' in log && !log.item_id
+
 // Filters combine: item + reason + date range. Entries can be deleted one
 // by one or several at once (Select), with Undo; that removes only the
 // record, never stock, expenses or items.
@@ -158,6 +163,12 @@ export function HistoryView() {
                   <p className="text-[10px] text-[var(--color-text-muted)]">
                     {REASON_LABELS[log.reason] || log.reason} ·{' '}
                     {new Date(log.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {itemGone(log) && (
+                      <>
+                        {' · '}
+                        <span className="text-[var(--color-icon-muted)]">{DELETED_ITEM_LABEL}</span>
+                      </>
+                    )}
                   </p>
                 </div>
                 {showsChange(log) && (
