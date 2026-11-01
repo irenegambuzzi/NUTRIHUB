@@ -127,23 +127,25 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // how many of the new unit are in 1 of the old one (a package, plan 9L
   // K8): stock and minimum × that, and the old unit becomes the purchase
   // unit with that size; the price stays per the old unit. A saved item's
-  // kg ↔ gr / L ↔ ml conversion keeps the price per the old unit too (still
-  // offered as the metric partner, plan 9L K19): a price without a unit was
-  // per the old unit and would otherwise become per the new one.
+  // kg ↔ gr / L ↔ ml change keeps the price per the old unit too, whether
+  // the numbers are converted or kept (still offered as the metric partner,
+  // plan 9L K19, K23): a price without a unit was per the old unit and would
+  // otherwise become per the new one.
   const applyUnit = (next, convert, perPack = null) => {
     const factor = perPack > 0 ? perPack : unitFactor(form.unit, next)
     const options = purchaseUnitOptions(next, form.packaging_unit)
     const packaging = perPack > 0 ? form.unit : form.packaging_unit === next ? options[0] : form.packaging_unit
+    const metricPair = form.unit !== next && unitFactor(form.unit, next) !== null
+    const keepPrice = (perPack > 0 || (item && !isGroup && metricPair)) && parseDecimal(form.price) > 0 ? { price_unit: form.price_unit || form.unit } : {}
     if (convert && factor !== null && (factor !== 1 || perPack > 0) && !form.stockInPacks) {
       const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * factor, next)
       const min = roundQuantity((parseDecimal(form.min_stock) || 0) * factor, next)
       const pack = perPack > 0 ? { multipack: true, quantity_per_pack: perPack } : {}
-      const keepPrice = (perPack > 0 || (item && !isGroup)) && parseDecimal(form.price) > 0 ? { price_unit: form.price_unit || form.unit } : {}
       setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, current_stock: String(stock), min_stock: String(min), ...pack, ...keepPrice }))
       setUnitNote(`Converted from ${form.unit}: stock ${stock} ${next}, minimum ${min} ${next}.${perPack > 0 ? ` 1 ${form.unit} = ${perPack} ${next}.` : ''}`)
       setConverted(Boolean(item))
     } else {
-      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging }))
+      setForm((f) => ({ ...f, unit: next, packaging_unit: packaging, ...keepPrice }))
       setUnitNote(item && next !== item.unit ? `Quantities weren't converted — check stock and minimum in ${next}.` : '')
       setConverted(false)
     }
@@ -257,7 +259,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     if (!form.category_id) return setCategoryError('Pick a category (or add a new one).')
     const decimalError = firstDecimalProblem(form.current_stock, form.min_stock, form.price, form.price_qty, form.multipack ? form.quantity_per_pack : '')
     if (decimalError) return setError(decimalError)
-    if (form.multipack && perPack <= 0) return setError('Quantity per pack must be more than 0.')
+    // Named after the purchase unit chosen (plan 9L K24): "per bag", "per case"…
+    if (form.multipack && perPack <= 0) return setError(`Quantity per ${form.packaging_unit} must be more than 0.`)
     if (!expiryValid) return setError('Fix the expiry date first (DD/MM/YYYY), or remove it.')
     if (batchDateError) return setError(batchDateError)
     // A new name (or a rename) is compared with the other HOME items; the

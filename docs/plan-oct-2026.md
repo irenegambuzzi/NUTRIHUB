@@ -4260,12 +4260,14 @@ Shop, Home, Money.
 | — same name twice | two cart lines, same name | `"{name}" is in this purchase twice — count it in pcs at home here too.` |
 | Question in MONEY | Money → section Expenses → "Add expense" → card "ADD AN EXPENSE" → name, €, quantity, unit "pack", HOME item category, "Add to HOME" on ("New in HOME (shown as New Item).") | the same box under "Add to HOME" (aria "pcs per pack for {name}" / with several rows the same with the row's name); "Min [ ] pcs — below this it goes on the SHOP list"; after "Save purchase · €3.00": "Choose how to count it at home." / "Type how many pcs are in 1 pack." next to the row and above the button |
 | Before 030 known | — | no box; pressing the button reads first; offline: toast "You're offline — this needs a connection."; other failure: "Couldn't save — check your connection." |
-| K14 editor from an order in bag / case / carton / crate | same path as K5, an order "1 bag" | "Bought in a different unit" greyed (can't be tapped); under it "bag can't be a HOME unit — type how many pcs are in 1 bag."; "pcs per bag" empty; "Add to inventory" → "Quantity per pack must be more than 0." until typed |
+| K14 editor from an order in bag / case / carton / crate | same path as K5, an order "1 bag" | "Bought in a different unit" greyed (can't be tapped); under it "bag can't be a HOME unit — type how many pcs are in 1 bag."; "pcs per bag" empty; "Add to inventory" → "Quantity per bag must be more than 0." until typed (K24; "1 case" → "Quantity per case must be more than 0.") |
 | K5 editor from an order | Money → section Orders → an order card "Arrived" (or Shop → List → "On the way" card "Arrived") → "It arrived!" → "Create a new item" → "Add an item" | "Unit (what you count stock in)" = "pieces (pcs)"; "Bought in a different unit" (on); "Purchase unit" = pack; "pcs per pack" empty; "Current stock" with "in pack ⇄" = 1; "Price (e.g. …)" = 3.00 per 1 pack; "Add to inventory" → if empty "Quantity per pack must be more than 0."; toast `"{name}" is now in HOME` + "Undo"; tapping "Bought in a different unit" off → Unit "pack", note "Counted in pack at home." |
 | K6 | Shop → List (or Shop) → "+ Add to SHOP list" → "ADD TO SHOP LIST" → unit "pack" for a name not in HOME | price row "€ 0.00" "per" [1] **pack** (plain text, not a drop-down) |
 | K7 | same, category Beverages, unit "pack" | no "is unusual for" line (unit "jar": `"jar" is unusual for Beverages (usually btl, can, ml, L).`) |
 | K8 question | Home → Items → the item tile → pencil (title "Edit") → "Edit item" → "Unit (what you count stock in)" → "pieces (pcs)" | `Count "{name}" in pcs instead of pack?`; choices "Convert with the pack size" (with field "pcs in 1 pack") and "Keep the numbers as they are"; buttons "Cancel" / "Change unit"; empty field: "Enter a number above 0."; then the note "Converted from pack: stock 8 pcs, minimum 4 pcs. 1 pack = 4 pcs."; "Save changes" |
 | K8 price warning | same, "Keep the numbers as they are" | under the price: "The price was €3.00 per 1 pack — it will be saved as €3.00 per 1 pcs. Check it." |
+| K23 kg ↔ gr / L ↔ ml | Home → Items → the item tile → pencil (title "Edit") → "Edit item" → "Unit (what you count stock in)" kg → gr → "Keep the numbers as they are" → "Change unit" | note "Quantities weren't converted — check stock and minimum in gr."; price row still "€2.50" "per" [1] kg; no yellow "The price was …" line; saved per 1 kg |
+| K24 pack size | "Add an item" (Home → Items → "Add item"), "Edit item" (as above) or "It arrived!" → "Create a new item": "Bought in a different unit" on, "pcs per {purchase unit}" empty or 0 → "Add to inventory" / "Save changes" | red under the form: "Quantity per bag must be more than 0." / "Quantity per case must be more than 0." / "Quantity per box must be more than 0." / "Quantity per pack must be more than 0." (follows "Purchase unit") |
 | K9 | Shop → List → "Confirm purchase (…)", a line "2 pack" priced per pcs with no usual size | on the line and at the bottom "The total can't be worked out from the price's unit — type the total paid."; header "· 1 without a total"; "Confirm purchase · €…" greyed until "Total for {name}" is typed |
 | K11 | Home → History | row "{name}" · "Unit changed · {date}" and "→ 8 pcs" (no "+6 pcs") |
 | "1 pack · 4 pcs" | Money → section Expenses → the purchase row (tap to open) → under the item; Shop → Receipts → the purchase | "1 pack · 4 pcs" (two: "2 pack · 4 pcs each · 8 pcs") |
@@ -4325,6 +4327,39 @@ SQL 030 checked by Claude on 01/11 with a real diff against 029: only the listed
   sheet 10; K14 bag and case / pack; K15 Gelatin Sheets and Color Fade
   Prevention Sheet → sheet; K19 kg → gr with "kg" and without a unit; K19
   L → ml and the pack → pcs warning).
+
+Decisions on the doubts (01/11, second): K22 kept as built; K23 price kept
+per the old unit for kg↔gr and L↔ml with either choice; K24 the pack-size
+error follows the Purchase unit.
+
+SQL 030 run by the household on 01/11/2026: all 9 checks ok (0 of 267
+purchase lines with stock_unit).
+
+- K22: kept as built — the lock of "Bought in a different unit" follows the
+  Purchase unit currently selected (bag / case / carton / crate locked; pack
+  / box free).
+- K23 (`inventory/ItemEditor.jsx` `applyUnit`): a saved item (not a group)
+  changed kg ↔ gr / L ↔ ml keeps `price_unit` = the price's unit or, when it
+  had none, the old unit, also with "Keep the numbers as they are" (2 kg at
+  "€2.50 per 1 kg" → gr, keep: stock 2 gr, minimum 1 gr, still "€2.50 per 1
+  kg", no warning). The K8 warning stays where the old price unit can't be
+  kept (pack → pcs without a pack size: "The price was €3.00 per 1 pack — it
+  will be saved as €3.00 per 1 pcs. Check it.").
+- K24 (`inventory/ItemEditor.jsx` `handleSubmit`, the only place the text
+  is made): "Quantity per {purchase unit} must be more than 0." — "Quantity
+  per bag must be more than 0.", "Quantity per case must be more than 0.",
+  "Quantity per box must be more than 0.", "Quantity per pack must be more
+  than 0.". One editor, so it applies to "Add an item", "Add a variant to
+  {group}", "Edit item", "Add a group" / "Edit group" and "It arrived!" →
+  "Create a new item" (`expenses/ArrivedDialog.jsx` opens the same editor).
+- Tests 2049 → 2056 (112 files): `components/newItemUnit.render.test.jsx`
+  +6 (K23 kg → gr with "kg" and without a unit, L → ml with "L" and without
+  a unit, pack → pcs still warns and saves per 1 pcs; K24 "Add an item" bag
+  / case / box / pack with an empty size and 0, "Edit item" case → box, an
+  order "1 case" / "1 box") and the K14 bag test now expects "Quantity per
+  bag must be more than 0."; `components/newItemArrival.render.test.jsx` +1
+  (the real "It arrived!" dialog, an order "1 bag": "Quantity per bag must
+  be more than 0.", then 10 → 10 pcs, usual bag 10, €5.00 per 1 bag).
 
 ### iPhone checklist for round 9L
 

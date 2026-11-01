@@ -539,7 +539,7 @@ describe('HOME editor (K5, K8, K11)', () => {
     expect(text()).not.toContain('Bought in a different unit (')
   })
 
-  it('K14: an order "1 bag": "Bought in a different unit" can\'t be turned off (with the reason), "pcs per bag" required; 1 bag = 10 pcs → 10 pcs', async () => {
+  it('K14: an order "1 bag": "Bought in a different unit" can\'t be turned off (with the reason), "pcs per bag" required ("Quantity per bag must be more than 0.", K24); 1 bag = 10 pcs → 10 pcs', async () => {
     const onSave = editor({ prefill: arrivalPrefill({ item_name: 'Rice cakes', quantity: 1, unit: 'bag', price: 5 }) })
     type('Item category', 'canned')
     const toggle = screen.getByRole('button', { name: 'Bought in a different unit' })
@@ -550,7 +550,7 @@ describe('HOME editor (K5, K8, K11)', () => {
     expect(screen.getByText('Purchase unit').parentElement.querySelector('select').value).toBe('bag')
     expect(fieldUnder('pcs per bag').value).toBe('')
     fireEvent.click(screen.getByRole('button', { name: 'Add to inventory' }))
-    expect(await screen.findByText('Quantity per pack must be more than 0.')).toBeTruthy()
+    expect(await screen.findByText('Quantity per bag must be more than 0.')).toBeTruthy()
     expect(onSave).not.toHaveBeenCalled()
     fireEvent.change(fieldUnder('pcs per bag'), { target: { value: '10' } })
     expect(text()).toContain('1 bag × 10 = 10 pcs')
@@ -625,6 +625,99 @@ describe('HOME editor (K5, K8, K11)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
     await waitFor(() => expect(unitSelect().value).toBe('pcs'))
     expect(text()).toContain('The price was €3.00 per 1 pack — it will be saved as €3.00 per 1 pcs. Check it.')
+  })
+
+  it('K23: kg → gr "Keep the numbers as they are": stock 2 gr, minimum 1 gr, "€2.50 per 1 kg" stays per 1 kg, also a price saved without a unit; no warning', async () => {
+    for (const priceUnit of ['kg', null]) {
+      const onSave = editor({ item: { ...soft, name: 'Flour', unit: 'kg', current_stock: 2, min_stock: 1, price: 2.5, price_qty: 1, price_unit: priceUnit } })
+      fireEvent.change(unitSelect(), { target: { value: 'gr' } })
+      fireEvent.click(await screen.findByText('Keep the numbers as they are'))
+      fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+      await waitFor(() => expect(unitSelect().value).toBe('gr'))
+      expect(text()).toContain("Quantities weren't converted — check stock and minimum in gr.")
+      expect(screen.getByLabelText('Price per unit').value).toBe('kg')
+      expect(text()).not.toContain('The price was')
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][0]).toMatchObject({ unit: 'gr', current_stock: 2, min_stock: 1, price: 2.5, price_qty: 1, price_unit: 'kg' })
+      expect(onSave.mock.calls[0][1]).toEqual({ converted: false })
+      cleanup()
+    }
+  })
+
+  it('K23: L → ml "Keep the numbers as they are": stock 1 ml, "€1.20 per 1 L" stays per 1 L, with "L" and without a unit; no warning', async () => {
+    for (const priceUnit of ['L', null]) {
+      const onSave = editor({ item: { ...soft, name: 'Milk', unit: 'L', current_stock: 1, min_stock: 1, price: 1.2, price_qty: 1, price_unit: priceUnit } })
+      fireEvent.change(unitSelect(), { target: { value: 'ml' } })
+      fireEvent.click(await screen.findByText('Keep the numbers as they are'))
+      fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+      await waitFor(() => expect(unitSelect().value).toBe('ml'))
+      expect(screen.getByLabelText('Price per unit').value).toBe('L')
+      expect(text()).not.toContain('The price was')
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][0]).toMatchObject({ unit: 'ml', current_stock: 1, min_stock: 1, price: 1.2, price_qty: 1, price_unit: 'L' })
+      cleanup()
+    }
+  })
+
+  it('K23: pack → pcs "Keep the numbers as they are" without a pack size still warns and saves €3.00 per 1 pcs', async () => {
+    const onSave = editor({ item: soft })
+    fireEvent.change(unitSelect(), { target: { value: 'pcs' } })
+    fireEvent.click(await screen.findByText('Keep the numbers as they are'))
+    fireEvent.click(screen.getByRole('button', { name: 'Change unit' }))
+    await waitFor(() => expect(unitSelect().value).toBe('pcs'))
+    expect(text()).toContain('The price was €3.00 per 1 pack — it will be saved as €3.00 per 1 pcs. Check it.')
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][0]).toMatchObject({ unit: 'pcs', current_stock: 2, min_stock: 1, price: 3, price_unit: 'pcs' })
+  })
+
+  it('K24: "Add an item", pack size empty or 0: the error names the purchase unit (bag, case, box, pack)', async () => {
+    const expected = {
+      bag: 'Quantity per bag must be more than 0.',
+      case: 'Quantity per case must be more than 0.',
+      box: 'Quantity per box must be more than 0.',
+      pack: 'Quantity per pack must be more than 0.',
+    }
+    for (const [unit, message] of Object.entries(expected)) {
+      for (const size of ['', '0']) {
+        const onSave = editor({ prefill: { name: 'Rice cakes' } })
+        type('Item category', 'canned')
+        fireEvent.click(screen.getByRole('button', { name: 'Bought in a different unit? (1 pack = 12 pcs, 1 bottle = 1.5 L, …)' }))
+        fireEvent.change(screen.getByText('Purchase unit').parentElement.querySelector('select'), { target: { value: unit } })
+        fireEvent.change(fieldUnder(`pcs per ${unit}`), { target: { value: size } })
+        fireEvent.click(screen.getByRole('button', { name: 'Add to inventory' }))
+        expect(await screen.findByText(message)).toBeTruthy()
+        if (unit !== 'pack') expect(text()).not.toContain('Quantity per pack')
+        expect(onSave).not.toHaveBeenCalled()
+        cleanup()
+      }
+    }
+  })
+
+  it('K24: "Edit item" with "1 case = 6 pcs": size emptied → "Quantity per case must be more than 0."; purchase unit box → "Quantity per box must be more than 0."', async () => {
+    const onSave = editor({ item: { ...soft, name: 'Water', unit: 'pcs', current_stock: 12, min_stock: 6, packaging_unit: 'case', quantity_per_pack: 6, price: 4, price_unit: 'case' } })
+    fireEvent.change(fieldUnder('pcs per case'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByText('Quantity per case must be more than 0.')).toBeTruthy()
+    fireEvent.change(screen.getByText('Purchase unit').parentElement.querySelector('select'), { target: { value: 'box' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByText('Quantity per box must be more than 0.')).toBeTruthy()
+    expect(text()).not.toContain('Quantity per case')
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('K24: from an order "1 case" / "1 box" ("Create a new item"), size empty: "Quantity per case …" / "Quantity per box must be more than 0."', async () => {
+    for (const [unit, message] of [['case', 'Quantity per case must be more than 0.'], ['box', 'Quantity per box must be more than 0.']]) {
+      const onSave = editor({ prefill: arrivalPrefill({ item_name: 'Water', quantity: 1, unit, price: 4 }) })
+      type('Item category', 'beverages')
+      expect(fieldUnder(`pcs per ${unit}`).value).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Add to inventory' }))
+      expect(await screen.findByText(message)).toBeTruthy()
+      expect(onSave).not.toHaveBeenCalled()
+      cleanup()
+    }
   })
 
   it('K11: a converted unit change shows one history row with the new stock only ("→ 8 pcs", "Unit changed"); other rows as before', () => {
