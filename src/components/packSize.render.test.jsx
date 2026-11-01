@@ -79,6 +79,7 @@ const type = (label, value) => fireEvent.change(screen.getByLabelText(label), { 
 const text = () => document.body.textContent
 
 describe('SHOP Confirm purchase', () => {
+  // Before supabase/029 (no "What each one paid" box; plan 9K).
   const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'box', price: 20, price_qty: 1, price_unit: 'box', payer: 'shared', in_cart: true, category_id: 'pet', ...fields })
   const confirm = (cartItems) =>
     render(
@@ -91,6 +92,7 @@ describe('SHOP Confirm purchase', () => {
         updatePayer={async () => ({})}
         toggleCart={async () => ({})}
         onClose={() => {}}
+        partsReady={false}
       />
     )
   const sent = () => {

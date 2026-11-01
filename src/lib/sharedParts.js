@@ -42,6 +42,9 @@ export const partsColumnsReady = (rows = []) => rows.some((row) => row && PART_C
 export const missingPartsColumn = (error) => ['PGRST204', '42703'].includes(error?.code) && /part_/.test(String(error?.message ?? ''))
 
 const euro = (n) => `€${round2(Number(n) || 0).toFixed(2)}`
+// A typed part rounded to cents as written (K21): 100,555 → 100.56, not
+// the 100.55 that 100.555 × 100 = 10055.4999… would give.
+const typedCents = (n) => Math.round(Number((n * 100).toPrecision(12))) / 100
 const sumOf = (parts) => round2(PEOPLE.reduce((sum, c) => sum + parts[c], 0))
 
 // The parts kept on an expense ({ [code]: € }), or null when it has none.
@@ -95,8 +98,10 @@ export function staleNote(expense) {
 // The expenses a person's pill shows (A1, K2): their own expenses whole,
 // plus their part of every Shared expense that has parts — as a copy whose
 // amount is that part (`sharedPart.real` is the expense itself, for Edit
-// and Delete), so every total and chart adds it unchanged. Everyone and
-// Shared show whole amounts.
+// and Delete), so every total and chart adds it unchanged. A part of €0 is
+// left out (K14): nothing of it is that person's, so the row (or the line
+// of a purchase, and the purchase when no line is left) isn't shown there.
+// Everyone and Shared show whole amounts.
 export function personalExpenses(expenses, person) {
   if (person === 'all') return expenses
   if (!PEOPLE.includes(person)) return expenses.filter((e) => e.paid_by === person)
@@ -107,7 +112,7 @@ export function personalExpenses(expenses, person) {
       continue
     }
     const shown = shownParts(e)
-    if (shown) out.push({ ...e, amount: shown.parts[person], sharedPart: { real: e, person, total: shown.amount } })
+    if (shown && shown.parts[person] > 0) out.push({ ...e, amount: shown.parts[person], sharedPart: { real: e, person, total: shown.amount } })
   }
   return out
 }
@@ -150,7 +155,7 @@ export function typePart(split, code, text, total) {
   const other = otherPerson(code)
   const next = { texts: { ...split.texts, [code]: text }, typed: { ...split.typed, [code]: Boolean(String(text).trim()) }, last: code }
   if (!split.typed[other]) {
-    const value = parseDecimal(text)
+    const value = typedCents(parseDecimal(text))
     const rest = round2(total - value)
     next.texts[other] = String(text).trim() && Number.isFinite(value) && Number.isFinite(total) && rest >= 0 ? moneyText(rest) : ''
   }
@@ -183,7 +188,9 @@ export function checkSplit(split, total, { required = true } = {}) {
   const texts = Object.fromEntries(PEOPLE.map((c) => [c, String(split.texts[c] ?? '').trim()]))
   if (PEOPLE.every((c) => !texts[c])) return { ...none, problem: required ? `Type what ${payerLabel(FIRST)} and ${payerLabel(SECOND)} paid.` : '' }
   if (PEOPLE.some((c) => decimalProblem(texts[c]))) return { ...none, problem: 'Type each part as a number, like 100 or 168,58.' }
-  const values = Object.fromEntries(PEOPLE.map((c) => [c, texts[c] ? round2(parseDecimal(texts[c])) : null]))
+  // Each part rounded to cents first; the check adds up the rounded values
+  // (K21), which are also what is saved.
+  const values = Object.fromEntries(PEOPLE.map((c) => [c, texts[c] ? typedCents(parseDecimal(texts[c])) : null]))
   const fixOn = (code) => {
     const value = round2(sum - (values[otherPerson(code)] ?? 0))
     return value >= 0 ? { code, text: moneyText(value), label: `Put the difference on ${payerLabel(code)}` } : null

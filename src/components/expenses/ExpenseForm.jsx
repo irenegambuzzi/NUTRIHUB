@@ -13,7 +13,8 @@ import { useShops } from '../../hooks/useShops'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
-import { PEOPLE, SHARED, checkSplit, emptySplit, splitFrom, staleNote, storedParts } from '../../lib/sharedParts'
+import { PEOPLE, SHARED, checkSplit, emptySplit, partsColumnsReady, splitFrom, staleNote, storedParts } from '../../lib/sharedParts'
+import { checkExpenseParts, refuseUnknownParts } from '../../hooks/useExpenseParts'
 
 // The expense fields, for adding an expense by hand or editing one
 // (`initial`), plus the category manager they open. onSubmit resolves to
@@ -23,7 +24,10 @@ import { PEOPLE, SHARED, checkSplit, emptySplit, splitFrom, staleNote, storedPar
 // or already had parts; an old Shared expense without parts may stay
 // without them, but once one part is typed they must add up (K11). Another
 // payer clears them. `parts` is sent only with 029: { [code]: € }, or
-// null for none.
+// null for none. `partsReady` null: not known yet (K18) — saving Shared
+// then asks first (`checkParts`, one small read): 029 there → the fields
+// show and nothing is saved yet; not there → saved as before; no answer →
+// nothing is saved (the usual offline message).
 export function ExpenseForm({
   initial,
   submitLabel = 'Add expense',
@@ -39,6 +43,7 @@ export function ExpenseForm({
   styleFor,
   onClose,
   partsReady = false,
+  checkParts = checkExpenseParts,
 }) {
   const initialMain = initial ? categoryTree(categories).mainOf(initial.category_id) : null
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
@@ -50,6 +55,10 @@ export function ExpenseForm({
   const keptParts = initial?.paid_by === SHARED ? storedParts(initial) : null
   const [split, setSplit] = useState(() => (keptParts ? splitFrom(keptParts) : emptySplit()))
   const [triedParts, setTriedParts] = useState(false)
+  // What the check at Save found while `partsReady` wasn't known; an
+  // expense being edited tells by itself (it was read with all columns).
+  const [checked, setChecked] = useState(null)
+  const ready = partsReady ?? checked ?? (initial && partsColumnsReady([initial]) ? true : null)
   const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
   const [shopId, setShopId] = useState(initial?.shop_id ?? '')
   const [dateOk, setDateOk] = useState(true)
@@ -59,7 +68,7 @@ export function ExpenseForm({
 
   // The parts must add up to the amount as typed now; the amber "Parts were
   // for …" of an amount changed elsewhere (K9) shows while they don't.
-  const splitOn = partsReady && paidBy === SHARED
+  const splitOn = ready === true && paidBy === SHARED
   const amountValue = Math.round(parseDecimal(amount) * 100) / 100
   const splitCheck = splitOn ? checkSplit(split, amountValue, { required: !(initial?.paid_by === SHARED && !keptParts) }) : null
 
@@ -76,6 +85,12 @@ export function ExpenseForm({
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
     setTriedParts(true)
     if (splitCheck?.problem) return
+    if (paidBy === SHARED && ready === null) {
+      const found = await checkParts()
+      if (found === null) return refuseUnknownParts()
+      setChecked(found)
+      if (found) return
+    }
     const { error } = await onSubmit({
       categoryId: subId || mainId || null,
       amount: value,
@@ -83,7 +98,7 @@ export function ExpenseForm({
       paidBy,
       expenseDate,
       ...(shopsReady ? { shopId: shopId || null } : {}),
-      ...(partsReady ? { parts: splitCheck?.parts ?? null } : {}),
+      ...(ready ? { parts: splitCheck?.parts ?? null } : {}),
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return

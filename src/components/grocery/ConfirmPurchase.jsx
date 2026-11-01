@@ -26,7 +26,7 @@ import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { usePurchase } from '../../hooks/usePurchase'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
-import { useExpensePartsReady } from '../../hooks/useExpenseParts'
+import { checkExpenseParts, refuseUnknownParts, useExpensePartsReady } from '../../hooks/useExpenseParts'
 import { round2 } from '../../lib/discounts'
 import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../lib/sharedParts'
 
@@ -55,8 +55,11 @@ import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../l
 // paid of them is typed once ("What each one paid"), and spread over those
 // lines by what each really pays (lib/sharedParts.js). Lines paid by one
 // person are untouched. `partsReady`: whether 029 has run (found by itself
-// when not given).
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady }) {
+// when not given; null while it can't be told). Confirm with Shared lines
+// while it isn't known asks first (`checkParts`, K18): 029 there → the box
+// shows and nothing is saved yet; not there → confirmed as before; no
+// answer → nothing is saved (the usual offline message).
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts }) {
   const { confirmPurchase } = usePurchase()
   const partsFound = useExpensePartsReady()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
@@ -113,6 +116,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const variantIds = useRef(new Map())
   const [photoIds, setPhotoIds] = useState([])
   const [busy, setBusy] = useState(false)
+  // What the check at Confirm found while it wasn't known.
+  const [checked, setChecked] = useState(null)
+  const ready = partsReady ?? partsFound ?? checked
   // Edits by item id ({ quantity, unit, total, payer }). Also kept in a ref,
   // so Confirm pressed while a field is still focused sees the last digit.
   const [edits, setEdits] = useState({})
@@ -156,7 +162,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const sharedTotalOf = (shared, priced) => round2(shared.reduce((sum, i) => sum + priced.byItem.get(i.id).paid, 0))
   const sharedItems = sharedOf(items, pricing)
   const sharedTotal = sharedTotalOf(sharedItems, pricing)
-  const splitOn = (partsReady ?? partsFound) && sharedTotal > 0
+  const splitOn = ready === true && sharedTotal > 0
   const splitCheck = splitOn ? checkSplit(split, sharedTotal) : null
   const [splitWasOn, setSplitWasOn] = useState(splitOn)
   if (splitWasOn !== splitOn) {
@@ -184,6 +190,14 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
+    if (ready === null && sharedOf(confirmed, confirmedPricing).length) {
+      setBusy(true)
+      const found = await checkParts()
+      setBusy(false)
+      if (found === null) return refuseUnknownParts()
+      setChecked(found)
+      if (found) return
+    }
     const confirmedShared = splitOn ? sharedOf(confirmed, confirmedPricing) : []
     const confirmedSplit = confirmedShared.length ? checkSplit(split, sharedTotalOf(confirmedShared, confirmedPricing)) : null
     if (confirmedSplit?.problem) return

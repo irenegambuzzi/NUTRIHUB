@@ -30,7 +30,8 @@ Contents
    - 9J. Arrived Undo and recorded arrivals (decided 30/10, as built;
      follow-up 31/10: K20, K24, toast durations)
    - 9K. Shared parts (decided 31/10–01/11, as built; NOTE 3 phase 1,
-     SQL 029) and the SHOP search field (NOTE 1)
+     SQL 029) and the SHOP search field (NOTE 1); follow-up 01/11: K14–K21,
+     K8b, and the order of the next rounds
 10. Risks and decisions
 
 ---
@@ -2285,6 +2286,9 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    with each person's part, phase 1). The shared bank account (option B)
    and phase 2 are under 9K "Later".
 
+The order of the rounds from 01/11 on: section 9K, "Follow-up 01/11 to 9K",
+"Next rounds".
+
 ### 9G. Similar-name safety net (decided 26/10, as built)
 
 Code and tests only: no SQL, no new column, no browser storage. It only
@@ -3101,8 +3105,9 @@ screen uses it.
 
 **Next round.** Round 9J (an Undo on the toast after "Arrived", and stock
 added through the "It arrived!" dialog recorded on the order) is done and
-tested (31/10/2026) — see section 9J below. Next: iPhone test of 9K. The
-order of the rounds after it is decided in chat.
+tested (31/10/2026) — see section 9J below. Next: iPhone test of 9K; the
+order of the rounds after it (decided 01/11) is in section 9K,
+"Follow-up 01/11 to 9K", "Next rounds".
 
 ### Follow-up 29/10 to 9I (as built; code and tests only, no SQL)
 
@@ -3749,8 +3754,9 @@ expense doesn't send parts, so a changed amount shows the K9 note.
   Totals per category follow unchanged. A Shared row then reads
   "€100.00" with "of €268.58" under it (also on the collapsed category
   row); a purchase: its parts' sum with "of total €…". Everyone and Shared
-  stay whole. The Orders filter is unchanged. A part of €0 still lists the
-  row ("€0.00 of €…").
+  stay whole. The Orders filter is unchanged. ~~A part of €0 still lists
+  the row ("€0.00 of €…").~~ Changed 01/11 (K14): a part of €0 is not
+  listed in that person's pill.
 - Under every Shared expense with parts, in every view: "{label} €100.00
   · {label} €168.58" (`partsLine`).
 - K3 Parts are **required** for every new Shared expense in Money "Add
@@ -3807,8 +3813,8 @@ expense doesn't send parts, so a changed amount shows the K9 note.
 - K12 Undo toast / Reopen purchase / Undo purchase: the parts go with the
   expenses (deleted by `reopen_shopping_trip`); confirming again needs
   them typed again. Merge / Split: amounts and payers never change, so the
-  parts stay; Shared + Shared may be merged. K20 "Add the expense again":
-  a Shared expense without parts (`expenseRowForOrder` unchanged). Income:
+  parts stay; Shared + Shared may be merged. 9J's K20 "Add the expense
+  again": a Shared expense without parts (`expenseRowForOrder` unchanged). Income:
   no parts. The "Shared" pill: whole amounts. The SHOP budget card: unchanged.
 - K13 NOTE 1 — the SHOP search field ("Search the list and the cart…",
   text unchanged) is now directly above "+ Add to SHOP list" in the List
@@ -3867,8 +3873,134 @@ allows 029 (it doesn't touch `arrive_order` / `unarrive_order`).
   "Shared" in SHOP and as the raw code in Money).
 - **Phase 2 — parts for orders**: Add order, Order online, Edit order and
   order groups (`orders` columns and a replaced `save_order_group` that
-  spreads a group's parts like its discount). Timing still being decided
-  by the household (01/11).
+  spreads a group's parts like its discount). Moved here by decision K8b
+  (01/11, below): built only when a Shared order really happens.
+- **A one-tap "use the scaled parts" in "Edit expense"** (K16, 01/11): when
+  the amount was changed elsewhere (K9), one button would put the scaled
+  parts in the two fields. Not built; today they are typed again or fixed
+  with "Put the difference on {label}". With phase 2.
+
+### Follow-up 01/11 to 9K (as built; code and tests only, no SQL)
+
+Decisions of the household, 01/11, on the 9K doubts. **No SQL**: no file
+in `supabase/` changed; no new browser storage, no new offline queue.
+Orders, order groups and their functions are not touched.
+
+**K14 (doubt 1) — a part of €0 is not shown in that person's pill.**
+`sharedParts.personalExpenses` passes a Shared expense into a person's
+view only when that person's (shown, K9-scaled) part is above €0. Totals
+are unchanged (the part was 0). A purchase: its lines of €0 for that
+person are left out; when no line of theirs is left (every Shared line €0
+and no own line), the purchase row is not shown in that view. A purchase
+row that still shows keeps "of total €…" of the whole purchase.
+"Everyone" and "Shared" are unchanged.
+
+**K15 (doubt 2) — kept as built.** The parts of a Shared expense that has
+them can't be emptied; changing "Paid by" to a person is the way.
+
+**K16 (doubt 3) — kept as built.** A one-tap "use the scaled parts" in
+"Edit expense" is under "Later" above, with phase 2.
+
+**K17 (doubt 4) — kept as built.** No split box when every Shared line is
+free (€0).
+
+**K18 (doubt 5) — Shared is never saved without parts only because the
+app couldn't tell yet that 029 has run.** `hooks/useExpenseParts.js`:
+`useExpensePartsReady` now answers **true / false / null** (null = not
+known: offline, or the read failed). The read is one small select of the
+two part columns (`select('part_…, part_…').limit(1)`): it answers →
+true (also with no expense at all); the database says the column doesn't
+exist (42703 / PGRST204 naming a part column) → false; anything else →
+null. Money's loaded expenses still tell by themselves (read with all
+columns). While null the fields stay hidden, and the read is made again as
+soon as the connection comes back (`useOnline`), so the box appears without
+reopening the screen. Once true it stays known for this app start, and
+every screen learns it (one shared answer).
+Pressing **"Confirm purchase"** (SHOP, with at least one Shared line that
+costs something), **"Add expense · €…" / "Save purchase · €…"** (Money
+"+ Add expense", paid by Shared, total above 0) or **"Save"** (Money "Edit
+expense", paid by Shared) while it is null: `checkExpenseParts()` reads
+once first, then
+- 029 there → the box shows (with "Type what {label} and {label} paid."),
+  **nothing is saved yet**;
+- 029 truly not there → saved exactly as before (no parts);
+- no answer → nothing is saved, with the existing messages
+  (`refuseUnknownParts`): offline "You're offline — this needs a
+  connection."; otherwise "Couldn't save — check your connection.".
+"Edit expense" of an expense read with the part columns knows by itself
+(the row carries them). Paid by a person: no check. **No new text.**
+
+**K19 (doubt 6) — kept as built.** The K4 note across the Money top card,
+under the three boxes.
+
+**K20 (doubt 7) — "Select" in a person's pill lists only their own
+expenses**, exactly as before 9K (`ExpensesPage`: the rows without
+`sharedPart`). Shared expenses (with or without parts) are merged from
+"Everyone" or "Shared", which are unchanged. The totals, charts and "Set
+the store of several expenses…" of the pill keep K2.
+
+**K21 (doubt 8) — parts with more than 2 decimals are rounded to cents,
+and the "add up" check adds the rounded values.** One rounding for typed
+parts (`typedCents` in `lib/sharedParts.js`, half up as written: 100,555 →
+100.56, not the 100.55 that 100.555 × 100 = 10055.4999… gave before). So
+100,555 + 168,025 (= 268,58 as typed) is 100.56 + 168.03 = €268.59:
+refused with "The parts add up to €268.59, not €268.58.", and "Put the
+difference on {label}" gives cents that add up. Typing 100,555 fills the
+other field with the rest of the rounded part (168.02). What is saved is
+always the rounded values.
+
+**K8b (decided 01/11) — phase 2 is moved to "Later".** Parts for orders,
+Order online, Edit order and order groups are built only when a Shared
+order really happens. Live data 01/11: no Shared orders; exactly one Shared
+expense in October (27/10, a plain expense). Until then an order's expense
+can get parts with "Edit expense" (K8).
+
+**Files.** Changed: `lib/sharedParts.js` (K14, K21), `hooks/
+useExpenseParts.js` (K18: true / false / null, `checkExpenseParts`,
+`refuseUnknownParts`, read again when the connection comes back,
+`forgetPartsForTest`), `expenses/ExpenseForm.jsx`,
+`expenses/PurchaseForm.jsx`, `grocery/ConfirmPurchase.jsx` (K18, each
+with a `checkParts` prop for tests), `pages/ExpensesPage.jsx` (K20).
+
+**Tests: 1961 → 1981 (108 files).** `lib/sharedParts.test.js` +5 (K14 a
+€0 part both ways round, a purchase with €0 lines and with every line €0;
+K21 100,555 + 168,025 refused and fixed, fill-the-rest with the rounded
+part). `hooks/expenseParts.test.jsx` 5 → 8 (Money's rows; the two-column
+read: true also with no expense, false on "does not exist", null on
+another error or none; offline nothing read, the connection back → true
+without reopening; `checkExpenseParts` reaches every screen; the two
+messages). `components/sharedParts.render.test.jsx` +12 (K14 in the
+pills with a vet bill, a purchase with every line €0 and one with one
+line of theirs;
+K20 Select both ways round, Everyone and Shared; K18 Add expense checked
+first → box, then saved with parts; truly not there → saved as before, a
+person → no check; offline → nothing saved; Save purchase; Edit expense
+with and without the columns, offline; Confirm purchase → box, not there,
+offline, no Shared line; opened offline → the box appears when the
+connection comes back; K21 on screen). `components/packSize.render.test.jsx`:
+its Confirm purchase is "before 029" (`partsReady={false}`), since a
+fake database that can't answer now means "not known".
+
+**Next rounds (decided 01/11), in this order.**
+
+1. iPhone test of 9K (after 029 has been checked and run).
+2. **NEW NOTE 1 — units and pack contents in SHOP "+ Add to SHOP list".**
+   The household buys e.g. soft drinks as "1 pack" (4 cans / bottles) but
+   wants HOME stock counted in pcs. Today the form has no "pcs per pack"
+   field (by design since 9H), the price unit next to "Unit price / Total
+   price" seems to follow the quantity unit (not verified), and a NEW item
+   created by "Confirm purchase" takes the purchase unit as its stock unit
+   (so it counts packs). Read-only analysis first.
+3. Round 6D (one item, many names; section 9D).
+4. **MONEY display round**: notes 4 + 5 (in the plan's "Later" / 9F
+   notes) plus NEW NOTES 2 + 3: in Money, the charts first; then "Totals
+   per category" as a closed bar that opens on tap (like "History (N)" in
+   Orders); then the expenses history (with Sort by) as a closed bar in
+   the same way; the Income history also closed until tapped. Only how
+   things are shown, not colours or content. Read-only analysis first.
+5. Family Tree (another project).
+
+Trips & Holidays (round 7) and AI (round 8) stay postponed.
 
 ### iPhone checklist for round 9K
 

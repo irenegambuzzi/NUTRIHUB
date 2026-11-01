@@ -234,3 +234,50 @@ describe('one split for a whole purchase, spread over its lines (K7)', () => {
     expect(partFields(null)).toEqual({})
   })
 })
+
+describe('follow-up 01/11: a part of €0 in a personal view (K14)', () => {
+  it.each(both)('the one whose part is €0 (%s here) doesn\'t see the row; the other sees it whole; totals, Everyone and Shared unchanged', (p0, pAll) => {
+    const vet = withParts(84.3, 0, 0, { id: 'vet', description: 'Vet visit', [partColumn(p0)]: 0, [partColumn(pAll)]: 84.3 })
+    const fuel = { id: 'fuel', paid_by: p0, amount: 46.1 }
+    const list = [vet, fuel]
+    expect(personalExpenses(list, p0).map((e) => [e.id, e.amount])).toEqual([['fuel', 46.1]])
+    expect(personalExpenses(list, pAll).map((e) => [e.id, e.amount])).toEqual([['vet', 84.3]])
+    expect(personalExpenses(list, 'all')).toBe(list)
+    expect(personalExpenses(list, 'shared')).toEqual([vet])
+    const sum = (rows) => Math.round(rows.reduce((s, e) => s + e.amount, 0) * 100) / 100
+    expect(sum([...personalExpenses(list, p0), ...personalExpenses(list, pAll)])).toBe(sum(list))
+  })
+
+  it('a purchase: lines of €0 for that person are left out; every line €0 → nothing of the purchase', () => {
+    const line = (id, a, b) => withParts(Math.round((a + b) * 100) / 100, a, b, { id, trip_id: 'trip-eurospin' })
+    const trip = [line('detergent', 0, 6.49), line('apples', 1.2, 1.79), line('rice', 0, 2.35)]
+    expect(personalExpenses(trip, P1).map((e) => [e.id, e.amount])).toEqual([['apples', 1.2]])
+    expect(personalExpenses(trip, P2).map((e) => e.id)).toEqual(['detergent', 'apples', 'rice'])
+    const allSecond = [line('detergent', 0, 6.49), line('rice', 0, 2.35)]
+    expect(personalExpenses(allSecond, P1)).toEqual([])
+    // With an own line of theirs in the same purchase, that line stays.
+    expect(personalExpenses([...allSecond, { id: 'gum', paid_by: P1, amount: 1.5, trip_id: 'trip-eurospin' }], P1).map((e) => e.id)).toEqual(['gum'])
+  })
+})
+
+describe('follow-up 01/11: parts with more than 2 decimals (K21)', () => {
+  it('100,555 + 168,025 = 268,58 typed, but rounded to cents they are 100.56 + 168.03 = 268.59: refused, the fix gives cents that add up', () => {
+    const split = { texts: { [P1]: '100,555', [P2]: '168,025' }, typed: { [P1]: true, [P2]: true }, last: P2 }
+    const check = checkSplit(split, 268.58)
+    expect(check.problem).toBe('The parts add up to €268.59, not €268.58.')
+    expect(check.parts).toBeNull()
+    expect(check.fix).toMatchObject({ code: P1, text: '100.55', label: `Put the difference on ${L1}` })
+    const fixed = checkSplit(applyFix(split, check.fix), 268.58)
+    expect(fixed.problem).toBe('')
+    expect(fixed.parts).toEqual({ [P1]: 100.55, [P2]: 168.03 })
+  })
+
+  it('typing 100,555 fills the other with the rest of the rounded part; what is saved adds up to the cent', () => {
+    const typed = typePart(emptySplit(), P1, '100,555', 268.58)
+    expect(typed.texts[P2]).toBe('168.02')
+    expect(checkSplit(typed, 268.58).parts).toEqual({ [P1]: 100.56, [P2]: 168.02 })
+    const other = typePart(emptySplit(), P2, '13.405', 33.4)
+    expect(other.texts[P1]).toBe('19.99')
+    expect(checkSplit(other, 33.4).parts).toEqual({ [P1]: 19.99, [P2]: 13.41 })
+  })
+})

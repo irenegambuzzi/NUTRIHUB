@@ -350,8 +350,10 @@ export function ExpensesPage() {
         <CategoryTotals totals={totals} total={total} styleFor={styleFor} />
 
         {selecting ? (
+          // A person's pill lists only their own expenses to merge (K20),
+          // as before 9K; Shared ones are merged from Everyone or Shared.
           <SelectExpenses
-            expenses={sortNewestFirst(filteredExpenses.map(realExpense), expenseDate)}
+            expenses={sortNewestFirst(filteredExpenses.filter((e) => !e.sharedPart), expenseDate)}
             orderExpenseIds={orderExpenseIds}
             names={namesOf}
             shopOf={shopOf}

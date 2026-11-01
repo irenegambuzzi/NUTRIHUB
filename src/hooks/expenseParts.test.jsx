@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 
 // Round 9K: each person's part of a Shared expense, as written by the app
 // (plain expense, Edit expense) and how the app finds out that
@@ -8,7 +8,8 @@ import { renderHook, waitFor } from '@testing-library/react'
 const client = vi.hoisted(() => ({ supabase: {} }))
 vi.mock('../lib/supabaseClient', () => client)
 const { addExpenseOnce, useExpenses } = await import('./useExpenses')
-const { useExpensePartsReady } = await import('./useExpenseParts')
+const { checkExpenseParts, forgetPartsForTest, refuseUnknownParts, useExpensePartsReady } = await import('./useExpenseParts')
+const { setOnlineForTest } = await import('../lib/connection')
 const { PAID_BY_OPTIONS } = await import('../data/constants')
 const { dismissToast, getToasts } = await import('../lib/feedback')
 
@@ -82,31 +83,82 @@ describe('"Edit expense" (useExpenses().updateExpense)', () => {
   })
 })
 
-describe('has 029 run? (rows read with all their columns)', () => {
-  it('from the expenses already loaded (Money)', () => {
+describe('has 029 run? (true, false, or null while it can\'t be told)', () => {
+  afterEach(() => {
+    cleanup()
+    forgetPartsForTest()
+    setOnlineForTest(true)
+  })
+  const missing = { code: '42703', message: `column expenses.${C1} does not exist` }
+
+  it('from the expenses already loaded (Money): they tell', () => {
     expect(renderHook(() => useExpensePartsReady([{ id: 'a', amount: 1, [C1]: null, [C2]: null }])).result.current).toBe(true)
     expect(renderHook(() => useExpensePartsReady([{ id: 'a', amount: 1 }])).result.current).toBe(false)
     expect(renderHook(() => useExpensePartsReady([])).result.current).toBe(false)
   })
 
-  it('without them (SHOP Confirm purchase): one expense is read; no columns, an error or no connection → no', async () => {
-    fakeDb(() => ({ data: [{ id: 'a', amount: 1 }], error: null }))
+  it('without them (SHOP Confirm purchase): the two columns are read once; "does not exist" → false; another error or no answer → null', async () => {
+    fakeDb(() => ({ data: null, error: missing }))
     const before = renderHook(() => useExpensePartsReady())
+    await waitFor(() => expect(before.result.current).toBe(false))
+    fakeDb(() => ({ data: null, error: { message: 'Failed to fetch' } }))
+    const failed = renderHook(() => useExpensePartsReady())
     await new Promise((done) => setTimeout(done, 20))
-    expect(before.result.current).toBe(false)
-    fakeDb(() => ({ data: null, error: { message: 'offline' } }))
-    expect(renderHook(() => useExpensePartsReady()).result.current).toBe(false)
+    expect(failed.result.current).toBeNull()
     client.supabase = {}
-    expect(renderHook(() => useExpensePartsReady()).result.current).toBe(false)
-    const log = fakeDb(() => ({ data: [{ id: 'a', amount: 1, [C1]: null, [C2]: null }], error: null }))
+    const broken = renderHook(() => useExpensePartsReady())
+    await new Promise((done) => setTimeout(done, 20))
+    expect(broken.result.current).toBeNull()
+    // An empty list of expenses still tells: the columns answered.
+    const log = fakeDb(() => ({ data: [], error: null }))
     const after = renderHook(() => useExpensePartsReady())
     await waitFor(() => expect(after.result.current).toBe(true))
     expect(log[0].calls).toEqual([
-      ['select', '*'],
+      ['select', `${C1}, ${C2}`],
       ['limit', 1],
     ])
-    // Known from then on.
+    // Known from then on, everywhere.
     client.supabase = {}
     expect(renderHook(() => useExpensePartsReady()).result.current).toBe(true)
+    expect(failed.result.current).toBe(true)
+  })
+
+  it('offline: null and nothing is read; the connection comes back → read again, the answer arrives without reopening (K18)', async () => {
+    setOnlineForTest(false)
+    const log = fakeDb(() => ({ data: [{ id: 'a', amount: 1, [C1]: null, [C2]: null }], error: null }))
+    const hook = renderHook(() => useExpensePartsReady())
+    await new Promise((done) => setTimeout(done, 20))
+    expect(hook.result.current).toBeNull()
+    expect(log).toHaveLength(0)
+    act(() => setOnlineForTest(true))
+    await waitFor(() => expect(hook.result.current).toBe(true))
+    expect(log).toHaveLength(1)
+  })
+
+  it('checkExpenseParts (pressed Confirm / Add expense while not known): one read; what it finds reaches every screen', async () => {
+    setOnlineForTest(false)
+    const waiting = renderHook(() => useExpensePartsReady())
+    expect(await checkExpenseParts()).toBeNull()
+    setOnlineForTest(true)
+    fakeDb(() => ({ data: null, error: missing }))
+    expect(await checkExpenseParts()).toBe(false)
+    const log = fakeDb(() => ({ data: [], error: null }))
+    let found
+    await act(async () => {
+      found = await checkExpenseParts()
+    })
+    expect(found).toBe(true)
+    expect(waiting.result.current).toBe(true)
+    expect(await checkExpenseParts()).toBe(true)
+    expect(log).toHaveLength(1)
+  })
+
+  it('a save that can\'t tell says so with the usual messages and saves nothing', () => {
+    setOnlineForTest(false)
+    refuseUnknownParts()
+    expect(getToasts().at(-1)).toMatchObject({ message: "You're offline — this needs a connection." })
+    setOnlineForTest(true)
+    refuseUnknownParts()
+    expect(getToasts().at(-1)).toMatchObject({ message: "Couldn't save — check your connection.", tone: 'error' })
   })
 })

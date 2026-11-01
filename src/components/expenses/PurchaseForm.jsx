@@ -54,6 +54,7 @@ import { useTypingPause } from '../../hooks/useTypingPause'
 import { recordMoneyPurchase } from '../../hooks/usePurchase'
 import { addExpenseOnce } from '../../hooks/useExpenses'
 import { useShops } from '../../hooks/useShops'
+import { checkExpenseParts, refuseUnknownParts } from '../../hooks/useExpenseParts'
 
 // MONEY "Add expense": one receipt. On top the store, date and payer of
 // the whole purchase; below one row per item — name, the price as on the
@@ -70,8 +71,11 @@ import { useShops } from '../../hooks/useShops'
 // Paid by Shared (plan 9K, with supabase/029: `partsReady`): what each
 // person paid must be typed under "Paid by" — for a purchase once, for
 // the whole receipt, spread over its lines (lib/sharedParts.js). Before
-// 029 "Shared" works as it always did.
-export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false }) {
+// 029 "Shared" works as it always did. `partsReady` null: not known yet
+// (K18) — saving Shared asks first (`checkParts`): 029 there → the fields
+// show and nothing is saved yet; not there → saved as before; no answer →
+// nothing is saved (the usual offline message).
+export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false, checkParts = checkExpenseParts }) {
   // One id per form: pressing Save again after a dropped connection can't
   // save the purchase (or the expense) twice.
   const [id] = useState(() => crypto.randomUUID())
@@ -85,6 +89,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
   const [tried, setTried] = useState(false)
   const [busy, setBusy] = useState(false)
+  // What the check at Save found while `partsReady` wasn't known.
+  const [checked, setChecked] = useState(null)
+  const ready = partsReady ?? checked
   const [managing, setManaging] = useState(null) // the row key whose budget category opened Manage
   const { ready: shopsReady } = useShops()
 
@@ -115,7 +122,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const total = purchaseTotal(lines)
   // Each person's part of what is paid by Shared: required for every new
   // Shared expense, checked again whenever a price or discount changes.
-  const splitOn = partsReady && paidBy === SHARED
+  const splitOn = ready === true && paidBy === SHARED
   const splitCheck = splitOn ? checkSplit(split, total) : null
   const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem || splitCheck?.problem || ''
 
@@ -157,6 +164,12 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     setTried(true)
     if (busy || formProblem) return
     setBusy(true)
+    if (paidBy === SHARED && total > 0 && ready === null) {
+      const found = await checkParts()
+      if (found === null) refuseUnknownParts()
+      else setChecked(found)
+      if (found !== false) return setBusy(false)
+    }
     const { error } = plain ? await saveExpense(lines[0]) : await savePurchase()
     setBusy(false)
     if (error) return

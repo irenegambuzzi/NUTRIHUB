@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 // Round 9K: "Shared" with each person's part on screen — Money "Add
 // expense" (one expense and a purchase with a coupon), "Edit expense",
@@ -86,6 +86,10 @@ const { ExpenseForm } = await import('./expenses/ExpenseForm')
 const { ConfirmPurchase } = await import('./grocery/ConfirmPurchase')
 const { ExpensesPage } = await import('../pages/ExpensesPage')
 const { confirmationPayload } = await import('../lib/purchase')
+const { setOnlineForTest } = await import('../lib/connection')
+const { dismissToast, getToasts } = await import('../lib/feedback')
+const { forgetPartsForTest } = await import('../hooks/useExpenseParts')
+const client = await import('../lib/supabaseClient')
 
 const PEOPLE = PAID_BY_OPTIONS.map((o) => o.value).filter((v) => v !== 'shared')
 const [P1, P2] = PEOPLE
@@ -111,9 +115,13 @@ afterEach(() => {
   data.expenses = []
   data.trips = []
   localStorage.clear()
+  getToasts().forEach((t) => dismissToast(t.id))
+  setOnlineForTest(true)
+  forgetPartsForTest()
+  delete client.supabase.from
 })
 
-const purchaseForm = (partsReady = true) =>
+const purchaseForm = (partsReady = true, checkParts) =>
   render(
     <PurchaseForm
       expenseCategories={categories}
@@ -126,6 +134,7 @@ const purchaseForm = (partsReady = true) =>
       styleFor={() => ({ hex: '#000' })}
       onClose={vi.fn()}
       partsReady={partsReady}
+      checkParts={checkParts}
     />
   )
 
@@ -547,5 +556,249 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
     expect(screen.queryByText('Housing & Utilities', { selector: 'p' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add expense' }))
     expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
+  })
+
+  // Follow-up 01/11 (K14): a Shared expense whose part is €0 for a person.
+  const zeroMonth = () =>
+    withColumns([
+      { id: 'vet', amount: 84.3, description: 'Vet visit', category_id: 'pets', expense_date: day(9), paid_by: 'shared', ...parts(0, 84.3) },
+      { id: 'detergent', amount: 6.49, description: 'Detergent', category_id: 'groceries', expense_date: day(14), paid_by: 'shared', trip_id: 'trip-ld', ...parts(0, 6.49) },
+      { id: 'rice', amount: 2.35, description: 'Rice', category_id: 'groceries', expense_date: day(14), paid_by: 'shared', trip_id: 'trip-ld', ...parts(0, 2.35) },
+      { id: 'apples', amount: 2.99, description: 'Apples', category_id: 'groceries', expense_date: day(18), paid_by: 'shared', trip_id: 'trip-co', ...parts(1.2, 1.79) },
+      { id: 'soap', amount: 3.1, description: 'Soap', category_id: 'groceries', expense_date: day(18), paid_by: 'shared', trip_id: 'trip-co', ...parts(0, 3.1) },
+      { id: 'fuel', amount: 46.1, description: 'Fuel', category_id: 'housing', expense_date: day(3), paid_by: P1 },
+      { id: 'bread', amount: 3.4, description: 'Bread', category_id: 'groceries', expense_date: day(22), paid_by: P2 },
+    ])
+  const zeroTrips = () => [
+    { id: 'trip-ld', trip_date: day(14), source: 'money', shop_id: null },
+    { id: 'trip-co', trip_date: day(18), source: 'money', shop_id: null },
+  ]
+
+  it('K14: a part of €0 is not listed in that person\'s pill (a plain expense, a purchase line, a purchase with every line €0); totals unchanged; Everyone and Shared unchanged', () => {
+    data.expenses = zeroMonth()
+    data.trips = zeroTrips()
+    page()
+    expect(within(summary()).getByText('€148.73')).toBeTruthy()
+    expect(screen.getAllByText(/^Purchase · /)).toHaveLength(2)
+
+    pill(L1)
+    // 46.10 + 1.20: the €0 parts add nothing and show nothing.
+    expect(within(summary()).getByText('€47.30')).toBeTruthy()
+    expect(within(chip()).getByText('€47.30')).toBeTruthy()
+    expect(screen.queryByText('Pets', { selector: 'p' })).toBeNull()
+    expect(screen.queryByText('of €84.30')).toBeNull()
+    // Only the purchase with a line of theirs, still "of total €6.09".
+    const purchases = screen.getAllByText(/^Purchase · /)
+    expect(purchases).toHaveLength(1)
+    const purchase = purchases[0].closest('button')
+    expect(within(purchase).getByText('€1.20')).toBeTruthy()
+    expect(within(purchase).getByText('of total €6.09')).toBeTruthy()
+    fireEvent.click(purchase)
+    expect(within(purchase.parentElement).getByText('Apples')).toBeTruthy()
+    expect(within(purchase.parentElement).queryByText('Soap')).toBeNull()
+
+    pill(L2)
+    // 84.30 + 6.49 + 2.35 + 1.79 + 3.10 + 3.40; with the other pill, Everyone.
+    expect(within(summary()).getByText('€101.43')).toBeTruthy()
+    expect(round(47.3 + 101.43)).toBe(148.73)
+    expect(screen.getByText('Pets', { selector: 'p' })).toBeTruthy()
+    expect(screen.getAllByText(/^Purchase · /)).toHaveLength(2)
+
+    pill(SHARED)
+    expect(within(summary()).getByText('€99.23')).toBeTruthy()
+    expect(screen.getAllByText(/^Purchase · /)).toHaveLength(2)
+  })
+
+  it.each(both)('K20: "Select" in the pill of %s lists only that person\'s own expenses; Everyone and Shared list as before', (own, other) => {
+    data.expenses = month(own, other)
+    data.trips = [{ id: 'trip1', trip_date: day(12), source: 'money', shop_id: null }]
+    const listed = () => ['SPESE CONDOMINIO', 'Bread', 'Cat food', 'Pharmacy', 'Cat litter', 'Dinner'].filter((d) => screen.queryByText(d))
+    page()
+    pill(label(own))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    expect(screen.getByText('Select expenses')).toBeTruthy()
+    expect(listed()).toEqual(['Bread'])
+    pill(label(other))
+    expect(listed()).toEqual(['Cat food'])
+    pill('Everyone')
+    expect(listed()).toEqual(['SPESE CONDOMINIO', 'Bread', 'Cat food', 'Pharmacy', 'Cat litter', 'Dinner'])
+    pill(SHARED)
+    expect(listed()).toEqual(['SPESE CONDOMINIO', 'Pharmacy', 'Cat litter', 'Dinner'])
+  })
+})
+
+describe('follow-up 01/11: not known yet whether 029 has run (K18)', () => {
+  const found = (answer) => vi.fn(async () => answer)
+  const box = () => screen.queryByRole('group', { name: 'What each one paid' })
+
+  it('Money "+ Add expense": pressing it checks first; 029 there → the fields show and nothing is saved yet; then saved with the parts', async () => {
+    const checkParts = found(true)
+    purchaseForm(null, checkParts)
+    type('Name', 'Window cleaner')
+    type('Price', '42,60')
+    expect(box()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €42.60' }))
+    await waitFor(() => expect(box()).toBeTruthy())
+    expect(checkParts).toHaveBeenCalledTimes(1)
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    expect(screen.getAllByText(`Type what ${L1} and ${L2} paid.`).length).toBeGreaterThan(0)
+    typeIn(field(P2), '12,60')
+    expect(field(P1).value).toBe('30.00')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €42.60' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
+    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 42.6, paidBy: 'shared', parts: { [P1]: 30, [P2]: 12.6 } })
+    expect(checkParts).toHaveBeenCalledTimes(1)
+  })
+
+  it('029 truly not there → saved as before (no parts); paid by a person → no check at all', async () => {
+    const checkParts = found(false)
+    purchaseForm(null, checkParts)
+    type('Name', 'Garden hose')
+    type('Price', '19,90')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €19.90' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
+    expect('parts' in addExpenseOnce.mock.calls[0][0]).toBe(false)
+    expect(box()).toBeNull()
+    cleanup()
+    const notAsked = found(true)
+    purchaseForm(null, notAsked)
+    type('Name', 'Phone case')
+    type('Price', '9')
+    fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: P2 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €9.00' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(2))
+    expect(notAsked).not.toHaveBeenCalled()
+  })
+
+  it('offline: nothing is saved, the usual offline message', async () => {
+    setOnlineForTest(false)
+    purchaseForm(null, found(null))
+    type('Name', 'Pizza night')
+    type('Price', '27,50')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €27.50' }))
+    await waitFor(() => expect(getToasts().at(-1)?.message).toBe("You're offline — this needs a connection."))
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    expect(box()).toBeNull()
+  })
+
+  it('a purchase of several rows ("Save purchase"): checked first, the box shows, nothing is saved yet', async () => {
+    purchaseForm(null, found(true))
+    type('Name', 'Pasta')
+    type('Price', '1,89')
+    fireEvent.click(screen.getByRole('button', { name: 'Add item' }))
+    type('Name of item 2', 'Tomato sauce')
+    type('Price of item 2', '2,40')
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €4.29' }))
+    await waitFor(() => expect(box()).toBeTruthy())
+    expect(recordMoneyPurchase).not.toHaveBeenCalled()
+    expect(screen.getByText('What each one paid of €4.29.')).toBeTruthy()
+  })
+
+  it('"Edit expense": an expense read with the part columns tells by itself; otherwise Save checks first', async () => {
+    const tells = found(true)
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    const bill = { id: 'g1', amount: 61.2, description: 'Gas bill', category_id: 'housing', expense_date: '2026-10-29', paid_by: 'shared' }
+    render(<ExpenseForm initial={{ ...bill, ...parts(null, null) }} submitLabel="Save" categories={categories} mainCategories={categories} subsOf={() => []} onSubmit={onSubmit} onCancel={vi.fn()} partsReady={null} checkParts={tells} />)
+    expect(box()).toBeTruthy()
+    cleanup()
+    const asks = found(true)
+    render(<ExpenseForm initial={bill} submitLabel="Save" categories={categories} mainCategories={categories} subsOf={() => []} onSubmit={onSubmit} onCancel={vi.fn()} partsReady={null} checkParts={asks} />)
+    expect(box()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(box()).toBeTruthy())
+    expect(asks).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    cleanup()
+    setOnlineForTest(false)
+    render(<ExpenseForm initial={bill} submitLabel="Save" categories={categories} mainCategories={categories} subsOf={() => []} onSubmit={onSubmit} onCancel={vi.fn()} partsReady={null} checkParts={found(null)} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(getToasts().at(-1)?.message).toBe("You're offline — this needs a connection."))
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  describe('Shop → "Confirm purchase"', () => {
+    const cart = () => [
+      { id: 'milk', name: 'Milk', category_id: 'dairy', quantity: 2, unit: 'pcs', price: 1.35, price_qty: 1, price_unit: 'pcs', payer: 'shared', in_cart: true },
+      { id: 'batteries', name: 'Batteries', category_id: 'appliances', quantity: 1, unit: 'pcs', price: 5.99, price_qty: 1, price_unit: 'pcs', payer: P2, in_cart: true },
+    ]
+    const confirmScreen = (checkParts, items = cart()) =>
+      render(
+        <ConfirmPurchase
+          cartItems={items}
+          pantryItems={data.pantry}
+          categoryName={(id) => id}
+          totalOf={(i) => round((i.price * i.quantity) / (i.price_qty || 1))}
+          updatePricing={async () => ({})}
+          updatePayer={async () => ({})}
+          toggleCart={async () => ({})}
+          onClose={() => {}}
+          checkParts={checkParts}
+        />
+      )
+    const confirmButton = () => screen.getByRole('button', { name: /^Confirm purchase · / })
+
+    it('pressed with a Shared line while not known: checked first; 029 there → the box, not confirmed yet', async () => {
+      const checkParts = found(true)
+      confirmScreen(checkParts)
+      expect(box()).toBeNull()
+      fireEvent.click(confirmButton())
+      await waitFor(() => expect(box()).toBeTruthy())
+      expect(confirmPurchase).not.toHaveBeenCalled()
+      expect(screen.getByText(`What each one paid of the 1 ${SHARED} item (€2.70).`)).toBeTruthy()
+      expect(confirmButton().disabled).toBe(true)
+      typeIn(field(P1), '2,70')
+      fireEvent.click(confirmButton())
+      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+      expect([...confirmPurchase.mock.calls[0][0].partsByItem.keys()]).toEqual(['milk'])
+    })
+
+    it('029 not there → confirmed as before; offline → nothing confirmed, the usual message; no Shared line → no check', async () => {
+      confirmScreen(found(false))
+      fireEvent.click(confirmButton())
+      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+      expect(confirmPurchase.mock.calls[0][0].partsByItem).toBeNull()
+      cleanup()
+      setOnlineForTest(false)
+      confirmScreen(found(null))
+      fireEvent.click(confirmButton())
+      await waitFor(() => expect(getToasts().at(-1)?.message).toBe("You're offline — this needs a connection."))
+      expect(confirmPurchase).toHaveBeenCalledTimes(1)
+      cleanup()
+      setOnlineForTest(true)
+      const notAsked = found(true)
+      confirmScreen(notAsked, cart().map((i) => ({ ...i, payer: P1 })))
+      fireEvent.click(confirmButton())
+      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(2))
+      expect(notAsked).not.toHaveBeenCalled()
+    })
+
+    it('opened offline: no box; the connection comes back → read again, the box appears without reopening', async () => {
+      setOnlineForTest(false)
+      client.supabase.from = () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) })
+      confirmScreen()
+      await new Promise((done) => setTimeout(done, 20))
+      expect(box()).toBeNull()
+      act(() => setOnlineForTest(true))
+      await waitFor(() => expect(box()).toBeTruthy())
+      expect(confirmButton().disabled).toBe(true)
+    })
+  })
+})
+
+describe('follow-up 01/11: parts with more than 2 decimals (K21)', () => {
+  it('Money "+ Add expense": 100,555 fills 168.02 and saves cents that add up; 100,555 + 168,025 is refused (€268.59)', async () => {
+    purchaseForm()
+    type('Name', 'Roof repair')
+    type('Price', '268,58')
+    typeIn(field(P1), '100,555')
+    expect(field(P2).value).toBe('168.02')
+    typeIn(field(P2), '168,025')
+    expect(screen.getAllByText('The parts add up to €268.59, not €268.58.').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    typeIn(field(P2), '168,02')
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
+    expect(addExpenseOnce.mock.calls[0][0].parts).toEqual({ [P1]: 100.56, [P2]: 168.02 })
   })
 })
