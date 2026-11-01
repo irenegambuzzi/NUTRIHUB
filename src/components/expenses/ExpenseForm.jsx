@@ -5,6 +5,7 @@ import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
 import { Label, Input, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
+import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { moneyText, parseDecimal } from '../../lib/decimal'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
@@ -12,10 +13,17 @@ import { useShops } from '../../hooks/useShops'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
+import { PEOPLE, SHARED, checkSplit, emptySplit, splitFrom, staleNote, storedParts } from '../../lib/sharedParts'
 
 // The expense fields, for adding an expense by hand or editing one
 // (`initial`), plus the category manager they open. onSubmit resolves to
 // { error }; on failure the form keeps what was typed.
+// Paid by Shared, with supabase/029 (`partsReady`, plan 9K): what each
+// person paid, under "Paid by". Required when the expense becomes Shared
+// or already had parts; an old Shared expense without parts may stay
+// without them, but once one part is typed they must add up (K11). Another
+// payer clears them. `parts` is sent only with 029: { [code]: € }, or
+// null for none.
 export function ExpenseForm({
   initial,
   submitLabel = 'Add expense',
@@ -30,6 +38,7 @@ export function ExpenseForm({
   deleteCategory,
   styleFor,
   onClose,
+  partsReady = false,
 }) {
   const initialMain = initial ? categoryTree(categories).mainOf(initial.category_id) : null
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
@@ -38,6 +47,9 @@ export function ExpenseForm({
   const [amount, setAmount] = useState(initial ? moneyText(initial.amount) : '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
+  const keptParts = initial?.paid_by === SHARED ? storedParts(initial) : null
+  const [split, setSplit] = useState(() => (keptParts ? splitFrom(keptParts) : emptySplit()))
+  const [triedParts, setTriedParts] = useState(false)
   const [expenseDate, setExpenseDate] = useState(initial?.expense_date ?? localDateString())
   const [shopId, setShopId] = useState(initial?.shop_id ?? '')
   const [dateOk, setDateOk] = useState(true)
@@ -45,11 +57,25 @@ export function ExpenseForm({
   // Stores are only saved once the database has them (supabase/019).
   const { ready: shopsReady } = useShops()
 
+  // The parts must add up to the amount as typed now; the amber "Parts were
+  // for …" of an amount changed elsewhere (K9) shows while they don't.
+  const splitOn = partsReady && paidBy === SHARED
+  const amountValue = Math.round(parseDecimal(amount) * 100) / 100
+  const splitCheck = splitOn ? checkSplit(split, amountValue, { required: !(initial?.paid_by === SHARED && !keptParts) }) : null
+
+  const choosePayer = (value) => {
+    setPaidBy(value)
+    if (value !== SHARED) setSplit(emptySplit())
+    else if (keptParts) setSplit(splitFrom(keptParts))
+  }
+
   const handleAddExpense = async (e) => {
     e.preventDefault()
     const value = parseDecimal(amount)
     if (!(value > 0)) return setDateError(amount.trim() ? 'Enter an amount above 0, like 13,60.' : 'Enter the amount.')
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
+    setTriedParts(true)
+    if (splitCheck?.problem) return
     const { error } = await onSubmit({
       categoryId: subId || mainId || null,
       amount: value,
@@ -57,6 +83,7 @@ export function ExpenseForm({
       paidBy,
       expenseDate,
       ...(shopsReady ? { shopId: shopId || null } : {}),
+      ...(partsReady ? { parts: splitCheck?.parts ?? null } : {}),
     })
     // On failure the toast explains and the form keeps what was typed.
     if (error) return
@@ -123,7 +150,7 @@ export function ExpenseForm({
 
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+            <Select value={paidBy} onChange={(e) => choosePayer(e.target.value)} aria-label="Paid by">
               {PAID_BY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -131,6 +158,16 @@ export function ExpenseForm({
               ))}
             </Select>
           </div>
+          {splitOn && (
+            <SharedPartsFields
+              split={split}
+              onChange={setSplit}
+              total={amountValue}
+              check={splitCheck}
+              showProblem={triedParts || PEOPLE.some((code) => split.texts[code].trim())}
+              note={keptParts && splitCheck?.problem ? staleNote(initial) : ''}
+            />
+          )}
 
           {dateError && <p className="text-xs text-red-400">{dateError}</p>}
 

@@ -9,6 +9,7 @@ import { unitPriceFromTotal } from '../lib/pricing'
 import { allExpenseStores, currentExpensesSince, expenseCategoryStore, expensesInCategory, expensesSince, groceryStore, orderStore, shopStore } from '../lib/stores'
 import { emptyStore, isMissingTable } from '../lib/tableStore'
 import { shopsAvailable } from '../lib/shops'
+import { missingPartsColumn, noPartFields, partFields, PARTS_NOTICE } from '../lib/sharedParts'
 
 const refreshExpenses = () => Promise.all(allExpenseStores().map((s) => s.refresh()))
 const refreshOrders = () => (orderStore.isStarted() ? orderStore.refresh() : null)
@@ -16,6 +17,14 @@ const refreshOrders = () => (orderStore.isStarted() ? orderStore.refresh() : nul
 // The store column is only sent once stores exist in the database
 // (supabase/019); `shopId` undefined leaves an expense's store alone.
 const shopField = (shopId) => (shopId !== undefined && shopsAvailable(shopStore.getSnapshot()) ? { shop_id: shopId || null } : {})
+
+// Each person's part of a Shared expense (plan 9K, supabase/029):
+// `parts` undefined leaves the columns alone (before 029 they are never
+// sent), null empties them, { [code]: € } writes them. A save that still
+// meets a database without them says which update it needs; the form keeps
+// what was typed.
+const partsField = (parts) => (parts === undefined ? {} : parts ? partFields(parts) : noPartFields())
+const partsMessage = (error) => (missingPartsColumn(error) ? PARTS_NOTICE : undefined)
 
 // The orders linked to these expenses ([] before supabase/019).
 async function ordersLinkedTo(expenseIds) {
@@ -148,19 +157,19 @@ export function useExpenses(since = currentExpensesSince()) {
 
   // Saves every field of an existing expense in place (same row, same id).
   const updateExpense = useCallback(
-    (id, { categoryId, amount, description, paidBy, expenseDate, shopId }) =>
+    (id, { categoryId, amount, description, paidBy, expenseDate, shopId, parts }) =>
       attempt(
         async () => {
           const rows = must(
             await supabase
               .from('expenses')
-              .update({ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId) })
+              .update({ category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId), ...partsField(parts) })
               .eq('id', id)
               .select()
           )
           allExpenseStores().forEach((s) => s.upsertLocal(rows))
         },
-        { retry: false, onFail: refreshExpenses }
+        { retry: false, onFail: refreshExpenses, messageOf: partsMessage }
       ),
     []
   )
@@ -234,14 +243,15 @@ export async function setExpensesShop(ids, shopId) {
 // One plain expense from the purchase form (a single row that is only an
 // expense): saved exactly like the old "Add expense". `id` is made once per
 // form, so pressing Save again can't save it twice. Undo deletes it again.
-export async function addExpenseOnce({ id, categoryId, amount, description, paidBy, expenseDate, shopId }) {
+// `parts`: each person's part of a Shared expense (plan 9K), or nothing.
+export async function addExpenseOnce({ id, categoryId, amount, description, paidBy, expenseDate, shopId, parts }) {
   const result = await attempt(
     async () => {
-      const row = { id, category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId) }
+      const row = { id, category_id: categoryId, amount, description, paid_by: paidBy, expense_date: expenseDate, ...shopField(shopId), ...(parts ? partFields(parts) : {}) }
       const rows = must(await supabase.from('expenses').upsert([row], { onConflict: 'id', ignoreDuplicates: true }).select())
       allExpenseStores().forEach((s) => s.upsertLocal(rows))
     },
-    { retry: false }
+    { retry: false, messageOf: partsMessage }
   )
   if (result.error) return result
   const undo = () =>

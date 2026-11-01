@@ -9,6 +9,8 @@ import { purchaseSections } from '../../lib/moneyList'
 import { purchaseUndo } from '../../lib/trips'
 import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
 import { purchasedPackLabel } from '../../lib/packSize'
+import { wholeAmount } from '../../lib/sharedParts'
+import { PartAmount, SharedPartsNote } from './SharedParts'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 
@@ -18,9 +20,12 @@ const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.l
 // `noteOf(expense)` → the discount history of an order's expense (green,
 // under it; also in the header when the group is that one expense).
 // A purchase has its own row (PurchaseGroup, below).
+// In a personal view a Shared expense counts with that person's part
+// (plan 9K): the total then says "of €…" (the whole amounts).
 export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf = () => '', onEdit, onDelete }) {
   const [open, setOpen] = useState(false)
   const { date, main, items, total } = group
+  const whole = Math.round(items.reduce((sum, e) => sum + wholeAmount(e), 0) * 100) / 100
   const payers = [...new Set(items.map((e) => paidByLabel(e.paid_by)))]
   const single = items.length === 1 ? items[0] : null
   const singleNote = single ? noteOf(single) : ''
@@ -61,7 +66,10 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf =
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
+          <span className="text-right">
+            <span className="font-mono font-bold text-[var(--color-accent)] block">€{total.toFixed(2)}</span>
+            {Math.abs(whole - total) > 0.004 && <span className="text-[10px] text-[var(--color-text-muted)] block">of €{whole.toFixed(2)}</span>}
+          </span>
           <ChevronDown size={14} className={cn('text-[var(--color-icon-muted)] transition-transform', open && 'rotate-180')} />
         </div>
       </button>
@@ -96,6 +104,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf =
                       )}
                     </span>
                     {noteOf(e) && <span className="text-[10px] font-bold text-emerald-300 block break-words">{noteOf(e)}</span>}
+                    <SharedPartsNote expense={e} />
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -106,7 +115,7 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf =
                     >
                       <Pencil size={13} />
                     </button>
-                    <span className="font-mono text-[var(--color-text-soft)]">€{Number(e.amount).toFixed(2)}</span>
+                    <PartAmount expense={e} className="text-[var(--color-text-soft)]" />
                     <button
                       onClick={() => onDelete(e)}
                       className="text-[var(--color-icon-muted)] hover:text-red-400 transition"
@@ -248,6 +257,7 @@ export function PurchaseGroup({
                         {e.merged_at && <span className="shrink-0">· merged</span>}
                       </span>
                       {history && <span className="text-[10px] font-bold text-emerald-300 block">{history}</span>}
+                      <SharedPartsNote expense={e} />
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -258,7 +268,7 @@ export function PurchaseGroup({
                       >
                         <Pencil size={13} />
                       </button>
-                      <span className="font-mono text-[var(--color-text-soft)]">€{Number(e.amount).toFixed(2)}</span>
+                      <PartAmount expense={e} className="text-[var(--color-text-soft)]" />
                       <button onClick={() => onDelete(e)} className="text-[var(--color-icon-muted)] hover:text-red-400 transition" title="Delete expense" aria-label="Delete expense">
                         <Trash2 size={13} />
                       </button>

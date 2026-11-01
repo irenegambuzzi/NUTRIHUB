@@ -3,6 +3,7 @@ import { normName } from './grocery'
 import { firstOutVariant } from './groups'
 import { couponFields, lineDiscountFields, priceLines } from './discounts'
 import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
+import { partFields } from './sharedParts'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -108,7 +109,10 @@ export function purchasePricing(items, totalOf, discounts = {}, coupon = null) {
 // stays the NORMAL price of the line (it is also what the grocery entry
 // and the HOME item keep as the last price); what is paid, the expense,
 // is the priced line's `paid`. Without it nothing changes.
-export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null }) {
+// `partsByItem`: the parts of the Shared lines (plan 9K: item id → { [code]:
+// € }, lib/sharedParts.js spreadParts). Lines of a person, and every line
+// without it, send none.
+export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null, partsByItem = null }) {
   return {
     ...(pricing ? couponFields(pricing.priced) : {}),
     id,
@@ -124,6 +128,7 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
         grocery_item_id: item.id,
         line_total: priced && Number.isFinite(priced.paid) ? priced.paid : (totalOf(item) ?? 0),
         ...(priced ? lineDiscountFields(priced) : {}),
+        ...partFields(partsByItem?.get(item.id)),
         payer: item.payer || 'shared',
         expense_category_id: expenseCategoryFor(item),
         durable,

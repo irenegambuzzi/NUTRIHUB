@@ -10,6 +10,7 @@ import { purchasedQuantity } from './purchase'
 import { firstTimePatch, packField, packMissingText, packStartText, packTextFor } from './packSize'
 import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } from './discounts'
 import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
+import { partFields } from './sharedParts'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -290,7 +291,10 @@ const paidOf = (line) => {
 // `list_total` of the line); `line_total` is what was paid (the expense):
 // the price less the line's own discount and its part of the coupon.
 // `priced`: the result of pricedLines() — the purchase's coupon.
-export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, lines, budgetFor, entryOf = () => null, priced = null }) {
+// `lineParts`: for a purchase paid by Shared with parts (plan 9K), each
+// line's parts (lib/sharedParts.js spreadParts, in the order of `lines`;
+// null for a line without an expense). Without it nothing changes.
+export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, lines, budgetFor, entryOf = () => null, priced = null, lineParts = null }) {
   return {
     ...(priced ? couponFields(priced) : {}),
     id,
@@ -300,11 +304,12 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
     shop_id: shopId || null,
     paid_by: paidBy,
     photo_ids: [],
-    items: lines.map((line) => {
+    items: lines.map((line, index) => {
       const { row } = line
       const total = Number.isFinite(line.total) ? line.total : 0
       const item = {
         ...(line.priced ? lineDiscountFields(line.priced) : {}),
+        ...partFields(lineParts?.[index]),
         name: row.name.trim(),
         category_id: row.categoryId || null,
         subcategory_id: row.subcategoryId || null,

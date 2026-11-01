@@ -29,6 +29,8 @@ Contents
    - 9I. Order groups (decided 29/10, as built)
    - 9J. Arrived Undo and recorded arrivals (decided 30/10, as built;
      follow-up 31/10: K20, K24, toast durations)
+   - 9K. Shared parts (decided 31/10–01/11, as built; NOTE 3 phase 1,
+     SQL 029) and the SHOP search field (NOTE 1)
 10. Risks and decisions
 
 ---
@@ -2276,9 +2278,12 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    child (baby bottles, pacifiers… today Baby › Feeding).
 5. Later (not scheduled): adding to the SHOP list while offline needs a
    new offline queue; not built.
-6. Later: Before round 7 (Trips & Holidays), discuss Zidane's notes of
+6. ~~Later: Before round 7 (Trips & Holidays), discuss Zidane's notes of
    31/10: the SHOP search field position, and a real split of "Shared"
-   payments between the payers (and a shared bank account).
+   payments between the payers (and a shared bank account).~~ **Discussed
+   31/10–01/11; built 01/11 — section 9K** (the search field, and "Shared"
+   with each person's part, phase 1). The shared bank account (option B)
+   and phase 2 are under 9K "Later".
 
 ### 9G. Similar-name safety net (decided 26/10, as built)
 
@@ -3096,7 +3101,8 @@ screen uses it.
 
 **Next round.** Round 9J (an Undo on the toast after "Arrived", and stock
 added through the "It arrived!" dialog recorded on the order) is done and
-tested (31/10/2026) — see section 9J below. Next: round 6D.
+tested (31/10/2026) — see section 9J below. Next: iPhone test of 9K. The
+order of the rounds after it is decided in chat.
 
 ### Follow-up 29/10 to 9I (as built; code and tests only, no SQL)
 
@@ -3657,6 +3663,216 @@ Tested on the iPhones and a computer on 31/10/2026 by Zidane:
   gr; covered by automated tests.
 - Not tested on purpose: K5, K14, "Add to a variant of an item group"
   (covered by automated tests).
+
+### 9K. Shared parts (decided 31/10–01/11, as built)
+
+Analysis: `tmp-export/shared-readonly-report.md` (31/10, read only). The
+household chose **option A** ("Shared" + each person's part in €, no 4th
+payer) with sub-choice **A1** (a person's pill = their own money out), and
+decisions K1–K13 below; where they differ from the report, they win. SQL:
+`supabase/029_shared_parts.sql` (not run yet; the household runs it after
+Claude has checked it). The app is deployed before 029 and works before and
+after it. No new browser storage, no new offline queue. Orders, Order
+online, Edit order, order groups, `save_order_group`, `arrive_order` and
+`unarrive_order` are not changed (phase 2, see "Later").
+
+Names: the payers are their codes **irene / akbar / shared**; every text
+reads the labels from `PAID_BY_OPTIONS` (`{label}` below). The two people
+are the payers other than `shared`, in the order of `PAID_BY_OPTIONS`; "the
+second person" takes left-over cents.
+
+**Live data (01/11, from the household's query files).** Payer values in
+use: only irene, akbar, shared (plus an empty `shopping_trips.paid_by` on
+3 mixed SHOP trips). One Shared expense: 27/10/2026 "SPESE CONDOMINIO",
+€268.58, a plain expense (not in a purchase, not from an order). No
+Shared orders, no Shared income.
+
+**Data (029).** `expenses.part_irene numeric(12, 2)` and
+`expenses.part_akbar numeric(12, 2)`, both nullable: what each person paid
+of a Shared expense, in cents. Constraint `expenses_parts_ok`: both empty,
+or both filled and each ≥ 0. **No** "parts = amount" check and **no**
+"paid_by = 'shared'" check: `save_order_group` (028) and Edit order change
+an expense's amount, and 028 and the SHOP payer buttons change its payer,
+without knowing about parts — such checks would make those saves fail.
+The app treats parts as meaningful only while `paid_by = 'shared'`.
+
+Why two numeric columns and not one jsonb keyed by payer code: typed
+numbers in cents, one simple constraint the database can enforce (a jsonb
+would accept any key and any value unless a longer check is written),
+easy to read and add up in the SQL Editor, and no names beyond the
+existing payer codes. A new payer code would need a column (none is
+planned: option B adds no parts).
+
+**`confirm_shopping_trip` (029 replaces the 023 version; no later file
+defines it).** Every line is the 023 version except the expense insert:
+
+| Change | For a payload without parts |
+|---|---|
+| New comment line `-- 029: also each person's part of a Shared line (both empty unless sent).` | Comment only. |
+| `insert into expenses (…, travel_id)` → `(…, travel_id, part_irene, part_akbar)` | — |
+| `values (…, nullif(v_item->>'travel_id', '')::uuid)` → `(…, nullif(v_item->>'travel_id', '')::uuid, (v_item->>'part_irene')::numeric, (v_item->>'part_akbar')::numeric)` | Both null = the column default: exactly what 023 writes. |
+
+Same signature, `search_path = public`, household check (42501), security
+invoker, grants kept by `create or replace` (closed to anon/public). The
+columns, the constraint and the function are in **one transaction**
+(`begin; … commit;`), so they are never half applied — the app takes "the
+columns are there" to mean "the function writes them". Safe to run twice.
+The check SELECT at the end has 5 rows, each "ok": the two columns, the
+constraint, the function (writes the parts, search_path, invoker, login
+check, anon none), and "expenses with parts (0 the first time)".
+
+**Before 029.** "Shared" works exactly as before: no part fields, no
+requirement, no note; a person's pill shows only their own expenses.
+029 is found the way 9H finds its columns (`sharedParts.partsColumnsReady`:
+an expense read with all its columns carries them). Money uses the
+expenses it has loaded; SHOP "Confirm purchase" (and Money with nothing
+loaded yet) reads one expense once (`hooks/useExpenseParts.js`); offline
+or no expense at all → "not yet" (fields hidden, the safe side). A save
+that still meets a database without the columns (a plain expense, Edit
+expense) says "This needs the database update
+supabase/029_shared_parts.sql" (`db.attempt` got an optional
+`messageOf`) and the form keeps what was typed. An older app version on
+the other phone saves Shared without parts (K4 covers it); its Edit
+expense doesn't send parts, so a changed amount shows the K9 note.
+
+**Rules as built.**
+
+- K1 Option A only; no 4th payer. Option B: see "Later".
+- K2 / A1 A person's pill (Money → section Expenses, the pills under the
+  title; one shared state with Orders) shows that person's own expenses
+  whole **plus their part of every Shared expense that has parts**: one
+  mapping in `ExpensesPage.filteredExpenses` (`sharedParts.
+  personalExpenses`) passes a copy whose `amount` is the part
+  (`sharedPart.real` = the expense, used by Edit, Delete, Select and "Set
+  the store of several expenses…"). Every total, the summary card
+  ("Expenses · {label}"), the € chip, By category, By store, Trend,
+  Totals per category follow unchanged. A Shared row then reads
+  "€100.00" with "of €268.58" under it (also on the collapsed category
+  row); a purchase: its parts' sum with "of total €…". Everyone and Shared
+  stay whole. The Orders filter is unchanged. A part of €0 still lists the
+  row ("€0.00 of €…").
+- Under every Shared expense with parts, in every view: "{label} €100.00
+  · {label} €168.58" (`partsLine`).
+- K3 Parts are **required** for every new Shared expense in Money "Add
+  expense" (one expense and a purchase) and SHOP "Confirm purchase".
+  Nothing is prefilled. "Split equally" fills both halves, the odd cent to
+  the second person. Saving waits until they are typed and add up.
+- K4 Shared expenses without parts are in no personal pill. With a
+  person's pill and N > 0, the Money top card has one line under the three
+  tiles (across the card: a tile is too narrow on a phone): "1 Shared
+  expense without parts (€31.42) is not in this total." / "N Shared
+  expenses without parts (€…) are not in this total."
+- K5 Old Shared expenses stay as they are; parts can be added one by one
+  in "Edit expense" (that is how 27/10 gets its €100.00 / €168.58).
+- K6 Two fields right under "Paid by" when it is Shared: "{label} paid
+  (€)" for each person (`ui/SharedPartsFields.jsx`). Typing one fills the
+  other with the rest (total − typed) until the other is typed by hand (a
+  cleared field is no longer "by hand"). Each part ≥ 0 and ≤ the total;
+  `parseDecimal` / `DecimalInput`, rounded to cents. Refusals: "Type what
+  {label} and {label} paid.", "Type what {label} paid too.", "The part of
+  {label} (€X) is more than the total (€Y).", "The parts add up to €X, not
+  €Y.", "Type each part as a number, like 100 or 168,58."; the one-tap fix
+  "Put the difference on {label}" (on the field not typed last; the second
+  person when neither was; also for a missing part).
+- K7 A purchase with several lines: **one** split for the whole purchase
+  (what each paid at the till). The total to split = the sum of the PAID
+  amounts (after item discounts and coupon) of its Shared lines; the first
+  person's part is spread over them in proportion with the coupon rule
+  (`spreadParts` = `spreadCoupon`: cents rounded, the rest on the last
+  line or the one before), the second person's part of a line is the rest
+  of it — so every line adds up and both totals are what was typed. Free
+  lines (€0) take no part. SHOP "Confirm purchase": lines paid by a person
+  (per-line pills or "Paid by (everything)") are untouched; the box shows
+  only when at least one Shared line costs something ("What each one paid
+  of the N Shared item(s) (€…).", under "Shopping day" / "Paid by
+  (everything)", above the store). A changed price, discount, coupon or
+  payer is checked again (blocked until they add up; the fix works). Each
+  line's expense can still be corrected alone in "Edit expense".
+- K8 Phase 1 only: Money "Add expense", "Edit expense", SHOP "Confirm
+  purchase". An order's expense may get parts in "Edit expense".
+- K9 An amount changed by another path: the stored parts stay; the app
+  shows them scaled in proportion to the new amount (cents rounded, the
+  rest to the second person; `scaleParts`), with the amber note "Parts
+  were for €268.58 — the expense is now €260.00. Edit to check." (under
+  the row, and in "Edit expense" while the parts don't fit). No database
+  trigger.
+- K10 A part of €0 is allowed, with "Only {label} paid — you could choose
+  Paid by {label} instead."; nothing changes by itself.
+- K11 Shared → a person clears the parts (Edit expense saves both empty);
+  a person → Shared requires parts. An old Shared expense without parts
+  may be saved for another change without parts; once one part is typed
+  they must add up. A new amount on a Shared expense with parts must be
+  split again (the fix works). A Shared expense with parts keeps requiring
+  them in Edit (clearing both is refused).
+- K12 Undo toast / Reopen purchase / Undo purchase: the parts go with the
+  expenses (deleted by `reopen_shopping_trip`); confirming again needs
+  them typed again. Merge / Split: amounts and payers never change, so the
+  parts stay; Shared + Shared may be merged. K20 "Add the expense again":
+  a Shared expense without parts (`expenseRowForOrder` unchanged). Income:
+  no parts. The "Shared" pill: whole amounts. The SHOP budget card: unchanged.
+- K13 NOTE 1 — the SHOP search field ("Search the list and the cart…",
+  text unchanged) is now directly above "+ Add to SHOP list" in the List
+  view too (after the category chips); Shop mode was already so. One
+  `searchBox` in `GroceryPage.jsx` for both views. "Go to card" still
+  clears a search (and a chip) that hides the card.
+
+**Files.** New: `supabase/029_shared_parts.sql`, `src/lib/sharedParts.js`
+(+ test), `src/hooks/useExpenseParts.js`, `src/components/ui/
+SharedPartsFields.jsx`, `src/components/expenses/SharedParts.jsx`
+(`SharedPartsNote`, `PartAmount`). Changed: `lib/moneyPurchase.js`
+(`moneyPurchasePayload` `lineParts`), `lib/purchase.js`
+(`confirmationPayload` `partsByItem`), `lib/db.js` (`attempt`
+`messageOf`), `hooks/useExpenses.js` (`updateExpense` / `addExpenseOnce`
+`parts`), `hooks/usePurchase.js` (`confirmCart` `partsByItem`),
+`expenses/PurchaseForm.jsx`, `expenses/ExpenseForm.jsx`,
+`grocery/ConfirmPurchase.jsx`, `pages/ExpensesPage.jsx`,
+`expenses/EntryRows.jsx`, `expenses/ExpenseGroup.jsx`,
+`expenses/MoneySummary.jsx`, `pages/GroceryPage.jsx` (K13).
+
+**Tests: 1895 → 1961 (105 → 108 files).** New `lib/sharedParts.test.js`
+(21: the payers from `PAID_BY_OPTIONS`, 029 seen on rows, stored parts,
+the 27/10 personal views both ways round, the K4 note, the parts line,
+K9 scaling and note, fill-the-rest, Split equally, required / not
+required, the refusals and the fix, €0, the spread over lines: Lidl 33.40
+= 20.00 + 13.40, a free line, cents on the line before, 27/10 over two
+lines). `components/sharedParts.render.test.jsx` (27: Add expense one
+expense both ways, Split equally + fix, €0, a person, before 029; a
+purchase with a coupon, the coupon changed after, paid by a person; Edit
+expense old without parts, both ways, an amount change, K9, Shared → a
+person, a person → Shared, before 029; Confirm purchase with mixed
+payers, a discount after, "Paid by (everything)", before 029; the
+personal pills both ways — totals, chip, K4 note, "of €268.58", the parts
+line, the purchase "of total", Totals per category and the chart — Edit
+from a personal view, K9, Add expense after 029, before 029).
+`hooks/expenseParts.test.jsx` (5: what is written, the 029 notice, Edit's
+three cases, the detection). `pages/shopAdd.render.test.jsx` +3 (the
+field right before the button in both views, with the form open, a search
+cleared by "Go to card" in the List view). `supabase/migrations.test.js`
+block "029" (10, PGlite: only the listed changes in one transaction; the
+function is 023 line for line but the insert; before 029 the notice; run
+twice, every check ok, other functions / policies / grants / data
+unchanged, anon nothing; a stranger refused; a SHOP payload and a MONEY
+payload without parts write exactly what 023 writes, Reopen too; a MONEY
+and a SHOP purchase with Shared lines keep the parts per expense, each
+line adds up, the totals as typed; the constraint), and the 9J check now
+allows 029 (it doesn't touch `arrive_order` / `unarrive_order`).
+
+**Later (not scheduled).**
+
+- **Option B — "Shared account"** (a 4th payer for payments from a shared
+  bank account, never split): only when such an account is really used
+  for things recorded in the app. Needs a short label (the Money pills and
+  the SHOP card pills risk sideways scroll at 375 px) and a reload of the
+  older app version on the other phone (it shows an unknown payer as
+  "Shared" in SHOP and as the raw code in Money).
+- **Phase 2 — parts for orders**: Add order, Order online, Edit order and
+  order groups (`orders` columns and a replaced `save_order_group` that
+  spreads a group's parts like its discount). Timing still being decided
+  by the household (01/11).
+
+### iPhone checklist for round 9K
+
+Written by Claude after 029 has been checked and run.
 
 ---
 

@@ -45,15 +45,17 @@ export async function inSteps(fn) {
 // so the screen shows what's really saved) and shows the save-error toast,
 // with Retry when repeating it is safe: `retry` is on and nothing was left
 // half-done. Writes started from a form pass retry: false — the form stays
-// open and Save can simply be pressed again. Returns { data, error }.
-export async function attempt(fn, { retry = true, onFail } = {}) {
+// open and Save can simply be pressed again. `messageOf(error)` may give
+// the toast a clearer message for a known failure (e.g. a database update
+// not run yet); nothing → the usual one. Returns { data, error }.
+export async function attempt(fn, { retry = true, onFail, messageOf } = {}) {
   if (isOffline()) return refuseOffline()
   try {
     return { data: await fn(), error: null }
   } catch (error) {
     await settle(onFail)
-    const again = retry && error?.rolledBack !== false ? () => attempt(fn, { retry, onFail }) : null
-    toastSaveError(error, again)
+    const again = retry && error?.rolledBack !== false ? () => attempt(fn, { retry, onFail, messageOf }) : null
+    toastSaveError(error, again, messageOf?.(error) || undefined)
     return { data: null, error }
   }
 }

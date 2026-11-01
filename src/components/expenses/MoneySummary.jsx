@@ -6,7 +6,10 @@ const money = (n) => `${n < 0 ? '−' : ''}€${Math.abs(n).toFixed(2)}`
 
 // Income, expenses and what's left (or overspent) in the period.
 // A figure that follows a person selection says whose it is.
-export function MoneySummary({ income, expenses, incomePerson = 'all', expensesPerson = 'all' }) {
+// `expensesNote`: a small line under "Expenses · {label}" (plan 9K: the
+// Shared expenses without parts that a person's total leaves out), or '';
+// across the whole card, as a tile is too narrow for it on a phone.
+export function MoneySummary({ income, expenses, incomePerson = 'all', expensesPerson = 'all', expensesNote = '' }) {
   const balance = income - expenses
   const tiles = [
     { label: 'Income', who: incomePerson, value: money(income), tone: 'text-[#7FDB92]' },
@@ -23,6 +26,7 @@ export function MoneySummary({ income, expenses, incomePerson = 'all', expensesP
           <p className={cn('text-sm font-mono font-bold truncate', t.tone)}>{t.value}</p>
         </div>
       ))}
+      {expensesNote && <p className="col-span-3 text-[10px] leading-snug text-[var(--color-text-muted)] break-words">{expensesNote}</p>}
     </Card>
   )
 }

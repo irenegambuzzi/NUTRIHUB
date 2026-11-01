@@ -15,11 +15,13 @@ const { normalizeName } = await import('../src/lib/categoryGuess.js')
 const { budgetCategoryFor, pastPurchaseChanges, purchasedItemsByExpense } = await import('../src/lib/budgetMap.js')
 const { LIVE_MONEY_CATEGORIES } = await import('../src/data/moneyCategories.fixture.js')
 // For 026: Confirm purchase again after Reopen, with the app's own code.
-const { confirmationPayload, purchaseLine } = await import('../src/lib/purchase.js')
+const { confirmationPayload, purchaseLine, purchasePricing } = await import('../src/lib/purchase.js')
 const { DURABLE_MONEY_CATEGORY_IDS, WORK_CATEGORY_ID } = await import('../src/data/constants.js')
 const { MONEY_CATEGORY_IDS_026 } = await import('../src/data/budgetKeywords.js')
 // For 028: order groups, with the requests the app builds (lib/orderGroups.js).
 const { GROUPS_NOTICE, groupErrorMessage, groupPayload, placeOf, undoGroupPayload } = await import('../src/lib/orderGroups.js')
+// For 029: each person's part of a Shared expense, as the app works it out (lib/sharedParts.js).
+const { PARTS_NOTICE, PEOPLE, checkSplit, emptySplit, missingPartsColumn, partColumn, partFields, partsColumnsReady, spreadParts, typePart } = await import('../src/lib/sharedParts.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -3467,8 +3469,10 @@ describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (n
     }
   }, 120000)
 
-  it('no SQL file after 028, and arrive_order / unarrive_order are still the ones of 021', async () => {
-    expect(fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f)).sort().at(-1)).toBe('028_order_groups.sql')
+  it('no SQL file after 028 touches them (029 replaces only confirm_shopping_trip), and arrive_order / unarrive_order are still the ones of 021', async () => {
+    const later = fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f) && f >= '029').sort()
+    expect(later).toEqual(['029_shared_parts.sql'])
+    for (const f of later) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/arrive_order/)
     const sql = fs.readFileSync(path.join(dir, '021_connected_flow.sql'), 'utf8')
     for (const name of ['arrive_order', 'unarrive_order']) {
       const body = sql.match(new RegExp(`create or replace function ${name}\\([\\s\\S]*?as \\$\\$([\\s\\S]*?)\\$\\$;`))[1]
@@ -3536,5 +3540,344 @@ describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (n
     expect(await orderNow(o)).toMatchObject({ status: 'on_the_way', day: null })
     expect((await row(`select completed from grocery_items where id = $1`, [entry])).completed).toBe(false)
     expect(await row(`select sum(current_stock)::float as s, count(*)::int as n from pantry_items`)).toEqual(before)
+  })
+})
+
+describe('029: "Shared" with each person\'s part — two columns on expenses, confirm_shopping_trip writes them', () => {
+  const file = '029_shared_parts.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  // The two people, as PAID_BY_OPTIONS lists them (never written out here).
+  const [P1, P2] = PEOPLE
+  const [C1, C2] = PEOPLE.map(partColumn)
+  // fx gets 029; base stays at 028, to compare a purchase without parts.
+  let fx, base, groceries
+  const on = (d) => ({
+    rows: async (text, params) => (await d.query(text, params)).rows,
+    row: async (text, params) => (await d.query(text, params)).rows[0],
+  })
+  const rows = (text, params) => on(fx).rows(text, params)
+  const row = (text, params) => on(fx).row(text, params)
+  async function as(d, role, userId, fn) {
+    await d.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await d.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await d.exec('reset role')
+    }
+  }
+  const member = (d, fn) => as(d, 'authenticated', MEMBER, fn)
+  const fails = async (fn) => {
+    try {
+      await fn()
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  const confirm = (d, payload) => member(d, async () => (await d.query(`select * from confirm_shopping_trip($1::jsonb)`, [payload])).rows[0])
+  const reopen = (d, id) => member(d, async () => (await d.query(`select reopen_shopping_trip($1) as n`, [id])).rows[0].n)
+
+  const SHOP = '29000000-0000-4000-8000-0000000000a1'
+  const BUDGET = '29000000-0000-4000-8000-0000000000b1'
+  const P = { oil: '29000000-0000-4000-8000-000000000101', yogurt: '29000000-0000-4000-8000-000000000102', coffee: '29000000-0000-4000-8000-000000000103' }
+  const G = {
+    oil: '29000000-0000-4000-8000-000000000201',
+    yogurt: '29000000-0000-4000-8000-000000000202',
+    basil: '29000000-0000-4000-8000-000000000203',
+    bulb: '29000000-0000-4000-8000-000000000204',
+    coffee: '29000000-0000-4000-8000-000000000205',
+  }
+  // The same HOME items and cart in both databases (fixed ids).
+  async function seed(d) {
+    await d.query(`insert into shops (id, name) values ($1, 'Esselunga 029')`, [SHOP])
+    await d.query(`insert into expense_categories (id, name) values ($1, 'Groceries 029')`, [BUDGET])
+    await d.query(
+      `insert into pantry_items (id, name, unit, current_stock, min_stock, category_id, price, price_qty, price_unit, expiry_date, payer) values
+        ($1, 'Olive oil 029', 'btl', 1, 1, 'misc', 8.99, 1, 'btl', null, 'shared'),
+        ($2, 'Yogurt 029', 'pcs', 2, 4, 'dairy', 0.9, 1, 'pcs', '2020-01-01', $4),
+        ($3, 'Coffee 029', 'pack', 0, 1, 'beverages', 5.4, 1, 'pack', null, $5)`,
+      [P.oil, P.yogurt, P.coffee, P1, P2]
+    )
+    await d.query(
+      `insert into grocery_items (id, name, quantity, unit, price, price_qty, price_unit, pantry_item_id, in_cart, category_id, payer) values
+        ($1, 'Olive oil 029', 1, 'btl', 8.99, 1, 'btl', $6, true, 'misc', 'shared'),
+        ($2, 'Yogurt 029', 4, 'pcs', 3.6, 4, 'pcs', $7, true, 'dairy', $9),
+        ($3, 'Basil 029', 1, 'pcs', 0, 1, 'pcs', null, true, 'misc', 'shared'),
+        ($4, 'Bulb 029', 1, 'pcs', 4.2, 1, 'pcs', null, true, 'appliances', $10),
+        ($5, 'Coffee 029', 2, 'pack', 10.8, 2, 'pack', $8, true, 'beverages', 'shared')`,
+      [G.oil, G.yogurt, G.basil, G.bulb, G.coffee, P.oil, P.yogurt, P.coffee, P1, P2]
+    )
+  }
+  // Everything a purchase writes, without ids and times made by the database.
+  const state = async (d) => {
+    const { rows: r } = on(d)
+    return {
+      expenses: await r(`select description, amount::float as amount, paid_by, category_id, expense_date::text as date, trip_id, shop_id, travel_id, merged_at from expenses where description like '% 029' order by description, amount`),
+      pantry: await r(`select name, current_stock::float as stock, payer, expiry_date::text as expiry, price::float as price, one_time, min_stock::float as min from pantry_items where name like '% 029' order by name`),
+      logs: await r(`select item_name, change::float as change, new_stock::float as stock, reason from stock_logs where item_name like '% 029' order by item_name, change`),
+      grocery: await r(`select id, completed, in_cart, expense_id is not null as has_expense, trip_id, pantry_item_id is not null as linked from grocery_items where name like '% 029' order by id`),
+      trips: await r(`select id, total::float as total, source, paid_by, shop_id, coupon_total::float as coupon from shopping_trips where id::text like '29000000%' order by id`),
+      lines: await r(`select trip_id, position, name, line_total::float as total, stock_added::float as added, stock_discarded::float as discarded, pantry_created, coupon_share::float as coupon, line_kind, quantity::float as quantity, unit, list_total::float as list, expense_id is not null as has_expense from shopping_trip_items where trip_id::text like '29000000%' order by trip_id, position`),
+    }
+  }
+  // What the database has besides 029, to compare before and after it.
+  const untouched = async () => ({
+    functions: await rows(`select p.proname, md5(p.prosrc) as src, p.proconfig::text as config, p.prosecdef, p.proacl::text as acl from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname <> 'confirm_shopping_trip' order by 1, 2`),
+    confirm: await row(`select p.proconfig::text as config, p.prosecdef, p.proacl::text as acl, pg_get_function_identity_arguments(p.oid) as args, pg_get_function_result(p.oid) as result from pg_proc p where p.oid = 'public.confirm_shopping_trip(jsonb)'::regprocedure`),
+    policies: await rows(`select tablename, policyname, cmd, roles::text, qual, with_check from pg_policies order by 1, 2`),
+    grants: await rows(`select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by 1, 2, 3`),
+    functionGrants: await rows(`select routine_name, grantee, privilege_type from information_schema.role_routine_grants where routine_schema = 'public' order by 1, 2, 3`),
+    expenses: (await rows(`select to_jsonb(e) - $1::text - $2::text as e from expenses e order by id`, [C1, C2])).map((r) => r.e),
+  })
+  // The SHOP payload the app sends today (no parts): mixed payers, a coupon, a free line, a durable.
+  const shopPayload = (id) => ({
+    id,
+    trip_date: '2026-10-27',
+    at: '2026-10-27T18:00:00Z',
+    photo_ids: [],
+    shop_id: SHOP,
+    paid_by: null,
+    coupon_kind: 'amount',
+    coupon_value: 1,
+    coupon_total: 1,
+    items: [
+      { grocery_item_id: G.oil, line_total: 8.49, list_total: 8.99, coupon_share: 0.5, payer: 'shared', expense_category_id: groceries, durable: false, pantry_item_id: P.oil, add: 1 },
+      { grocery_item_id: G.yogurt, line_total: 3.1, list_total: 3.6, coupon_share: 0.5, payer: P1, expense_category_id: groceries, durable: false, pantry_item_id: P.yogurt, add: 4, discard_expired: true, expiry_date: '2026-11-10' },
+      { grocery_item_id: G.basil, line_total: 0, payer: 'shared', expense_category_id: groceries, durable: false, pantry_item_id: null, add: 1 },
+      { grocery_item_id: G.bulb, line_total: 4.2, payer: P2, expense_category_id: groceries, durable: true, pantry_item_id: null, add: 0 },
+      { grocery_item_id: G.coffee, line_total: 10.8, payer: 'shared', expense_category_id: groceries, durable: false, pantry_item_id: P.coffee, add: 2 },
+    ],
+  })
+  let before
+
+  beforeAll(async () => {
+    const make = async () => {
+      const d = await newDatabase()
+      for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2[0-8])_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) {
+        await d.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+      }
+      await seed(d)
+      return d
+    }
+    ;[fx, base] = await Promise.all([make(), make()])
+    groceries = BUDGET
+    await fx.query(`insert into expenses (amount, description, paid_by, expense_date, category_id) values (268.58, 'SPESE CONDOMINIO', 'shared', '2026-10-27', $1)`, [groceries])
+    before = await untouched()
+  }, 180000)
+
+  it('only adds two columns and one constraint, and replaces confirm_shopping_trip — all in one transaction; no table, policy, grant or data change', () => {
+    const code = sql.replace(/--.*$/gm, '')
+    const outside = code.replace(/as \$\$[\s\S]*?end \$\$;/g, '')
+    expect([...code.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['confirm_shopping_trip'])
+    expect(code).not.toMatch(/create table|drop |policy|\bgrant\b|\brevoke\b|security definer|truncate/i)
+    expect([...outside.matchAll(/alter table (?:public\.)?(\w+)/g)].map((m) => m[1])).toEqual(['expenses', 'expenses', 'expenses'])
+    expect(outside).not.toMatch(/\b(insert into|update \w+ set|delete from)\b/i)
+    expect(outside.match(/add column if not exists \w+ [^;]*/g)).toEqual([`add column if not exists ${C1} numeric(12, 2)`, `add column if not exists ${C2} numeric(12, 2)`])
+    // begin … commit around everything that changes, then the one check.
+    const at = (text) => code.indexOf(text)
+    expect(code.match(/^begin;$/gm)).toHaveLength(1)
+    expect(code.match(/^commit;$/gm)).toHaveLength(1)
+    expect(at('begin;')).toBeLessThan(at('alter table'))
+    expect(at('commit;')).toBeGreaterThan(code.lastIndexOf('end $$;'))
+    expect(code.match(/^select /gm)).toHaveLength(1)
+    expect(at('commit;')).toBeLessThan(code.search(/^select /m))
+  })
+
+  it('confirm_shopping_trip: every line is the 023 version except the expense insert (two lines) and one comment', () => {
+    const body = (text) => {
+      const start = text.indexOf('create or replace function confirm_shopping_trip(payload jsonb)')
+      return text.slice(start, text.indexOf('end $$;', start) + 7).split('\n')
+    }
+    const old = body(fs.readFileSync(path.join(dir, '023_oct_2026_features.sql'), 'utf8'))
+    const now = body(sql)
+    const i = old.findIndex((l) => l.includes('insert into expenses (category_id'))
+    expect(old[i + 1]).toMatch(/^\s+values \(\(v_item->>'expense_category_id'\)::uuid/)
+    const expected = [
+      ...old.slice(0, i),
+      `      -- 029: also each person's part of a Shared line (both empty unless sent).`,
+      old[i].replace('travel_id)', `travel_id, ${C1}, ${C2})`),
+      old[i + 1].replace(/\)$/, `, (v_item->>'${C1}')::numeric, (v_item->>'${C2}')::numeric)`),
+      ...old.slice(i + 2),
+    ]
+    expect(now).toEqual(expected)
+  })
+
+  it('before 029 (the app is deployed first): no part columns, the app sees none; a save with parts says "This needs the database update supabase/029_shared_parts.sql"', async () => {
+    const all = await rows(`select * from expenses limit 5`)
+    expect(all.length).toBeGreaterThan(0)
+    expect(partsColumnsReady(all)).toBe(false)
+    const error = await member(fx, async () => {
+      try {
+        await fx.query(`insert into expenses (amount, description, paid_by, expense_date, ${C1}, ${C2}) values (10, 'Parts 029', 'shared', '2026-10-27', 4, 6)`)
+      } catch (e) {
+        return e
+      }
+    })
+    expect(error.code).toBe('42703')
+    expect(missingPartsColumn({ code: error.code, message: error.message })).toBe(true)
+    expect(PARTS_NOTICE).toBe(`This needs the database update supabase/${file}`)
+  })
+
+  it('run twice: every check is ok; other functions, policies, grants and data unchanged; anon gets nothing', async () => {
+    const first = await run()
+    const second = await run()
+    expect(first.map((r) => [r.object, r.status])).toEqual([
+      [`column expenses.${C1}`, 'ok'],
+      [`column expenses.${C2}`, 'ok'],
+      ['expenses_parts_ok (both empty, or both >= 0)', 'ok'],
+      ['function confirm_shopping_trip(jsonb)', 'ok'],
+      ['expenses with parts (0 the first time)', 'ok'],
+    ])
+    expect(first[0].detail).toBe('numeric(12, 2)')
+    expect(first[3].detail).toBe('writes the parts: yes · search_path=public: yes · security invoker: yes · login check: yes · anon: none')
+    expect(first.at(-1).detail).toMatch(/^0 of \d+$/)
+    expect(second).toEqual(first)
+    expect(first.length).toBeLessThan(100)
+    expect(await untouched()).toEqual(before)
+    expect(partsColumnsReady(await rows(`select * from expenses limit 1`))).toBe(true)
+    expect(await rows(`select ${C1}, ${C2} from expenses where ${C1} is not null or ${C2} is not null`)).toEqual([])
+    expect(await as(fx, 'anon', null, () => fails(() => fx.query(`select confirm_shopping_trip('{}'::jsonb)`)))).toMatch(/permission denied/)
+    expect(await as(fx, 'anon', null, () => fails(() => fx.query(`select ${C1} from expenses`)))).toMatch(/permission denied/)
+  })
+
+  it('the household check: a logged-in stranger is refused (42501) and nothing is written', async () => {
+    const message = await as(fx, 'authenticated', STRANGER, () => fails(() => fx.query(`select confirm_shopping_trip($1::jsonb)`, [shopPayload('29000000-0000-4000-8000-0000000000ff')])))
+    expect(message).toMatch(/Not allowed: log in with the household account/)
+    expect((await row(`select count(*)::int as n from shopping_trips where id = '29000000-0000-4000-8000-0000000000ff'`)).n).toBe(0)
+  })
+
+  it('a SHOP payload without parts writes exactly what 023 writes (stock, history, expenses), and Reopen gives the same result', async () => {
+    const id = '29000000-0000-4000-8000-000000000001'
+    expect(await state(fx)).toEqual(await state(base))
+    const t = await confirm(fx, shopPayload(id))
+    const t0 = await confirm(base, shopPayload(id))
+    expect(Number(t.total)).toBe(26.59)
+    expect(Number(t0.total)).toBe(26.59)
+    const after = await state(fx)
+    expect(after).toEqual(await state(base))
+    expect(after.expenses.map((e) => [e.description, e.amount, e.paid_by])).toEqual([
+      ['Bulb 029', 4.2, P2],
+      ['Coffee 029', 10.8, 'shared'],
+      ['Olive oil 029', 8.49, 'shared'],
+      ['Yogurt 029', 3.1, P1],
+    ])
+    expect(await rows(`select ${C1}, ${C2} from expenses where trip_id = $1`, [id])).toEqual(Array(4).fill({ [C1]: null, [C2]: null }))
+    // Sent again: nothing new, in both.
+    await confirm(fx, shopPayload(id))
+    expect(await state(fx)).toEqual(after)
+    expect(await reopen(fx, id)).toBe(5)
+    expect(await reopen(base, id)).toBe(5)
+    expect(await state(fx)).toEqual(await state(base))
+    expect((await state(fx)).grocery.every((g) => g.in_cart && !g.completed && !g.has_expense)).toBe(true)
+  })
+
+  it('a MONEY payload without parts, as the app builds it, writes exactly what 023 writes', async () => {
+    const id = '29000000-0000-4000-8000-000000000002'
+    const { lines, priced } = pricedLines(
+      [
+        { ...emptyRow(1), name: 'Detergent 029', priceText: '6,50', addToHome: false },
+        { ...emptyRow(2), name: 'Sponges 029', priceText: '2', addToHome: false },
+      ].map((r) => rowLine(r, [])),
+      { kind: 'amount', text: '0,50' }
+    )
+    const payload = moneyPurchasePayload({ id, date: '2026-10-27', at: '2026-10-27T18:00:00Z', shopId: SHOP, paidBy: 'shared', lines, budgetFor: () => groceries, priced })
+    expect(payload.items.some((i) => C1 in i || C2 in i)).toBe(false)
+    await confirm(fx, payload)
+    await confirm(base, payload)
+    expect(await state(fx)).toEqual(await state(base))
+    expect(await rows(`select ${C1}, ${C2} from expenses where trip_id = $1`, [id])).toEqual(Array(2).fill({ [C1]: null, [C2]: null }))
+    expect(await reopen(fx, id)).toBe(2)
+    expect(await reopen(base, id)).toBe(2)
+    expect(await state(fx)).toEqual(await state(base))
+  })
+
+  it('a MONEY purchase paid by Shared, with the parts typed in the form: each expense keeps its parts (each line adds up, the totals are what was typed); Undo takes them away with the expenses', async () => {
+    const id = '29000000-0000-4000-8000-000000000003'
+    // €38.40 as on the receipt (10 + 12 −30% + 20), coupon −€5 → paid 8.70 + 7.31 + 17.39 = €33.40.
+    const { lines, priced } = pricedLines(
+      [
+        { ...emptyRow(1), name: 'Cat litter 029', priceText: '10', addToHome: false },
+        { ...emptyRow(2), name: 'Sun cream 029', priceText: '12', discountKind: 'percent', discountText: '30', addToHome: false },
+        { ...emptyRow(3), name: 'Dinner 029', priceText: '20', addToHome: false },
+      ].map((r) => rowLine(r, [])),
+      { kind: 'amount', text: '5' }
+    )
+    expect(lines.map((l) => l.paid)).toEqual([8.7, 7.31, 17.39])
+    for (const [who, other, typed, rest] of [
+      [P1, P2, '20', 13.4],
+      [P2, P1, '13,40', 20],
+    ]) {
+      const check = checkSplit(typePart(emptySplit(), who, typed, priced.paidTotal), priced.paidTotal)
+      expect(check.problem).toBe('')
+      expect(check.parts[other]).toBe(rest)
+      const lineParts = spreadParts(lines.map((l) => l.paid), check.parts)
+      const payload = moneyPurchasePayload({ id, date: '2026-10-27', at: '2026-10-27T18:00:00Z', shopId: SHOP, paidBy: 'shared', lines, budgetFor: () => groceries, priced, lineParts })
+      await confirm(fx, payload)
+      const saved = await rows(`select description, amount::float as amount, paid_by, ${C1}::float as a, ${C2}::float as b from expenses where trip_id = $1 order by amount`, [id])
+      expect(saved).toHaveLength(3)
+      for (const e of saved) expect(Math.round((e.a + e.b) * 100) / 100).toBe(e.amount)
+      expect(saved.every((e) => e.paid_by === 'shared')).toBe(true)
+      const total = (k) => Math.round(saved.reduce((s, e) => s + e[k], 0) * 100) / 100
+      expect({ [P1]: total('a'), [P2]: total('b') }).toEqual(check.parts)
+      expect(await reopen(fx, id)).toBe(3)
+      expect((await row(`select count(*)::int as n from expenses where trip_id = $1 or description in ('Cat litter 029', 'Sun cream 029', 'Dinner 029')`, [id])).n).toBe(0)
+    }
+  })
+
+  it('a SHOP purchase with lines paid by each person and Shared lines (the app\'s confirmationPayload): only the Shared lines get parts; a free line none; Reopen takes them away', async () => {
+    const id = '29000000-0000-4000-8000-000000000004'
+    const pantryItems = await rows(`select id, name, unit, current_stock::float as current_stock, min_stock::float as min_stock, is_group, group_id, expiry_date::text as expiry_date, category_id, packaging_unit, quantity_per_pack from pantry_items`)
+    const cart = (await rows(`select * from grocery_items where in_cart and name like '% 029' order by created_at, id`)).map((g) => ({ ...g, quantity: Number(g.quantity), price: Number(g.price), price_qty: Number(g.price_qty) }))
+    const lines = cart.map((item) => purchaseLine(item, pantryItems, item.id === G.yogurt ? { discard: true } : {}))
+    const totalOf = (item) => Math.round(item.price * 100) / 100
+    // Oil −10%, a €1 coupon spread over everything.
+    const pricing = purchasePricing(cart, totalOf, { [G.oil]: { kind: 'percent', text: '10' } }, { kind: 'amount', text: '1' })
+    const shared = cart.filter((i) => i.payer === 'shared' && pricing.byItem.get(i.id).paid > 0)
+    expect(shared.map((i) => i.name)).toEqual(['Olive oil 029', 'Coffee 029'])
+    const sharedTotal = Math.round(shared.reduce((s, i) => s + pricing.byItem.get(i.id).paid, 0) * 100) / 100
+    const check = checkSplit(typePart(emptySplit(), P2, '7,77', sharedTotal), sharedTotal)
+    expect(check.problem).toBe('')
+    const spread = spreadParts(shared.map((i) => pricing.byItem.get(i.id).paid), check.parts)
+    const partsByItem = new Map(shared.map((i, k) => [i.id, spread[k]]))
+    const payload = confirmationPayload({ id, date: '2026-10-27', at: '2026-10-27T18:00:00Z', lines, answers: { [G.yogurt]: { discard: true } }, totalOf, expenseCategoryFor: () => groceries, shopId: SHOP, paidBy: null, pricing, partsByItem })
+    expect(payload.items.filter((i) => C1 in i).map((i) => i.grocery_item_id)).toEqual([G.oil, G.coffee])
+    await confirm(fx, payload)
+    const saved = await rows(`select description, amount::float as amount, paid_by, ${C1}::float as a, ${C2}::float as b from expenses where trip_id = $1 order by description`, [id])
+    expect(saved.map((e) => [e.description, e.paid_by, e.a === null])).toEqual([
+      ['Bulb 029', P2, true],
+      ['Coffee 029', 'shared', false],
+      ['Olive oil 029', 'shared', false],
+      ['Yogurt 029', P1, true],
+    ])
+    const withParts = saved.filter((e) => e.a !== null)
+    for (const e of withParts) expect(Math.round((e.a + e.b) * 100) / 100).toBe(e.amount)
+    expect(Math.round(withParts.reduce((s, e) => s + e.b, 0) * 100) / 100).toBe(7.77)
+    expect(Math.round(withParts.reduce((s, e) => s + e.a, 0) * 100) / 100).toBe(Math.round((sharedTotal - 7.77) * 100) / 100)
+    expect(await reopen(fx, id)).toBe(5)
+    expect((await row(`select count(*)::int as n from expenses where description like '% 029'`)).n).toBe(0)
+  })
+
+  it('a plain expense keeps its parts as the app writes them; the constraint refuses a negative part and one part without the other; €0 is allowed', async () => {
+    await member(fx, async () => {
+      const id = (await fx.query(`insert into expenses (amount, description, paid_by, expense_date, ${C1}, ${C2}) values (268.58, 'Parts plain 029', 'shared', '2026-10-27', $1, $2) returning id`, [100, 168.58])).rows[0].id
+      expect(await row(`select ${C1}::float as a, ${C2}::float as b from expenses where id = $1`, [id])).toEqual({ a: 100, b: 168.58 })
+      expect(await fails(() => fx.query(`update expenses set ${C1} = -1 where id = $1`, [id]))).toMatch(/expenses_parts_ok/)
+      expect(await fails(() => fx.query(`update expenses set ${C2} = null where id = $1`, [id]))).toMatch(/expenses_parts_ok/)
+      expect(await fails(() => fx.query(`insert into expenses (amount, description, paid_by, expense_date, ${C1}) values (5, 'One part 029', 'shared', '2026-10-27', 5)`))).toMatch(/expenses_parts_ok/)
+      expect(await fails(() => fx.query(`update expenses set ${C1} = 0, ${C2} = 268.58 where id = $1`, [id]))).toBeNull()
+      // Emptied (a payer that isn't Shared), and the 27/10 numbers the other way round.
+      expect(await fails(() => fx.query(`update expenses set ${C1} = null, ${C2} = null, paid_by = $2 where id = $1`, [id, P1]))).toBeNull()
+      expect(await fails(() => fx.query(`update expenses set paid_by = 'shared', ${C1} = 168.58, ${C2} = 100 where id = $1`, [id]))).toBeNull()
+      // No "adds up" check: an order group or Edit order may change the amount.
+      expect(await fails(() => fx.query(`update expenses set amount = 260 where id = $1`, [id]))).toBeNull()
+      // Cents only.
+      await fx.query(`update expenses set ${C1} = 1.005, ${C2} = 2 where id = $1`, [id])
+      expect((await row(`select ${C1}::float as a from expenses where id = $1`, [id])).a).toBe(1.01)
+      await fx.query(`delete from expenses where id = $1`, [id])
+    })
+    expect(partFields({ [P1]: 100, [P2]: 168.58 })).toEqual({ [C1]: 100, [C2]: 168.58 })
   })
 })

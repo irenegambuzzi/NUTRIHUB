@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 // The SHOP page after the follow-ups of plan 9G (26/10 and 27/10): one
@@ -132,6 +132,8 @@ const typeName = (text) => fireEvent.change(screen.getByLabelText('Item name'), 
 const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 const spotOf = (text) => screen.getByText(text).closest('[data-spot]')
 const shopMode = () => fireEvent.click(screen.getByRole('button', { name: 'Shop' }))
+// The search field's own box, and what comes right before and after it.
+const searchBox = () => screen.getByPlaceholderText('Search the list and the cart…').closest('div')
 
 describe('SHOP list: "+ Add to SHOP list"', () => {
   it('no quick-add box and no "More options"; the button opens the form "Add to SHOP list" with "Save" and "Save & add another"', () => {
@@ -172,6 +174,29 @@ describe('SHOP list: "+ Add to SHOP list"', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
     const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
     expect(card.hasAttribute('data-spot')).toBe(true)
+  })
+
+  it('the search field (same text) sits right above "+ Add to SHOP list", after the category chips (plan 9K, K13)', () => {
+    page()
+    const box = searchBox()
+    expect(box.nextElementSibling).toBe(screen.getByRole('button', { name: 'Add to SHOP list' }))
+    expect(within(box.previousElementSibling).getByRole('button', { name: 'All' })).toBeTruthy()
+    expect(screen.getAllByPlaceholderText('Search the list and the cart…')).toHaveLength(1)
+    // With the form open it is right above the form.
+    openForm()
+    expect(within(searchBox().nextElementSibling).getByLabelText('Item name')).toBeTruthy()
+  })
+
+  it('a search that hides the card is cleared first (List view)', () => {
+    page()
+    fireEvent.change(screen.getByPlaceholderText('Search the list and the cart…'), { target: { value: 'lays' } })
+    expect(screen.queryByText('Dish soap')).toBeNull()
+    openForm()
+    typeName('Dish soap')
+    save()
+    fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
+    expect(spotOf('Dish soap')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Search the list and the cart…').value).toBe('')
   })
 
   it('a category filter that hides the card is cleared first', () => {
@@ -281,6 +306,13 @@ describe('Shop mode: the same "+ Add to SHOP list"', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
     const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
     expect(card.hasAttribute('data-spot')).toBe(true)
+  })
+
+  it('the search field (same text) sits right above "+ Add to SHOP list" in Shop mode too (plan 9K, K13)', () => {
+    page()
+    shopMode()
+    expect(searchBox().nextElementSibling).toBe(screen.getByRole('button', { name: 'Add to SHOP list' }))
+    expect(screen.getAllByPlaceholderText('Search the list and the cart…')).toHaveLength(1)
   })
 
   it('a search that hides the card is cleared first', () => {

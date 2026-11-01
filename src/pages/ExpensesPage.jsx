@@ -14,6 +14,7 @@ import { OrdersSection } from '../components/expenses/OrdersSection'
 import { OrderGroupSheet } from '../components/expenses/OrderGroupSheet'
 import { PeriodPicker } from '../components/expenses/PeriodPicker'
 import { useExpenses } from '../hooks/useExpenses'
+import { useExpensePartsReady } from '../hooks/useExpenseParts'
 import { useIncome } from '../hooks/useIncome'
 import { useCategoryColors } from '../hooks/useCategoryColors'
 import { useShops } from '../hooks/useShops'
@@ -31,6 +32,7 @@ import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
+import { PEOPLE, personalExpenses, realExpense, withoutPartsNote } from '../lib/sharedParts'
 import { Layers, ListChecks, Plus, Store, X } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
@@ -39,6 +41,10 @@ export function ExpensesPage() {
   // Data is loaded from `since`; looking further back moves it earlier.
   const [since, setSince] = useState(currentExpensesSince)
   const { expenses, categories, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
+  // Each person's part of a Shared expense (plan 9K) once supabase/029 has
+  // run: the expenses read then carry the part columns (with none loaded
+  // yet, one expense is read to see).
+  const partsReady = useExpensePartsReady(expenses.length ? expenses : undefined)
   const {
     income,
     missing: incomeMissing,
@@ -93,8 +99,10 @@ export function ExpensesPage() {
   // the purchase as it is, so undoing the purchase the way it was made is
   // offered first — Reopen (SHOP), Undo the whole purchase (MONEY), or
   // for a merged expense taking it out of the purchase (Split), which
-  // never deletes it.
-  const removeExpense = async (expense) => {
+  // never deletes it. (A personal view's copy of a Shared expense stands
+  // for the expense itself.)
+  const removeExpense = async (row) => {
+    const expense = realExpense(row)
     if (!expense.trip_id) return deleteExpense(expense.id)
     const source = expense.merged_at ? 'merged' : tripById.get(expense.trip_id)?.source ?? 'shop'
     const name = `"${expense.description || 'This expense'}"`
@@ -137,7 +145,7 @@ export function ExpensesPage() {
     return askUndoPurchase(trip, { count: all.length, total: purchasePart(all, all).fullTotal })
   }
 
-  const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} noteOf={discountNote} onEdit={setEditingExpense} onDelete={removeExpense} />
+  const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} noteOf={discountNote} onEdit={editExpense} onDelete={removeExpense} />
 
   const [period, setPeriod] = useState('month')
   const [offset, setOffset] = useState(0)
@@ -145,6 +153,8 @@ export function ExpensesPage() {
   const [receivedByFilter, setReceivedByFilter] = usePersonFilter('money.incomePerson')
   const [addingExpense, setAddingExpense] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
+  // Edit always opens the expense itself, never a personal view's part.
+  const editExpense = (row) => setEditingExpense(realExpense(row))
 
   const showPeriod = (nextPeriod, nextOffset) => {
     const start = localDateString(getPeriodRange(nextPeriod, new Date(), nextOffset).start)
@@ -161,15 +171,18 @@ export function ExpensesPage() {
   // when a main category is opened.
   const { mainCategories, subsOf, mainOf, namesOf } = useMemo(() => categoryTree(categories), [categories])
 
+  const periodExpenses = useMemo(() => expenses.filter((e) => e.expense_date >= startDate && e.expense_date < endDate), [expenses, startDate, endDate])
+  // A person's pill (A1, plan 9K): their own expenses whole, plus their
+  // part of each Shared expense that has parts — a copy whose amount is
+  // the part, so every total, the summary, the charts, Totals per category
+  // and the € chip follow unchanged. Everyone and Shared: whole amounts.
+  // Before 029: exactly as before (only that person's own expenses).
   const filteredExpenses = useMemo(
-    () =>
-      expenses.filter((e) => {
-        if (e.expense_date < startDate || e.expense_date >= endDate) return false
-        if (paidByFilter !== 'all' && e.paid_by !== paidByFilter) return false
-        return true
-      }),
-    [expenses, startDate, endDate, paidByFilter]
+    () => (partsReady ? personalExpenses(periodExpenses, paidByFilter) : periodExpenses.filter((e) => paidByFilter === 'all' || e.paid_by === paidByFilter)),
+    [periodExpenses, paidByFilter, partsReady]
   )
+  // What a person's total leaves out: the Shared expenses without parts.
+  const partsNote = partsReady && PEOPLE.includes(paidByFilter) ? withoutPartsNote(periodExpenses) : ''
 
   const filteredIncome = useMemo(
     () => income.filter((i) => i.income_date >= startDate && i.income_date < endDate && (receivedByFilter === 'all' || i.received_by === receivedByFilter)),
@@ -201,7 +214,7 @@ export function ExpensesPage() {
             mainOf={mainOf}
             subName={(categoryId) => (categoryId && mainOf(categoryId)?.id !== categoryId ? categories.find((c) => c.id === categoryId)?.name : null)}
             styleFor={styleFor}
-            onEdit={setEditingExpense}
+            onEdit={editExpense}
             onDelete={removeExpense}
             icon={Layers}
             note={groupDiscountNote(members) || null}
@@ -220,7 +233,7 @@ export function ExpensesPage() {
             shopOf={shopOf}
             subName={subNameOf(g.main)}
             noteOf={discountNote}
-            onEdit={setEditingExpense}
+            onEdit={editExpense}
             onDelete={removeExpense}
           />
         )
@@ -239,7 +252,7 @@ export function ExpensesPage() {
           styleFor={styleFor}
           lineOf={(e) => lineByExpense.get(e.id) ?? null}
           itemOf={(line) => pantryById.get(line.pantry_item_id) ?? null}
-          onEdit={setEditingExpense}
+          onEdit={editExpense}
           onDelete={removeExpense}
           onChangeStore={setTripStoreFor}
           onUndo={undoPurchase}
@@ -253,7 +266,7 @@ export function ExpensesPage() {
       <div className="space-y-4">
         <PeriodPicker period={period} offset={offset} onPeriod={(p) => showPeriod(p, 0)} onOffset={(o) => showPeriod(period, o)} />
 
-        <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} />
+        <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} expensesNote={partsNote} />
       </div>
 
       <IncomeSection
@@ -330,6 +343,7 @@ export function ExpensesPage() {
             deleteCategory={deleteCategory}
             styleFor={styleFor}
             onClose={() => setAddingExpense(false)}
+            partsReady={partsReady}
           />
         )}
 
@@ -337,7 +351,7 @@ export function ExpensesPage() {
 
         {selecting ? (
           <SelectExpenses
-            expenses={sortNewestFirst(filteredExpenses, expenseDate)}
+            expenses={sortNewestFirst(filteredExpenses.map(realExpense), expenseDate)}
             orderExpenseIds={orderExpenseIds}
             names={namesOf}
             shopOf={shopOf}
@@ -404,7 +418,7 @@ export function ExpensesPage() {
           />
         )}
         {groupSheet && <OrderGroupSheet groupId={groupSheet} shopById={shopById} onClose={() => setGroupSheet(null)} />}
-        {bulkStore && <BulkStoreDialog expenses={filteredExpenses} shopOf={shopOf} names={namesOf} onClose={() => setBulkStore(false)} />}
+        {bulkStore && <BulkStoreDialog expenses={filteredExpenses.map(realExpense)} shopOf={shopOf} names={namesOf} onClose={() => setBulkStore(false)} />}
 
         {editingExpense && (
           <div data-unsaved className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setEditingExpense(null)}>
@@ -432,6 +446,7 @@ export function ExpensesPage() {
                 onCancel={() => setEditingExpense(null)}
                 onClose={() => setEditingExpense(null)}
                 onSubmit={(values) => updateExpense(editingExpense.id, values)}
+                partsReady={partsReady}
               />
             </div>
           </div>

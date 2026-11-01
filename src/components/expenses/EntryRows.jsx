@@ -5,6 +5,7 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ShopTag } from '../ui/ShopIcon'
 import { parseLocalDate } from '../../lib/week'
 import { purchaseCouponNote } from '../../lib/discounts'
+import { PartAmount, SharedPartsNote } from './SharedParts'
 
 const paidByLabel = (value) => PAID_BY_OPTIONS.find((o) => o.value === value)?.label || value
 const dateLabel = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
@@ -12,18 +13,20 @@ const dateLabel = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
 const iconButton = 'text-[var(--color-icon-muted)] transition w-9 h-9 flex items-center justify-center'
 
 // One expense or income entry inside a sorted group: what it is, when,
-// who, and the amount.
-function Row({ title, detail, note = '', amount, tone, before, actions }) {
+// who, and the amount. `extra`: more lines under it; `amountNode` instead
+// of the plain amount.
+function Row({ title, detail, note = '', extra = null, amount, amountNode = null, tone, before, actions }) {
   return (
     <div className="flex justify-between items-center gap-2 py-1.5 border-t first:border-t-0 border-[var(--color-border)]">
       <div className="min-w-0">
         <p className="text-[var(--color-text)] truncate">{title}</p>
         <span className="text-[10px] text-[var(--color-text-muted)] block truncate">{detail}</span>
         {note && <span className="text-[10px] font-bold text-emerald-300 block break-words">{note}</span>}
+        {extra}
       </div>
       <div className="flex items-center gap-1 shrink-0">
         {before}
-        <span className={`font-mono ${tone}`}>{amount}</span>
+        {amountNode ?? <span className={`font-mono ${tone}`}>{amount}</span>}
         {actions}
       </div>
     </div>
@@ -35,7 +38,9 @@ function Row({ title, detail, note = '', amount, tone, before, actions }) {
 // The edit button sits before the amount and the delete button after it,
 // so a tap meant for one doesn't land on the other.
 // `noteOf(expense)` → a line in green under it (the discount history of an
-// order's expense, "€80.00 → €56.00 (−30%)"), or ''.
+// order's expense, "€80.00 → €56.00 (−30%)"), or ''. A Shared expense
+// with parts also shows them (plan 9K); in a personal view its part reads
+// "€100.00 of €268.58".
 export function ExpenseRow({ expense, names, shopOf, noteOf = () => '', onEdit, onDelete }) {
   const { main, sub } = names(expense.category_id)
   const shop = shopOf?.(expense.shop_id)
@@ -45,8 +50,8 @@ export function ExpenseRow({ expense, names, shopOf, noteOf = () => '', onEdit, 
       title={expense.description || sub || main || 'Expense'}
       detail={parts.flatMap((part, i) => (i ? [' · ', part] : [part]))}
       note={noteOf(expense)}
-      amount={`€${Number(expense.amount).toFixed(2)}`}
-      tone="text-[var(--color-text-soft)]"
+      extra={<SharedPartsNote expense={expense} />}
+      amountNode={<PartAmount expense={expense} className="text-[var(--color-text-soft)]" />}
       before={
         <button onClick={() => onEdit(expense)} className={`${iconButton} mr-1 hover:text-[var(--color-primary)]`} title="Edit expense" aria-label="Edit expense">
           <Pencil size={13} />

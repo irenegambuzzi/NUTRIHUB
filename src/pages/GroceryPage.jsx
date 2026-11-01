@@ -317,6 +317,11 @@ export function GroceryPage() {
   const openEntries = [...items, ...onTheWay]
   const orderedIds = new Set(onTheWay.map((e) => e.id))
 
+  // The search field sits right above "+ Add to SHOP list", in the List
+  // view (after the category chips) and in Shop mode alike (plan 9K, K13);
+  // both views share the one search.
+  const searchBox = <SearchBox value={search} onChange={setSearch} placeholder="Search the list and the cart…" />
+
   // One button "+ Add to SHOP list" and its form, the same on the List
   // view and in Shop mode (plan 9G, follow-ups of 26/10 and 27/10).
   const addSection = !adding ? (
@@ -384,10 +389,6 @@ export function GroceryPage() {
         </button>
       </div>
 
-      {view !== 'receipts' && (
-        <SearchBox value={search} onChange={setSearch} placeholder="Search the list and the cart…" />
-      )}
-
       {view === 'list' && <WhereToRecord here="shop" />}
       {view === 'list' && flow.missing && (
         <Card className="text-xs text-yellow-300">"Order online", "On the way", one store per shopping trip and budget categories by item category: {FLOW_NOTICE}</Card>
@@ -437,6 +438,7 @@ export function GroceryPage() {
             })}
           </div>
 
+          {searchBox}
           {addSection}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -532,6 +534,7 @@ export function GroceryPage() {
         </>
       ) : view === 'shop' ? (
         <>
+          {searchBox}
           {addSection}
           <ShoppingMode
             items={items}

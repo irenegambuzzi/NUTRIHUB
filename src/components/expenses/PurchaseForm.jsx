@@ -9,6 +9,7 @@ import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { PackSizeField } from '../ui/PackSizeField'
+import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { CategoryFields } from '../inventory/CategoryFields'
 import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { UnitOptions } from '../grocery/shared'
@@ -43,6 +44,7 @@ import {
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
 import { exactKey, inHomeNote, pickLabel, shopEntryFor, similarOnListText } from '../../lib/similarItems'
+import { PEOPLE, SHARED, checkSplit, emptySplit, spreadParts } from '../../lib/sharedParts'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
@@ -65,7 +67,11 @@ import { useShops } from '../../hooks/useShops'
 // (typed next to the price as on the receipt); with two items or more a
 // "Purchase discount" is spread over them by price. The expense is always
 // what was really paid; the normal price stays the item's last price.
-export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose }) {
+// Paid by Shared (plan 9K, with supabase/029: `partsReady`): what each
+// person paid must be typed under "Paid by" — for a purchase once, for
+// the whole receipt, spread over its lines (lib/sharedParts.js). Before
+// 029 "Shared" works as it always did.
+export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false }) {
   // One id per form: pressing Save again after a dropped connection can't
   // save the purchase (or the expense) twice.
   const [id] = useState(() => crypto.randomUUID())
@@ -73,6 +79,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const [date, setDate] = useState(localDateString)
   const [dateOk, setDateOk] = useState(true)
   const [paidBy, setPaidBy] = useState('shared')
+  const [split, setSplit] = useState(emptySplit)
   const [rows, setRows] = useState(() => [emptyRow(1)])
   const [nextKey, setNextKey] = useState(2)
   const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
@@ -106,7 +113,17 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const asks = lines.map((line) => similarAsk(line, pantryItems))
   const problems = lines.map((line, i) => (asks[i] ? SIMILAR_PROBLEM : rowProblem(line, { plain })))
   const total = purchaseTotal(lines)
-  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem
+  // Each person's part of what is paid by Shared: required for every new
+  // Shared expense, checked again whenever a price or discount changes.
+  const splitOn = partsReady && paidBy === SHARED
+  const splitCheck = splitOn ? checkSplit(split, total) : null
+  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem || splitCheck?.problem || ''
+
+  // Another payer than Shared: the parts typed are cleared (K11).
+  const choosePayer = (value) => {
+    setPaidBy(value)
+    if (value !== SHARED) setSplit(emptySplit())
+  }
 
   const change = (key, patch) => setRows((all) => all.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
@@ -166,6 +183,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
       paidBy,
       expenseDate: date,
       ...(shopsReady ? { shopId: shopId || null } : {}),
+      ...(splitCheck?.parts ? { parts: splitCheck.parts } : {}),
     })
 
   const savePurchase = () => {
@@ -179,6 +197,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
       budgetFor: (line) => budgetOf(line.row, budgetCtx),
       entryOf,
       priced,
+      lineParts: splitCheck?.parts ? spreadParts(lines.map((l) => l.paid), splitCheck.parts) : null,
     })
     return recordMoneyPurchase({ payload, restocked: lines.map((l) => l.target?.id).filter(Boolean) })
   }
@@ -220,7 +239,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
           </div>
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} aria-label="Paid by">
+            <Select value={paidBy} onChange={(e) => choosePayer(e.target.value)} aria-label="Paid by">
               {PAID_BY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -229,6 +248,16 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
             </Select>
           </div>
         </div>
+        {splitOn && (
+          <SharedPartsFields
+            split={split}
+            onChange={setSplit}
+            total={total}
+            check={splitCheck}
+            showProblem={tried || PEOPLE.some((code) => split.texts[code].trim())}
+            caption={`What each one paid of ${money(total)}.`}
+          />
+        )}
 
         <div className="space-y-2">
           {lines.map((line, index) => (

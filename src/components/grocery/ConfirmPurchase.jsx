@@ -5,6 +5,7 @@ import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { PackSizeField } from '../ui/PackSizeField'
+import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { CategoryIcon } from '../ui/CategoryIcon'
 import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { FixCategory } from './FixCategory'
@@ -25,6 +26,9 @@ import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { usePurchase } from '../../hooks/usePurchase'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
+import { useExpensePartsReady } from '../../hooks/useExpenseParts'
+import { round2 } from '../../lib/discounts'
+import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../lib/sharedParts'
 
 // The last step of shopping: everything in the cart with quantity, unit,
 // price, line total and payer (all still editable), the shopping day, and
@@ -47,8 +51,14 @@ import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 // `durableBudgetOf(item)`: the entry's budget category (from its HOME
 // category's mapping) is a durable one — then, like a Durables entry, it
 // is an expense only (plan 9F).
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false }) {
+// Lines paid by Shared (plan 9K, with supabase/029): what each person
+// paid of them is typed once ("What each one paid"), and spread over those
+// lines by what each really pays (lib/sharedParts.js). Lines paid by one
+// person are untouched. `partsReady`: whether 029 has run (found by itself
+// when not given).
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady }) {
   const { confirmPurchase } = usePurchase()
+  const partsFound = useExpensePartsReady()
   const { photos, addPhoto, deletePhoto } = useReceiptPhotos()
   // One id per purchase: pressing Confirm again after a dropped connection
   // can't save it twice.
@@ -98,6 +108,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // coupon of the whole purchase.
   const [discounts, setDiscounts] = useState({})
   const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
+  const [split, setSplit] = useState(emptySplit)
   // Ids of the new variants made for group lines, fixed for this screen.
   const variantIds = useRef(new Map())
   const [photoIds, setPhotoIds] = useState([])
@@ -138,6 +149,20 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // Who paid for the whole trip; null when it was shared out differently.
   const payers = new Set(items.map((i) => i.payer || 'shared'))
   const tripPayer = payers.size === 1 ? [...payers][0] : null
+  // The Shared lines that cost something, and what each person paid of
+  // them: required, checked again whenever a price, discount, coupon or
+  // payer changes. No Shared line → no fields (and what was typed goes).
+  const sharedOf = (trip, priced) => trip.filter((i) => (i.payer || SHARED) === SHARED && priced.byItem.get(i.id)?.paid > 0)
+  const sharedTotalOf = (shared, priced) => round2(shared.reduce((sum, i) => sum + priced.byItem.get(i.id).paid, 0))
+  const sharedItems = sharedOf(items, pricing)
+  const sharedTotal = sharedTotalOf(sharedItems, pricing)
+  const splitOn = (partsReady ?? partsFound) && sharedTotal > 0
+  const splitCheck = splitOn ? checkSplit(split, sharedTotal) : null
+  const [splitWasOn, setSplitWasOn] = useState(splitOn)
+  if (splitWasOn !== splitOn) {
+    setSplitWasOn(splitOn)
+    if (!splitOn) setSplit(emptySplit())
+  }
   const attached = photos.filter((p) => photoIds.includes(p.id))
   // The receipt compared with the cart, once receipts can be read
   // automatically (lib/receiptMatch.js); empty for now.
@@ -159,6 +184,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready)) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
+    const confirmedShared = splitOn ? sharedOf(confirmed, confirmedPricing) : []
+    const confirmedSplit = confirmedShared.length ? checkSplit(split, sharedTotalOf(confirmedShared, confirmedPricing)) : null
+    if (confirmedSplit?.problem) return
+    const spread = confirmedSplit?.parts ? spreadParts(confirmedShared.map((i) => confirmedPricing.byItem.get(i.id).paid), confirmedSplit.parts) : []
+    const partsByItem = spread.length ? new Map(confirmedShared.map((i, k) => [i.id, spread[k]])) : null
     const ids = new Set(confirmed.map((i) => i.id))
     const patches = cartItems.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     const confirmedPayers = new Set(confirmed.map((i) => i.payer || 'shared'))
@@ -175,6 +205,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       shopId: shopId || null,
       paidBy: confirmedPayers.size === 1 ? [...confirmedPayers][0] : null,
       pricing: confirmedPricing,
+      partsByItem,
     })
     setBusy(false)
     if (error) return
@@ -248,6 +279,16 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
             </div>
           </div>
         </div>
+
+        {splitOn && (
+          <SharedPartsFields
+            split={split}
+            onChange={setSplit}
+            total={sharedTotal}
+            check={splitCheck}
+            caption={`What each one paid of the ${sharedItems.length} ${payerLabel(SHARED)} item${sharedItems.length === 1 ? '' : 's'} (${money(sharedTotal)}).`}
+          />
+        )}
 
         <ShopPicker value={shopId} onChange={setShopId} label={splitTrips ? 'Store (for this whole trip)' : undefined} />
         {splitTrips && (
@@ -329,10 +370,15 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
             </p>
           )}
+          {splitCheck?.problem && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> {splitCheck.problem}
+            </p>
+          )}
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || lines.length === 0}
+            disabled={busy || open > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || Boolean(splitCheck?.problem) || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
