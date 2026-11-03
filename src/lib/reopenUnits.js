@@ -7,9 +7,8 @@ import { unitFactor } from './units'
 // order from elsewhere, and takes nothing out when the stock can't be
 // converted. The functions return what they always did, so the app reads
 // the lines and items before the call and the items after it, and these
-// pure rules (the same as 031's) say what to tell the user. Before 031 the
-// database deletes every created item and always takes the stock out as
-// it was counted, so nothing here ever says anything then.
+// pure rules (the same as 031's) say what to tell the user. 031 has been
+// run (03/11/2026), so the texts no longer mention the database update.
 
 // How many of the item's unit now are in 1 of `from` (K27): the same unit
 // → 1; kg ↔ gr, L ↔ ml → the factor; the item's usual pack
@@ -93,25 +92,22 @@ export function reopenNotes({ lines, before, after, logs = [] }) {
 // (`log`), or the item's unit when that row is gone.
 export const arrivalFactor = (log, item) => stockFactor(log?.unit ?? item?.unit ?? null, item)
 
-// The question before "Back on the way" (K37), what it says about the
+// The question before "Back on the way" (K37, K39), what it says about the
 // stock an arrival added to an item it didn't create. `unit`: the item's
 // unit as the phone shows it; `seen` ({ item, log }, read just before):
 // when the arrival's own history row was counted in another unit than the
-// item's now, it says what the arrival really added and what 031 takes
-// out. The app can't tell before the call whether 031 has run, so it also
-// says what the database before 031 takes out (the arrival's number in the
-// item's unit now). Otherwise (same unit, that row gone, nothing read) the
-// text as before: both take out the same.
+// item's now, it says what the arrival really added and what comes out (or
+// that it won't be taken out). Otherwise (same unit, that row gone, nothing
+// read) the plain text.
 export function backOnTheWayStockText(order, unit, seen) {
   const added = Number(order.stock_added)
   const item = seen?.item
   const from = seen?.log?.unit ?? null
   if (!item || from == null || from === (item.unit ?? null)) return `Its arrival added ${added}${unit ? ` ${unit}` : ''} to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
   const factor = stockFactor(from, item)
-  const before031 = `Until the database update supabase/031_reopen_created_items.sql has run, ${quantity(added, item.unit)} is taken out instead`
   return factor == null
-    ? `Its arrival added ${quantity(added, from)} to HOME. That stock won't be taken out (its unit changed) — check "${item.name}" in HOME. ${before031}.`
-    : `Its arrival added ${quantity(added, from)} (${quantity(added * factor, item.unit)}) to HOME. That stock is taken out again, so it isn't counted twice when it really arrives. ${before031} — check "${item.name}" in HOME afterwards.`
+    ? `Its arrival added ${quantity(added, from)} to HOME. That stock won't be taken out (its unit changed) — check "${item.name}" in HOME.`
+    : `Its arrival added ${quantity(added, from)} (${quantity(added * factor, item.unit)}) to HOME. That stock is taken out again, so it isn't counted twice when it really arrives.`
 }
 
 // What "Back on the way" / the Arrived Undo took out of `before` (the item

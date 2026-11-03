@@ -164,9 +164,8 @@ describe('"Back on the way" and the Arrived Undo: the notes', () => {
     expect(db.row('pantry_items', soap.id).current_stock).toBe(3)
   })
 
-  // K37: the question says what the arrival really added (1 pack) and what
-  // comes out — with 031 and, since the app can't tell before the call,
-  // before it — and both are what the database then does.
+  // K37, K39: the question says what the arrival really added (1 pack) and
+  // what comes out (031 has run), and that is what the database then does.
   async function ask(order) {
     db.row('orders', order.id).expense_id = 'exp-soap'
     const asked = askBackOnTheWay({ ...db.row('orders', order.id) }, { unit: db.row('pantry_items', order.arrived_item_id).unit })
@@ -177,7 +176,6 @@ describe('"Back on the way" and the Arrived Undo: the notes', () => {
     return { title, message }
   }
   const SAME = 'That stock is taken out again, so it isn\'t counted twice when it really arrives.'
-  const BEFORE_031 = 'Until the database update supabase/031_reopen_created_items.sql has run, 1 pcs is taken out instead'
 
   it('the "Back on the way" question, no unit change: as before (1 pack; 3 → 2 pack with 031 and with 021)', async () => {
     for (const v031 of [true, false]) {
@@ -191,20 +189,16 @@ describe('"Back on the way" and the Arrived Undo: the notes', () => {
     }
   })
 
-  it('the "Back on the way" question after 1 pack = 4: "1 pack (4 pcs)" — 031 takes out 4 (12 → 8), before 031 1 pcs (12 → 11), as it says', async () => {
-    for (const v031 of [true, false]) {
-      const { soap, order } = await arrivedThenConverted(v031, { per: 4 })
-      expect((await ask(order)).message).toBe(`Its arrival added 1 pack (4 pcs) to HOME. ${SAME} ${BEFORE_031} — check "Soap" in HOME afterwards.`)
-      expect(db.row('pantry_items', soap.id).current_stock).toBe(v031 ? 8 : 11)
-    }
+  it('the "Back on the way" question after 1 pack = 4: "1 pack (4 pcs)", and 4 come out (12 → 8), as it says', async () => {
+    const { soap, order } = await arrivedThenConverted(true, { per: 4 })
+    expect((await ask(order)).message).toBe(`Its arrival added 1 pack (4 pcs) to HOME. ${SAME}`)
+    expect(db.row('pantry_items', soap.id).current_stock).toBe(8)
   })
 
-  it('the "Back on the way" question, not convertible: "won\'t be taken out" — 031 leaves 3 pcs, before 031 1 pcs comes out (3 → 2), as it says', async () => {
-    for (const v031 of [true, false]) {
-      const { soap, order } = await arrivedThenConverted(v031, { per: null })
-      expect((await ask(order)).message).toBe(`Its arrival added 1 pack to HOME. That stock won't be taken out (its unit changed) — check "Soap" in HOME. ${BEFORE_031}.`)
-      expect(db.row('pantry_items', soap.id).current_stock).toBe(v031 ? 3 : 2)
-      getToasts().forEach((t) => dismissToast(t.id))
-    }
+  it('the "Back on the way" question, not convertible: "won\'t be taken out", and the 3 pcs stay (3 → 3), as it says', async () => {
+    const { soap, order } = await arrivedThenConverted(true, { per: null })
+    expect((await ask(order)).message).toBe('Its arrival added 1 pack to HOME. That stock won\'t be taken out (its unit changed) — check "Soap" in HOME.')
+    expect(db.row('pantry_items', soap.id).current_stock).toBe(3)
+    getToasts().forEach((t) => dismissToast(t.id))
   })
 })

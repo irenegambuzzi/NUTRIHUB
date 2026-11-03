@@ -140,20 +140,20 @@ describe('the "Back on the way" question about the arrival\'s stock (K37)', () =
     expect(backOnTheWayStockText({ stock_added: 3 }, 'pcs', null)).toBe(`Its arrival added 3 pcs to HOME. ${SAME}`)
     expect(backOnTheWayStockText({ stock_added: 3 }, '', null)).toBe(`Its arrival added 3 to HOME. ${SAME}`)
   })
-  it('converted since: what it added, what 031 takes out, and what comes out before 031', () => {
+  it('converted since: what it added, and that it is taken out again', () => {
     const soap = { name: 'Soap', unit: 'pcs', current_stock: 12, packaging_unit: 'pack', quantity_per_pack: 4 }
     expect(backOnTheWayStockText(order, 'pcs', { item: soap, log: { unit: 'pack' } })).toBe(
-      `Its arrival added 1 pack (4 pcs) to HOME. ${SAME} Until the database update supabase/031_reopen_created_items.sql has run, 1 pcs is taken out instead — check "Soap" in HOME afterwards.`
+      `Its arrival added 1 pack (4 pcs) to HOME. ${SAME}`
     )
     const rice = { name: 'Rice', unit: 'gr', current_stock: 1200 }
     expect(backOnTheWayStockText({ stock_added: 0.5 }, 'gr', { item: rice, log: { unit: 'kg' } })).toBe(
-      `Its arrival added 0.5 kg (500 gr) to HOME. ${SAME} Until the database update supabase/031_reopen_created_items.sql has run, 0.5 gr is taken out instead — check "Rice" in HOME afterwards.`
+      `Its arrival added 0.5 kg (500 gr) to HOME. ${SAME}`
     )
   })
   it('not convertible: its stock won\'t be taken out — check it', () => {
     const wipes = { name: 'Wipes', unit: 'pcs', current_stock: 3 }
     expect(backOnTheWayStockText(order, 'pcs', { item: wipes, log: { unit: 'pack' } })).toBe(
-      'Its arrival added 1 pack to HOME. That stock won\'t be taken out (its unit changed) — check "Wipes" in HOME. Until the database update supabase/031_reopen_created_items.sql has run, 1 pcs is taken out instead.'
+      'Its arrival added 1 pack to HOME. That stock won\'t be taken out (its unit changed) — check "Wipes" in HOME.'
     )
   })
 })

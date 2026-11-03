@@ -4491,19 +4491,16 @@ same, without the note.
   couldn't be taken out (its unit changed) — check it in HOME.`
 - The "Back on the way" question (K37), when the arrival's own history row
   (`orders.arrived_log_id` → `stock_logs.unit`) was counted in another unit
-  than the item's now. The app can't tell BEFORE the call whether 031 has
-  run, so the question says both (Kata ragu 01/11, 1):
+  than the item's now (K39: the temporary "Until the database update
+  supabase/031_reopen_created_items.sql has run, …" sentences were removed
+  after 031 ran):
   - convertible: `Its arrival added 1 pack (4 pcs) to HOME. That stock is
-    taken out again, so it isn't counted twice when it really arrives. Until
-    the database update supabase/031_reopen_created_items.sql has run, 1 pcs
-    is taken out instead — check "{item}" in HOME afterwards.`
+    taken out again, so it isn't counted twice when it really arrives.`
   - not convertible: `Its arrival added 1 pack to HOME. That stock won't be
-    taken out (its unit changed) — check "{item}" in HOME. Until the database
-    update supabase/031_reopen_created_items.sql has run, 1 pcs is taken out
-    instead.`
+    taken out (its unit changed) — check "{item}" in HOME.`
   - the same unit, the arrival's row gone, or the item / row can't be read:
     the text as before (`Its arrival added {qty} to HOME. That stock is taken
-    out again, …`; 021 and 031 then take out the same). The variant with a
+    out again, …`; the same). The variant with a
     new item (`… and created "{item}" …`) and the K20 expense part: as
     before. The Arrived
   Undo toast after a unit change says what really came out (`"Soap" is on
@@ -4691,7 +4688,17 @@ block "031" + 1 (the three K33 examples, with 030's result next to them:
 with 031 and with 021 each: no unit change 3 → 2 pack; 1 pack = 4: 12 → 8
 with 031, 12 → 11 before; not convertible: 3 stays with 031, 3 → 2 before).
 
-**Kata ragu (01/11 follow-up).**
+**SQL 031 run by the household on 03/11/2026: all 14 checks ok.**
+
+**Follow-up 03/11 (K39, K40).** K39: the temporary "Until … 031" sentences
+removed after 031 ran (option (a) of Kata ragu 1 below);
+`lib/reopenUnits.backOnTheWayStockText` only. K40: K33's "complete usual
+size" kept as built (`packaging_unit` filled and `quantity_per_pack` > 0).
+Tests unchanged in number (2102, 115 files): the K37 tests now check the
+new texts, and the "before 031" runs of the question were dropped (the real
+database is 031 now). No SQL.
+
+**Kata ragu (01/11 follow-up).** (Answered 03/11: 1 → K39, 2 → K40.)
 
 1. K37 "before 031, keep today's text": the app only knows whether 031 has
    run AFTER the call (it compares the stock), not before the question. Now
