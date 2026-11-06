@@ -4825,6 +4825,25 @@ is sent in no plain update.
 - **K78** A name line updates the item's price like every purchase line; Reopen
   puts it back, as built.
 - **K79** The payer limit stays and is documented (see "Known limit" below).
+- **K80** When two cards of one item get different answers about expired stock,
+  only the item's first line decides. Stock 4 expired, first card keep +1,
+  second card throw away +2 → nothing thrown away, 4 + 1 + 2 = 7 pcs. Stage 3
+  asks once per item, so this case disappears.
+- **K81** `merge_pantry_items`: the target's own `expiry_date` counts only when
+  the target's stock is above 0, or when no source brings stock above 0 (any
+  source above 0 counts, whatever the order). Every other part of K72 stays;
+  a source's date stays in `origin`.
+
+  | Target stock / date | Source stock / date | Result date | Result stock |
+  | --- | --- | --- | --- |
+  | 0 / 2020 | 5 / 2027 | 2027 | 5 |
+  | 0 / 2020 | 5 / empty | empty | 5 |
+  | 0 / 2020 | 0 / 2027 | 2020 | 0 |
+  | 3 / 2026 | 5 / 2027 | 2026 | 8 |
+  | 3 / 2026 | 0 / 2020 | 2026 | 3 |
+
+- **K82** Stock rounded to 3 decimals may not return exactly after a later merge
+  (2 pcs → 0.667 pack → 2.001 pcs). Accepted.
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -4885,8 +4904,9 @@ then the names it had (a plain name the target has is skipped; a name with an
 coalesce(merged_from, source)`, so a chain B → A → T keeps B. Automatic "to
 buy" entries go; those in a cart, ordered online, typed by hand or bought move
 with their own name. "merged" history row only when the moved stock is above
-0. Earliest non-empty expiry, a source's date only with stock above 0 (K72);
-latest `last_purchased_at`. `is_group` ends false (K70). A source's pack size
+0. Earliest non-empty expiry, a source's date only with stock above 0 (K72),
+the target's own date only with stock above 0 or when no source brings any
+(K81); latest `last_purchased_at`. `is_group` ends false (K70). A source's pack size
 counts in its own unit, so on the name it is × the factor, or empty when there
 is no conversion (a source at 0 in another unit). A price without a unit gets
 the source's unit. Sent twice: `{ already_merged: true }`, nothing written.
@@ -4973,7 +4993,8 @@ Changed: `supabase/migrations.test.js` (block "032"; the 9J guard allows 032,
 which never touches `arrive_order`), this plan.
 
 **Tests: 2102 → 2186 (115 → 117 files), then 2198 after the follow-up of 06/11
-(K70–K77).** `supabase/migrations.test.js` block "032" (70, PGlite): the file; both line diffs; stops at 030 ("Run
+(K70–K77), then 2204 after the second follow-up (K81).**
+`supabase/migrations.test.js` block "032" (76, PGlite): the file; both line diffs; stops at 030 ("Run
 031_reopen_created_items.sql first."); run twice, every check ok, nothing else
 changed; anon and a stranger refused; old SHOP and MONEY payloads = 030 / 031
 row by row, Reopen too; €1.39 + €0.99 + €1.49 = €3.87, stock 1 → 4; K50; coupon
@@ -4988,7 +5009,9 @@ Reopen and "Back on the way" of each, separate → merge → separate, expenses
 unchanged; `save_item_names`; K70 (refused with a variant left out, or only
 normal items; all variants; a group with none); K71 (+3 and +1 = 4 pcs against
 030's 1, kg at another store, MONEY, a line after the line that made the item);
-K72; K75 (1 pack = 3 pcs, 2 bags = 10 pcs, the order); the stock format; K77.
+K72; K75 (1 pack = 3 pcs, 2 bags = 10 pcs, the order); the stock format; K77;
+K81 (the five rows, each in its own unit; after a conversion; several sources
+in any order; a group as target; the two Kata ragu cases below).
 `lib/itemNames.test.js` (19), `hooks/itemNamesReady.test.jsx` (7).
 
 **SQL 032 not run yet.** The household runs it after Claude has checked it.
@@ -4996,18 +5019,18 @@ K72; K75 (1 pack = 3 pcs, 2 bags = 10 pcs, the order); the stock format; K77.
 **Kata ragu (06/11).** (Answered 06/11: 1 → K70, 2 → K71, 3 → K72, 4 → K73,
 5 → K74, 6 → K75, 7 → K76, 8 → K77, 9 → K78.)
 
-**Kata ragu (06/11 follow-up, tanya Zidane).** See the round's message; built as
-written until answered.
+**Kata ragu (06/11 follow-up).** (Answered 06/11: 1 → K80, 2 → K81, 3 → K82.)
 
-1. K71 with two different answers. The expired question is asked per card, so
-   two cards of one item may answer differently: stock 4, first card "keep" +1,
-   second "throw away" +2. Only the first line counts: nothing is thrown away,
-   7 pcs (tested). 030: 5 thrown away, 2 pcs.
-2. K72 speaks of sources only. A target at 0 with an old date keeps that date in
-   the earliest date: target 0 pcs, 2020; source 5 pcs, 2027 → 5 pcs dated 2020,
-   shown as expired.
-3. The rounding of the stock format can't be undone exactly: 2 pcs at 1 pack = 3
-   pcs is 0.667 pack; merged again it is 2.001 pcs.
+**Kata ragu (06/11 second follow-up, tanya Zidane).** See the round's message;
+built as written until answered, both tested.
+
+1. Reopen after a merge. Reopen of the target's own older purchase still puts
+   its date back from `pantry_before` (031), so K81's problem can return: target
+   0 pcs, 2020; bought 2 dated 2028; merged 5 pcs dated 2027 → 7 pcs, 2027;
+   Reopen → 5 pcs dated 2020. The same happens with K72 alone.
+2. Separate after a merge. Target 0 pcs, 2020; source 5 pcs, 2027; separated
+   again: the source is back with 2027, the target stays at 0 pcs with 2027. Its
+   old date is gone, because nothing keeps it.
 
 **Notes for later stages.**
 

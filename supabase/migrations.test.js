@@ -5469,7 +5469,7 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       expect(await discardedOn(trip)).toEqual([0, 0])
     })
 
-    it('K71, a Kata ragu case: the first line "keep", the second "throw away": only the first line counts, nothing is thrown away, 4 + 1 + 2 = 7 pcs', async () => {
+    it('K80: two different answers about expired stock: the first line "keep", the second "throw away": only the first line counts, nothing is thrown away, 4 + 1 + 2 = 7 pcs', async () => {
       const kefir = await addItem(fx, 'Kefir Bottle', 'pcs', 4, { expiry: '2020-04-04', category: 'dairy' })
       const first = await addEntry(fx, 'Kefir Bottle', { pantry: kefir })
       const second = await addEntry(fx, 'Kefir Bottle', { pantry: kefir })
@@ -6011,6 +6011,98 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       const live = await addItem(fx, 'Ragu Jar', 'pcs', 2, { expiry: '2026-12-24' })
       await merge(fx, sauce, [gone, live])
       expect(await fieldsOf(fx, sauce)).toMatchObject({ stock: 3, expiry: '2026-12-24' })
+    })
+
+    it('K81: the five rows of the table, each in its own unit: the target\'s own expiry counts only when the target has stock above 0, or when no source brings stock', async () => {
+      const table = [
+        { target: ['Olive Shelf', 'pcs', 0, '2020-02-02'], source: ['Green Olives', 'pcs', 5, '2027-03-03'], expiry: '2027-03-03', stock: 5 },
+        { target: ['Rice Shelf', 'kg', 0, '2020-02-02'], source: ['Basmati Rice', 'kg', 5, null], expiry: null, stock: 5 },
+        { target: ['Broth Shelf', 'L', 0, '2020-02-02'], source: ['Veg Broth', 'L', 0, '2027-03-03'], expiry: '2020-02-02', stock: 0 },
+        { target: ['Sugar Shelf', 'gr', 3, '2026-04-04'], source: ['Brown Sugar', 'gr', 5, '2027-03-03'], expiry: '2026-04-04', stock: 8 },
+        { target: ['Vinegar Shelf', 'ml', 3, '2026-04-04'], source: ['Red Vinegar', 'ml', 0, '2020-02-02'], expiry: '2026-04-04', stock: 3 },
+      ]
+      for (const { target: [name, unit, stock, expiry], source: [fromName, fromUnit, fromStock, fromExpiry], ...after } of table) {
+        const target = await addItem(fx, name, unit, stock, { expiry })
+        const source = await addItem(fx, fromName, fromUnit, fromStock, { expiry: fromExpiry })
+        await merge(fx, target, [source])
+        expect(await fieldsOf(fx, target)).toMatchObject(after)
+        expect((await namesOf(fx, target))[0].origin).toMatchObject({ id: source, expiry_date: fromExpiry })
+      }
+    })
+
+    it('K81 after a conversion: 5000 gr into kg = 5, 5000 ml into L = 5, 1 box of 5 into pcs = 5, 0.005 kg into gr = 3 + 5; a source at 0 in a unit that can\'t convert', async () => {
+      const table = [
+        { target: ['Flour Bin', 'kg', 0, '2020-02-02'], source: ['Bread Flour', 'gr', 5000, '2027-03-03'], expiry: '2027-03-03', stock: 5 },
+        { target: ['Milk Crate', 'L', 0, '2020-02-02'], source: ['Oat Milk', 'ml', 5000, null], expiry: null, stock: 5 },
+        { target: ['Tea Tin', 'pcs', 0, '2020-02-02', { packaging_unit: 'box', quantity_per_pack: 5 }], source: ['Green Tea', 'box', 1, '2027-03-03'], expiry: '2027-03-03', stock: 5 },
+        { target: ['Coffee Tin', 'pcs', 0, '2020-02-02'], source: ['Ground Coffee', 'pack', 0, '2027-03-03'], expiry: '2020-02-02', stock: 0 },
+        { target: ['Salt Tin', 'gr', 3, '2026-04-04'], source: ['Sea Salt', 'kg', 0.005, '2027-03-03'], expiry: '2026-04-04', stock: 8 },
+        { target: ['Syrup Tin', 'L', 3, '2026-04-04'], source: ['Maple Syrup', 'ml', 0, '2020-02-02'], expiry: '2026-04-04', stock: 3 },
+      ]
+      for (const { target: [name, unit, stock, expiry, more], source: [fromName, fromUnit, fromStock, fromExpiry], ...after } of table) {
+        const target = await addItem(fx, name, unit, stock, { expiry, ...more })
+        const source = await addItem(fx, fromName, fromUnit, fromStock, { expiry: fromExpiry })
+        await merge(fx, target, [source])
+        expect(await fieldsOf(fx, target)).toMatchObject(after)
+      }
+    })
+
+    it('K81 with several sources: the rule looks at all of them, in any order, and any source above 0 counts as bringing stock; every date stays in `origin`', async () => {
+      const table = [
+        // A source at 0 before, and after, the one with stock (they merge by name).
+        { before: [0, '2020-02-02'], sources: [[0, '2019-01-01'], [5, '2027-03-03']], expiry: '2027-03-03', stock: 5 },
+        { before: [0, '2020-02-02'], sources: [[5, '2027-03-03'], [0, '2019-01-01']], expiry: '2027-03-03', stock: 5 },
+        { before: [0, '2020-02-02'], sources: [[4, '2028-05-05'], [2, '2027-03-03']], expiry: '2027-03-03', stock: 6 },
+        { before: [0, '2020-02-02'], sources: [[5, null], [0, '2019-01-01']], expiry: null, stock: 5 },
+        { before: [0, '2020-02-02'], sources: [[5, null], [2, '2027-03-03']], expiry: '2027-03-03', stock: 7 },
+        { before: [0, '2020-02-02'], sources: [[0, '2019-01-01'], [0, '2027-03-03']], expiry: '2020-02-02', stock: 0 },
+        { before: [0, null], sources: [[0, '2019-01-01'], [0, '2027-03-03']], expiry: null, stock: 0 },
+        { before: [3, '2026-04-04'], sources: [[0, '2020-02-02'], [5, '2027-03-03']], expiry: '2026-04-04', stock: 8 },
+        { before: [3, '2026-04-04'], sources: [[0, '2020-02-02'], [5, '2025-06-06']], expiry: '2025-06-06', stock: 8 },
+      ]
+      for (const [row, { before: [stock, expiry], sources, ...after }] of table.entries()) {
+        const target = await addItem(fx, `Cupboard ${row}`, 'pcs', stock, { expiry })
+        const ids = []
+        for (const [at, [fromStock, fromExpiry]] of sources.entries()) ids.push(await addItem(fx, `Tin ${row} ${at}`, 'pcs', fromStock, { expiry: fromExpiry }))
+        await merge(fx, target, ids)
+        expect(await fieldsOf(fx, target)).toMatchObject(after)
+        expect((await namesOf(fx, target)).map((n) => n.origin.expiry_date)).toEqual(sources.map(([, fromExpiry]) => fromExpiry))
+      }
+    })
+
+    it('K81 with a group as target: 0 + 2 + 0 = 2 pcs dated by the variant with stock; variants all at 0 keep the group\'s date', async () => {
+      const group = await addItem(fx, 'Soup Shelf', 'pcs', 0, { is_group: true, expiry: '2020-02-02' })
+      const full = await addItem(fx, 'Lentil Soup', 'pcs', 2, { group, expiry: '2027-03-03' })
+      const empty = await addItem(fx, 'Bean Soup', 'pcs', 0, { group, expiry: '2019-01-01' })
+      await merge(fx, group, [full, empty])
+      expect(await fieldsOf(fx, group)).toMatchObject({ stock: 2, expiry: '2027-03-03', is_group: false })
+
+      const shelf = await addItem(fx, 'Pesto Shelf', 'pcs', 0, { is_group: true, expiry: '2020-02-02' })
+      const basil = await addItem(fx, 'Basil Pesto', 'pcs', 0, { group: shelf, expiry: '2027-03-03' })
+      await merge(fx, shelf, [basil])
+      expect(await fieldsOf(fx, shelf)).toMatchObject({ stock: 0, expiry: '2020-02-02', is_group: false })
+    })
+
+    it('K81, a Kata ragu case: separated again, the source comes back with its date; the target at 0 keeps the date the merge gave it, its old date is gone', async () => {
+      const target = await addItem(fx, 'Nut Jar', 'pcs', 0, { expiry: '2020-02-02' })
+      const source = await addItem(fx, 'Roasted Hazelnuts', 'pcs', 5, { expiry: '2027-03-03' })
+      await merge(fx, target, [source])
+      await separate(fx, target, 'Roasted Hazelnuts', 5)
+      expect(await fieldsOf(fx, source)).toMatchObject({ stock: 5, expiry: '2027-03-03' })
+      expect(await fieldsOf(fx, target)).toMatchObject({ stock: 0, expiry: '2027-03-03' })
+    })
+
+    it('K81, a Kata ragu case: Reopen of the target\'s own older purchase takes 2 out of 7 and puts its date back from before that purchase, so the stock of the merge gets the old date', async () => {
+      const target = await addItem(fx, 'Bean Jar', 'pcs', 0, { expiry: '2020-02-02' })
+      const entry = await addEntry(fx, 'Bean Jar', { pantry: target })
+      const trip = next()
+      await shop(fx, trip, [{ entry, add: 2, total: 3, pantry: target, expiry_date: '2028-08-08' }])
+      expect(await fieldsOf(fx, target)).toMatchObject({ stock: 2, expiry: '2028-08-08' })
+      const source = await addItem(fx, 'Black Beans', 'pcs', 5, { expiry: '2027-03-03' })
+      await merge(fx, target, [source])
+      expect(await fieldsOf(fx, target)).toMatchObject({ stock: 7, expiry: '2027-03-03' })
+      await reopen(fx, trip)
+      expect(await fieldsOf(fx, target)).toMatchObject({ stock: 5, expiry: '2020-02-02' })
     })
 
     it('every merged name keeps the source: origin (the whole row), from_item_id; its own names come along; a 1× source is allowed and the target\'s 1× does not change (K62)', async () => {

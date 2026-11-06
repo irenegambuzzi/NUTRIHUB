@@ -770,7 +770,9 @@ grant execute on function save_item_names(jsonb) to authenticated;
 -- The target's price, pack size, payer, notes, usual store, 1× and minimum
 -- stay its own (K46, K49, K62). Its stock grows, its expiry becomes the
 -- earliest non-empty one (a source's date counts only when that source has
--- stock above 0: K72), its last purchase the latest. Each source's rows
+-- stock above 0: K72; the target's own date only when the target has stock
+-- above 0, or when no source brings stock above 0: K81), its last purchase
+-- the latest. Each source's rows
 -- move to it: history, purchase lines and orders (with merged_from), SHOP
 -- entries; an automatic "to buy" entry goes (the app judges the item again).
 -- Each source is kept whole in `origin` on its name: separate_item_name
@@ -859,7 +861,8 @@ begin
 
   v_now := coalesce(t.current_stock, 0);
   v_names := t.names;
-  v_expiry := t.expiry_date;
+  -- K81: at 0 the target's own date waits: it counts only if no source brings stock.
+  v_expiry := case when v_now > 0 then t.expiry_date end;
   v_bought := t.last_purchased_at;
 
   for f in select * from pantry_items p where p.id = any(v_from) order by lower(p.name), p.id loop
@@ -975,7 +978,7 @@ begin
   update pantry_items p set
     current_stock = v_now,
     names = v_names,
-    expiry_date = v_expiry,
+    expiry_date = case when v_total > 0 then v_expiry else t.expiry_date end,
     last_purchased_at = v_bought,
     is_group = false
   where p.id = t.id;
