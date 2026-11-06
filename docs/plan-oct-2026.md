@@ -4735,8 +4735,7 @@ offline queue. Stage 1 changes no screen and removes no group or variant
 code: nothing uses `lib/itemNames.js` or `useItemNamesReady` yet, and `names`
 is sent in no plain update.
 
-**Decisions.** The message of this stage lists these; K43, K53, K57, K65 and
-K66 were not in it, so they are not written here.
+**Decisions.**
 
 - **K42** The later merge puts into "Chips & Snacks": Chips - di verdure al
   sale marino; Chips - Patatine Peperoncino; Chips - Patatine sale olive;
@@ -4744,6 +4743,8 @@ K66 were not in it, so they are not written here.
   Snack; patatine miele; Patatine Sale e Pepe; Tortilla Chips. Live stock
   today: 11 pcs. It is the only group in the database. There is no "Pasta"
   item or group.
+- **K43** Nothing else is merged for now; there is no "Pasta" item or group.
+  Other items can be merged later with the same action.
 - **K44** Different units. A source with stock 0 merges without conversion
   and is never refused for its unit. A source with stock above 0 uses the
   conversions of report H.4 (the same unit, kg/gr, L/ml, the target's usual
@@ -4756,9 +4757,9 @@ K66 were not in it, so they are not written here.
 - **K46** ONE merge action, on the TARGET item, several sources in one call;
   no "Make it one item". Sources may be normal items or variants of the
   target; a group with variants as source is refused. The target may be a
-  normal item or a group row; a group target becomes a normal item only when
-  no variant is left. Its minimum stock does not change: no `min_stock` in
-  the payload.
+  normal item or a group row; a group target takes all its variants at once
+  (K70) and becomes a normal item. Its minimum stock does not change: no
+  `min_stock` in the payload.
 - **K47** Merging is an app action backed by a 032 function, not a data fix.
 - **K48 + K67 + K68 + K69** No Undo for a merge. Instead a separate action,
   full separation (`separate_item_name`, below), at any time.
@@ -4767,10 +4768,14 @@ K66 were not in it, so they are not written here.
 - **K50** The first name line may keep the item's own name.
 - **K51** A new name line starts at quantity 1 and never changes another line.
 - **K52** Name lines 2…N are not stored before Confirm.
+- **K53** To buy one brand, add it through "+ Add to SHOP list"; the card shows
+  the item name with the brand under it.
 - **K54** A MONEY row may be attached to an item as a new name.
 - **K55** Last price is per name, in the order of report section F.
 - **K56** No switch. Every item can have names; they are added at purchase, in
   "Edit item", or by a merge.
+- **K57** The HOME tile stays as it is, plus one grey line "also: …"; the full
+  list is in "Edit item".
 - **K58** A word chosen with "Use …" in the safety net becomes a REAL name;
   there is no weaker "typed" kind. "Create new" with a changed name saves the
   typed word as a real name of the new item. A word belongs to one item only.
@@ -4785,6 +4790,44 @@ K66 were not in it, so they are not written here.
   app will say so.
 - **K63** `category_memory` is never touched.
 - **K64** Restore of a backup made before a merge is handled in stage 4.
+- **K65** The five stages, in the order written below.
+- **K66** No separate `docs/one-item-many-names-6d.md`; the decisions live in
+  this plan.
+- **K70** `merge_pantry_items`: when the target is a group row, every variant of
+  that group must be in `from_ids`. If any would be left behind, also when
+  `from_ids` holds only normal items, the merge is refused and nothing is
+  written: `"{target}" still has variants — choose all of them. Nothing was
+  changed.` A group row with no variants may be a target. No variant can
+  remain, so the target always ends with `is_group = false`.
+- **K71** `confirm_shopping_trip`: expired stock is thrown away only on an
+  item's FIRST line in the payload, for every payload, also one without name
+  lines. Stock 2, two lines of one item +3 and +1, both with `discard_expired`:
+  2 discarded once, 0 + 3 + 1 = 4 pcs; the first line has `stock_discarded` 2,
+  the second 0; Reopen gives back 2 pcs. This is the ONE exception to "an old
+  payload writes what 030 writes" (030: 2 → 3 → 1).
+- **K72** `merge_pantry_items`: a source's `expiry_date` counts for the earliest
+  date only when that source's stock is above 0. The date stays in `origin`.
+- **K73** A moved line's Reopen also puts back `stock_discarded` (− 3 + 2), as
+  built.
+- **K74** A merged name can't be removed in "Other names"; it leaves with
+  `separate_item_name`, as built.
+- **K75** `separate_item_name` converts in this order: the same unit; kg/gr and
+  L/ml; the name's pack size; the parent's usual pack (`pi.packaging_unit` = the
+  old unit and `pi.quantity_per_pack` > 0). 1 pack merged into 1 pack = 3 pcs is
+  3 pcs; separating 3 pcs gives back 1 pack, and the old purchase line can then
+  be reopened with its stock taken out exactly.
+- **K76** After a separation into another unit, Reopen of a moved line that
+  can't convert takes nothing out and shows the K27 toast. No reverse
+  conversion, as built.
+- **K77** `separate_item_name` without `origin`: the new item gets the parent's
+  `expiry_date` only when `stock_moved` is above 0, otherwise empty. The name's
+  price and pack size are always copied.
+- **K78** A name line updates the item's price like every purchase line; Reopen
+  puts it back, as built.
+- **K79** The payer limit stays and is documented (see "Known limit" below).
+- **Stock format** `separate_item_name`: the new stock carries no long decimal:
+  `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
+  value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
 
 Every other report rule for names, Confirm and Reopen stands unless the above
 changes it.
@@ -4814,7 +4857,8 @@ quantity, unit, price, price_qty, price_unit` (a SHOP line: that line only);
 `add_name`; `name_pack: { packaging_unit, quantity_per_pack }`. Old SHOP
 payloads send none of the six; MONEY lines always send them, so "a name line"
 means a SHOP line with `name`. Only such a line may repeat a
-`grocery_item_id`: a repeat without `name` is refused as in 030.
+`grocery_item_id`: a repeat without `name` is refused as in 030. Expired stock
+is thrown away on an item's first line only, in every payload (K71).
 
 **`reopen_shopping_trip`** (from 031). A line with `merged_from`: stock only
 (`− stock_added × factor + stock_discarded × factor`, as an existing item),
@@ -4830,18 +4874,19 @@ packaging_unit, quantity_per_pack, price, price_qty, price_unit }], remove:
 [name], edit: [the same, only the fields sent change], was: { names } }`.
 Changed meanwhile: `"{item}" changed meanwhile (on the other phone?) — open it
 again. Nothing was changed.` K59 applies; the app can't write `origin` or
-`from_item_id`; a name with `origin` can't be removed (Kata ragu 5). Sent again
+`from_item_id`; a name with `origin` can't be removed (K74). Sent again
 when already as asked: nothing is written.
 
 **`merge_pantry_items(payload)`** → jsonb. `{ into_id, from_ids: [], was: {
 id: { current_stock, unit, updated_at } } }`, one transaction, report H.4 with
-K44–K46 and K49. Each source: its own name with `origin` and `from_item_id`,
+K44–K46, K49 and K70. Each source: its own name with `origin` and `from_item_id`,
 then the names it had (a plain name the target has is skipped; a name with an
 `origin` is never dropped). History, lines, orders move; `merged_from =
 coalesce(merged_from, source)`, so a chain B → A → T keeps B. Automatic "to
 buy" entries go; those in a cart, ordered online, typed by hand or bought move
 with their own name. "merged" history row only when the moved stock is above
-0. Earliest non-empty expiry, latest `last_purchased_at`. A source's pack size
+0. Earliest non-empty expiry, a source's date only with stock above 0 (K72);
+latest `last_purchased_at`. `is_group` ends false (K70). A source's pack size
 counts in its own unit, so on the name it is × the factor, or empty when there
 is no conversion (a source at 0 in another unit). A price without a unit gets
 the source's unit. Sent twice: `{ already_merged: true }`, nothing written.
@@ -4855,9 +4900,11 @@ that name. With `origin`: the row comes back with the SAME id and all its
 fields, `group_id` null, `is_group` false, `names` empty. A category,
 sub-category or store deleted since the merge can't come back: the parent's
 category, no sub, no store. Without `origin`: a new id; category, sub-category
-and unit of the parent; minimum 0; the name's price and pack size. Stock: in
-the old unit when the conversion is known (the same unit, kg/gr, L/ml, the
-name's pack size), else in the parent's unit, so no stock is lost. Moved:
+and unit of the parent; minimum 0; the name's price and pack size; the parent's
+expiry only when `stock_moved` is above 0 (K77). Stock: in the old unit when the
+conversion is known (the same unit, kg/gr, L/ml, the name's pack size, the
+parent's usual pack: K75), rounded to 3 decimals with no trailing zeros, else
+in the parent's unit, so no stock is lost. Moved:
 purchase lines with `merged_from` = its id (`merged_from` empty again); the
 parent's lines with that name and `merged_from` empty or = the parent
 (`merged_from` = the parent, so a later merge and separation find them again);
@@ -4894,11 +4941,11 @@ its own line diff):
 | after 191 | + comment, a repeat takes the item its first line found | Skipped. |
 | 198 | the name match also reads `names`, an own name first; matches on `v_own` | The same row while no item has names. |
 | after 211 | + comment, `v_log_name` | `pi.name`. |
-| 225 | `and not (v_name_line and pi.id = any(v_done))` | The same. |
+| 225 | `and not pi.id = any(v_done)` (K71) | The same on an item's first line; a later line of that item throws nothing away: the one exception to 030. |
 | 248 | `pi.name` → `v_log_name` | The same value. |
 | after 259 | + `v_log_name := …` | `trim(g.name)`. |
 | 262, 275 | `trim(g.name)` → `trim(v_own)` / `v_log_name` (K50: the item is the entry's, the row the line's) | The same value. |
-| after 278 | + comment, `add_name` (K59), `name_pack` (K60), `v_done := v_done || v_pantry` | Skipped; `v_done` is read by name lines only. |
+| after 278 | + comment, `add_name` (K59), `name_pack` (K60), `v_done := v_done || v_pantry` | Skipped; `v_done` is read on line 225. |
 | 305 | `to_jsonb(g)` → `v_snapshot` | The same value. |
 | 312, after 319 | `if not v_money` + `and not v_repeat`; + comment; `v_entries := …` | The same. |
 
@@ -4915,7 +4962,7 @@ Every changed line of `reopen_shopping_trip` (032 compared with 031 lines
 
 Everything else of both functions is the 030 / 031 text line for line.
 
-**Known limit.** Two name lines of one purchase, the first separated later:
+**Known limit (K79).** Two name lines of one purchase, the first separated later:
 Reopen takes the first as stock only and puts the parent back from the second
 line's `pantry_before`, which already holds the first line's payer (tested).
 The price is the same case only when the first line sent one.
@@ -4925,8 +4972,8 @@ test), `src/hooks/useItemNamesReady.js`, `src/hooks/itemNamesReady.test.jsx`.
 Changed: `supabase/migrations.test.js` (block "032"; the 9J guard allows 032,
 which never touches `arrive_order`), this plan.
 
-**Tests: 2102 → 2186 (115 → 117 files).** `supabase/migrations.test.js`
-block "032" (58, PGlite): the file; both line diffs; stops at 030 ("Run
+**Tests: 2102 → 2186 (115 → 117 files), then 2198 after the follow-up of 06/11
+(K70–K77).** `supabase/migrations.test.js` block "032" (70, PGlite): the file; both line diffs; stops at 030 ("Run
 031_reopen_created_items.sql first."); run twice, every check ok, nothing else
 changed; anon and a stranger refused; old SHOP and MONEY payloads = 030 / 031
 row by row, Reopen too; €1.39 + €0.99 + €1.49 = €3.87, stock 1 → 4; K50; coupon
@@ -4938,31 +4985,43 @@ group, variants, K44, K49, K62, K63, chain, orders of every status, every kind
 of entry, sent twice, changed meanwhile, K59; separate: with and without origin,
 K44, stock 0, refusals, purchases and arrivals before and after the merge, a
 Reopen and "Back on the way" of each, separate → merge → separate, expenses
-unchanged; `save_item_names`. `lib/itemNames.test.js` (19),
-`hooks/itemNamesReady.test.jsx` (7).
+unchanged; `save_item_names`; K70 (refused with a variant left out, or only
+normal items; all variants; a group with none); K71 (+3 and +1 = 4 pcs against
+030's 1, kg at another store, MONEY, a line after the line that made the item);
+K72; K75 (1 pack = 3 pcs, 2 bags = 10 pcs, the order); the stock format; K77.
+`lib/itemNames.test.js` (19), `hooks/itemNamesReady.test.jsx` (7).
 
 **SQL 032 not run yet.** The household runs it after Claude has checked it.
 
-**Kata ragu (06/11, tanya Zidane).** See the round's message; built the safe
-way until answered.
+**Kata ragu (06/11).** (Answered 06/11: 1 → K70, 2 → K71, 3 → K72, 4 → K73,
+5 → K74, 6 → K75, 7 → K76, 8 → K77, 9 → K78.)
 
-1. A merge of only some variants into a group: the stock sits on the group row,
-   which HOME doesn't show (`withGroupTotals` sums the variants), and a name on
-   a group isn't found by the purchase's name match, until the last variant
-   goes.
-2. Two cart entries of one expired item, both answered "throw away": 030's
-   second line also throws away what the first added. Kept for an old payload
-   (K.2.8 applied to lines with `name` only).
-3. The expiry of a source at stock 0 counts ("earliest non-empty").
-4. A moved line's Reopen also puts back `stock_discarded`.
-5. A name with `origin` can't be removed in "Other names".
-6. A source converted by the target's usual pack: separation knows only the
-   name's pack size, so it comes back in the parent's unit.
-7. After a separation into another unit, Reopen of a moved line can't convert
-   (the line in pcs, the item in pack): nothing taken out, the K27 toast.
-8. Without `origin`: the name's pack size is copied (not in the message), the
-   parent's expiry is not.
-9. A name line's price also updates the item's price, like every purchase line.
+**Kata ragu (06/11 follow-up, tanya Zidane).** See the round's message; built as
+written until answered.
+
+1. K71 with two different answers. The expired question is asked per card, so
+   two cards of one item may answer differently: stock 4, first card "keep" +1,
+   second "throw away" +2. Only the first line counts: nothing is thrown away,
+   7 pcs (tested). 030: 5 thrown away, 2 pcs.
+2. K72 speaks of sources only. A target at 0 with an old date keeps that date in
+   the earliest date: target 0 pcs, 2020; source 5 pcs, 2027 → 5 pcs dated 2020,
+   shown as expired.
+3. The rounding of the stock format can't be undone exactly: 2 pcs at 1 pack = 3
+   pcs is 0.667 pack; merged again it is 2.001 pcs.
+
+**Notes for later stages.**
+
+- **Stage 2:** K59 also applies when a HOME item is renamed or a new HOME item
+  is typed; the app must check other names too.
+- **Stage 3:** `discard_expired` is sent only on an item's first line.
+  `reopen_shopping_trip` counts lines, not cards, so a toast must not say the
+  wrong number of cards. A first line that keeps the item's own name has no name
+  element, so its pack follows the item's 9H rule.
+- **Stage 4:** merge `was` must send the stored `current_stock`, never the group
+  total from `withGroupTotals`. A group target always sends all its variants,
+  ticked and locked. The app's Reopen and Undo toasts must treat lines with
+  `merged_from` as stock only, never as "stays in HOME" of a created item. The
+  restore guard K64 is built here, before real data is merged.
 
 ---
 

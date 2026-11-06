@@ -19,7 +19,11 @@
 --                         that line only, and several lines may then share
 --                         one SHOP entry), add_name, name_pack. Names are
 --                         also matched. A payload without them writes
---                         exactly what 030 writes.
+--                         exactly what 030 writes, with one exception
+--                         (K71): expired stock is thrown away only on an
+--                         item's first line of a payload, so a later line of
+--                         that item no longer throws away what the first
+--                         added.
 --   reopen_shopping_trip(trip_id)     replaced, starting from the 031 version.
 --                         A line with merged_from: stock only. An item with
 --                         a merged name is never deleted. A deleted SHOP
@@ -297,7 +301,7 @@ begin
         end if;
 
         -- 032: expired stock is thrown away once per item, on its first line.
-        if coalesce((v_item->>'discard_expired')::boolean, false) and v_stock > 0 and not (v_name_line and pi.id = any(v_done)) then
+        if coalesce((v_item->>'discard_expired')::boolean, false) and v_stock > 0 and not pi.id = any(v_done) then
           v_discarded := v_stock;
           insert into stock_logs (item_id, item_name, change, new_stock, unit, reason)
           values (pi.id, pi.name, -v_stock, 0, pi.unit, 'discarded') returning id into v_log;
@@ -750,19 +754,23 @@ grant execute on function save_item_names(jsonb) to authenticated;
 -- it, all or nothing:
 --
 --   { into_id,                   the item that stays: a normal item or a group row
---     from_ids: [id, …],         normal items, or variants of into_id
+--     from_ids: [id, …],         normal items, or variants of into_id: a group
+--                                row needs ALL its variants here (K70)
 --     was: { id: { current_stock, unit, updated_at } } }
 --                                every item named, as the app saw it
 --
 -- Refused, nothing written: a row changed meanwhile, a durable, into_id is a
--- variant, a source is a group with variants or a variant of another group,
--- a name already belongs to a third item (K59), or a source with stock that
--- can't be converted to the target's unit (K44). A source at 0 is never
--- refused for its unit.
+-- variant, a variant of into_id is left out, also when from_ids holds only
+-- normal items (K70), a source is a group with variants or a variant of
+-- another group, a name already belongs to a third item (K59), or a source
+-- with stock that can't be converted to the target's unit (K44). A source at
+-- 0 is never refused for its unit. A group row with no variants may be a
+-- target. No variant can remain, so the target is never a group afterwards.
 --
 -- The target's price, pack size, payer, notes, usual store, 1× and minimum
 -- stay its own (K46, K49, K62). Its stock grows, its expiry becomes the
--- earliest non-empty one, its last purchase the latest. Each source's rows
+-- earliest non-empty one (a source's date counts only when that source has
+-- stock above 0: K72), its last purchase the latest. Each source's rows
 -- move to it: history, purchase lines and orders (with merged_from), SHOP
 -- entries; an automatic "to buy" entry goes (the app judges the item again).
 -- Each source is kept whole in `origin` on its name: separate_item_name
@@ -843,6 +851,10 @@ begin
   if v_w is null or coalesce((v_w->>'current_stock')::numeric, 0) <> coalesce(t.current_stock, 0) or v_w->>'unit' is distinct from t.unit
      or (v_w ? 'updated_at' and (v_w->>'updated_at')::timestamptz is distinct from t.updated_at) then
     raise exception '"%" changed meanwhile (on the other phone?) — open it again. Nothing was changed.', t.name;
+  end if;
+  -- K70: a group goes all at once: the stock sits on the row HOME doesn't show.
+  if exists (select 1 from pantry_items v where v.group_id = t.id and not v.id = any(v_from)) then
+    raise exception '"%" still has variants — choose all of them. Nothing was changed.', t.name;
   end if;
 
   v_now := coalesce(t.current_stock, 0);
@@ -952,8 +964,9 @@ begin
       insert into stock_logs (item_id, item_name, change, new_stock, unit, reason)
       values (t.id, f.name, v_moved, v_now, t.unit, 'merged');
     end if;
-    -- least / greatest skip an empty date.
-    v_expiry := least(v_expiry, f.expiry_date);
+    -- least / greatest skip an empty date. K72: a source at 0 has no date
+    -- that counts (it stays in `origin`).
+    v_expiry := least(v_expiry, case when v_stock > 0 then f.expiry_date end);
     v_bought := greatest(v_bought, f.last_purchased_at);
 
     delete from pantry_items p where p.id = f.id;
@@ -964,7 +977,7 @@ begin
     names = v_names,
     expiry_date = v_expiry,
     last_purchased_at = v_bought,
-    is_group = p.is_group and exists (select 1 from pantry_items v where v.group_id = p.id)
+    is_group = false
   where p.id = t.id;
 
   return jsonb_build_object(
@@ -988,10 +1001,12 @@ grant execute on function merge_pantry_items(jsonb) to authenticated;
 --
 -- With an `origin` the row comes back with the SAME id and its old fields.
 -- Without one it is a new item: category, sub-category and unit of the
--- parent, minimum 0, the price and pack size of the name.
+-- parent, minimum 0, the price and pack size of the name, and the parent's
+-- expiry only when stock goes along (K77).
 --
 -- The stock counts in the old unit when the conversion is known (the same
--- unit, kg/gr, L/ml, or the name's pack size), else in the parent's unit,
+-- unit, kg/gr, L/ml, the name's pack size, or the parent's usual pack: K75),
+-- rounded to 3 decimals with no trailing zeros, else in the parent's unit,
 -- so no stock is ever lost. Moved along: its purchase lines (those a merge
 -- moved get merged_from empty again; the parent's own lines with that name
 -- get merged_from = the parent, so their Reopen is stock only: their
@@ -1064,12 +1079,13 @@ begin
     when (v_unit, pi.unit) in (('kg', 'gr'), ('L', 'ml')) then 1000
     when (v_unit, pi.unit) in (('gr', 'kg'), ('ml', 'L')) then 0.001
     when v_element->>'packaging_unit' = v_unit and (v_element->>'quantity_per_pack')::numeric > 0 then (v_element->>'quantity_per_pack')::numeric
+    when pi.packaging_unit = v_unit and pi.quantity_per_pack > 0 then pi.quantity_per_pack
   end;
   if v_factor is null then
     v_unit := pi.unit;
     v_factor := 1;
   end if;
-  v_stock := v_moved / v_factor;
+  v_stock := trim_scale(round(v_moved / v_factor, 3));
 
   if v_origin is not null then
     v_new := (v_origin->>'id')::uuid;
@@ -1085,11 +1101,12 @@ begin
       'usual_shop_id', case when exists (select 1 from shops s where s.id = (v_origin->>'usual_shop_id')::uuid) then v_origin->>'usual_shop_id' end
     ));
   else
-    insert into pantry_items (name, category_id, subcategory_id, current_stock, unit, min_stock, price, price_qty, price_unit, packaging_unit, quantity_per_pack)
+    insert into pantry_items (name, category_id, subcategory_id, current_stock, unit, min_stock, price, price_qty, price_unit, packaging_unit, quantity_per_pack, expiry_date)
     values (
       v_element->>'name', pi.category_id, pi.subcategory_id, v_stock, v_unit, 0,
       (v_element->>'price')::numeric, (v_element->>'price_qty')::numeric, v_element->>'price_unit',
-      v_element->>'packaging_unit', (v_element->>'quantity_per_pack')::numeric
+      v_element->>'packaging_unit', (v_element->>'quantity_per_pack')::numeric,
+      case when v_moved > 0 then pi.expiry_date end
     )
     returning id into v_new;
   end if;
