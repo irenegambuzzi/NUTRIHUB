@@ -4001,7 +4001,8 @@ fake database that can't answer now means "not known".
    after a purchase or an arrival (seen in the iPhone test of 9L).~~
    **Analysed 01/11 (`tmp-export/reopen-history-readonly-report.md`), built
    01/11 — section 9M** (SQL 031 written, not run yet).
-3. Round 6D (one item, many names; section 9D). **Next, after 9M.**
+3. Round 6D (one item, many names; section 9D). **Next, after 9M.** Started
+   06/11: section 9N.
 4. **MONEY display round**: notes 4 + 5 (in the plan's "Later" / 9F
    notes) plus NEW NOTES 2 + 3: in Money, the charts first; then "Totals
    per category" as a closed bar that opens on tap (like "History (N)" in
@@ -4717,6 +4718,251 @@ database is 031 now). No SQL.
 ### iPhone checklist for round 9M
 
 Written by Claude after 031 has been checked and run.
+
+iPhone test of 9M done 03/11/2026: all OK.
+
+K41: the old "one-time database update" notices are kept (03/11).
+
+### 9N. One item, many names (round 6D, decided 04–06/11, stage 1 as built)
+
+Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
+household chose **option C** (`pantry_items.names jsonb`) and the decisions
+below; where they differ from the report, they win. SQL:
+`supabase/032_item_names.sql` (written, **not run**; the household runs it
+after Claude has checked it, after 031). The app is deployed before 032 and
+works exactly as today until it has run. No new browser storage, no new
+offline queue. Stage 1 changes no screen and removes no group or variant
+code: nothing uses `lib/itemNames.js` or `useItemNamesReady` yet, and `names`
+is sent in no plain update.
+
+**Decisions.** The message of this stage lists these; K43, K53, K57, K65 and
+K66 were not in it, so they are not written here.
+
+- **K42** The later merge puts into "Chips & Snacks": Chips - di verdure al
+  sale marino; Chips - Patatine Peperoncino; Chips - Patatine sale olive;
+  Nuvole di drago piccanti; Patatine teriyaki; Corn Snack; Kiss Burn Chinese
+  Snack; patatine miele; Patatine Sale e Pepe; Tortilla Chips. Live stock
+  today: 11 pcs. It is the only group in the database. There is no "Pasta"
+  item or group.
+- **K44** Different units. A source with stock 0 merges without conversion
+  and is never refused for its unit. A source with stock above 0 uses the
+  conversions of report H.4 (the same unit, kg/gr, L/ml, the target's usual
+  pack); with none, the merge is refused and nothing is written. Real case:
+  "Meat Snacks" counts in pcs; Jerky has stock 0 and unit pack. At its first
+  later purchase in pack, the pack field asks "pcs per pack" once and the
+  value is saved on the name.
+- **K45** "Meat Snacks" is made with the normal HOME "Add item". The merge
+  function has no "create" part.
+- **K46** ONE merge action, on the TARGET item, several sources in one call;
+  no "Make it one item". Sources may be normal items or variants of the
+  target; a group with variants as source is refused. The target may be a
+  normal item or a group row; a group target becomes a normal item only when
+  no variant is left. Its minimum stock does not change: no `min_stock` in
+  the payload.
+- **K47** Merging is an app action backed by a 032 function, not a data fix.
+- **K48 + K67 + K68 + K69** No Undo for a merge. Instead a separate action,
+  full separation (`separate_item_name`, below), at any time.
+- **K49** The target's price, pack size, payer, notes, usual store and 1× stay
+  its own. An empty price stays empty.
+- **K50** The first name line may keep the item's own name.
+- **K51** A new name line starts at quantity 1 and never changes another line.
+- **K52** Name lines 2…N are not stored before Confirm.
+- **K54** A MONEY row may be attached to an item as a new name.
+- **K55** Last price is per name, in the order of report section F.
+- **K56** No switch. Every item can have names; they are added at purchase, in
+  "Edit item", or by a merge.
+- **K58** A word chosen with "Use …" in the safety net becomes a REAL name;
+  there is no weaker "typed" kind. "Create new" with a changed name saves the
+  typed word as a real name of the new item. A word belongs to one item only.
+  All elements of `names` are of one kind.
+- **K59** An exact duplicate of another item's name or other name is refused.
+  Similar names are allowed.
+- **K60** A first-time pack size is saved on the NAME, never on the item, and
+  only while the name has none.
+- **K61** Reopen of a purchase that added a name removes that name when no
+  other purchase line or order of the item uses it.
+- **K62** Merging a 1× source is allowed; the target's 1× does not change. The
+  app will say so.
+- **K63** `category_memory` is never touched.
+- **K64** Restore of a backup made before a merge is handled in stage 4.
+
+Every other report rule for names, Confirm and Reopen stands unless the above
+changes it.
+
+**The stages.**
+
+1. This one: `supabase/032_item_names.sql`, `lib/itemNames.js`,
+   `useItemNamesReady`, tests. No screen.
+2. Names read everywhere, "Other names" in "Edit item", the tile line, K58,
+   History title and subtitle.
+3. Name lines in Confirm purchase and MONEY.
+4. Merge and separate actions, restore guard (K64), then the household merges
+   on the phone with TEST items first.
+5. Remove the variant mechanics and finish "It arrived!" without variants.
+
+**Data (032).** `pantry_items.names jsonb not null default '[]'`, check
+`pantry_items_names_array` (it is an array). Element: `name, packaging_unit,
+quantity_per_pack, price, price_qty, price_unit, from_item_id, origin,
+added_at, added_by_trip, pack_by_trip`; `origin` is the full source row,
+stored by a merge, null for any other name. `shopping_trip_items.merged_from`
+and `orders.merged_from`: uuid, nullable, no foreign key (the old item is
+gone). In SQL a name is compared with `lower(btrim(…))`; the app first checks
+with `exactKey` (also accents and plurals), report C.
+
+**`confirm_shopping_trip`** (from 030). New, optional, on a line: `name,
+quantity, unit, price, price_qty, price_unit` (a SHOP line: that line only);
+`add_name`; `name_pack: { packaging_unit, quantity_per_pack }`. Old SHOP
+payloads send none of the six; MONEY lines always send them, so "a name line"
+means a SHOP line with `name`. Only such a line may repeat a
+`grocery_item_id`: a repeat without `name` is refused as in 030.
+
+**`reopen_shopping_trip`** (from 031). A line with `merged_from`: stock only
+(`− stock_added × factor + stock_discarded × factor`, as an existing item),
+its own history rows, expense and entry; never `pantry_before`, never a
+delete. An item with a name with `from_item_id` is "from elsewhere" (K26). A
+deleted entry comes back once (`on conflict (id) do nothing`), linked to the
+line's item of now when the snapshot had a link or the line was moved, never
+to one that is gone. K61, and a pack size with `pack_by_trip` = this purchase
+goes back to empty (an edit by hand clears `pack_by_trip`, so it stays).
+
+**`save_item_names(payload)`** → `pantry_items`. `{ item_id, add: [{ name,
+packaging_unit, quantity_per_pack, price, price_qty, price_unit }], remove:
+[name], edit: [the same, only the fields sent change], was: { names } }`.
+Changed meanwhile: `"{item}" changed meanwhile (on the other phone?) — open it
+again. Nothing was changed.` K59 applies; the app can't write `origin` or
+`from_item_id`; a name with `origin` can't be removed (Kata ragu 5). Sent again
+when already as asked: nothing is written.
+
+**`merge_pantry_items(payload)`** → jsonb. `{ into_id, from_ids: [], was: {
+id: { current_stock, unit, updated_at } } }`, one transaction, report H.4 with
+K44–K46 and K49. Each source: its own name with `origin` and `from_item_id`,
+then the names it had (a plain name the target has is skipped; a name with an
+`origin` is never dropped). History, lines, orders move; `merged_from =
+coalesce(merged_from, source)`, so a chain B → A → T keeps B. Automatic "to
+buy" entries go; those in a cart, ordered online, typed by hand or bought move
+with their own name. "merged" history row only when the moved stock is above
+0. Earliest non-empty expiry, latest `last_purchased_at`. A source's pack size
+counts in its own unit, so on the name it is × the factor, or empty when there
+is no conversion (a source at 0 in another unit). A price without a unit gets
+the source's unit. Sent twice: `{ already_merged: true }`, nothing written.
+Expenses, order groups, `category_memory`: not touched.
+
+**`separate_item_name(payload)`** → jsonb (the counts). `{ item_id, name,
+stock_moved, was: { current_stock, unit, updated_at } }`, one transaction.
+Refused, nothing written: changed meanwhile; not a name of the item; its own
+name; `stock_moved` below 0, above the stock or missing; another HOME item has
+that name. With `origin`: the row comes back with the SAME id and all its
+fields, `group_id` null, `is_group` false, `names` empty. A category,
+sub-category or store deleted since the merge can't come back: the parent's
+category, no sub, no store. Without `origin`: a new id; category, sub-category
+and unit of the parent; minimum 0; the name's price and pack size. Stock: in
+the old unit when the conversion is known (the same unit, kg/gr, L/ml, the
+name's pack size), else in the parent's unit, so no stock is lost. Moved:
+purchase lines with `merged_from` = its id (`merged_from` empty again); the
+parent's lines with that name and `merged_from` empty or = the parent
+(`merged_from` = the parent, so a later merge and separation find them again);
+history rows with that name except "merged"; orders with `merged_from` = its id
+or that name; entries of the parent with that name. "separated" history row on
+both items when `stock_moved` is above 0. Expenses are never touched.
+
+**Before 032** (the code is deployed first). `useItemNamesReady` reads
+`select('names').limit(1)`: an answer → true; 42703 / PGRST204 naming `names`
+→ false; anything else or offline → null, read again when the connection comes
+back; once true, known for the app start. Rows read with all columns that carry
+`names` also say true. Stage 1 shows nothing either way. From stage 2 on: while
+not true no names UI, one line per SHOP entry (today's payload), groups exactly
+as today; a save that would need 032 while it is null reads first, and without
+an answer saves nothing, with the 9K messages. 030 refuses a multi-line payload
+whole (proven in the report), so never half data.
+
+**After 032.** 032 adds the column and replaces the functions in one
+transaction, so "the column is there" means "the functions are there". An
+older app on another device: its Confirm sends no new keys and gets exactly
+030's result; its MONEY row with a known name goes to that item, no second
+item; it never writes `names` (`pickFields`).
+
+Every changed line of `confirm_shopping_trip` (032 compared with 030 lines
+69–328: 9 lines changed, the rest added; the test "032" checks the same with
+its own line diff):
+
+| Where (line in 030) | Change | Old payload |
+|---|---|---|
+| declare, after 103 | + comment, `v_own`, `v_snapshot`, `v_name_line`, `v_repeat`, `v_entries`, `v_done`, `v_log_name`, `v_add_name`, `v_key`, `v_other`, `v_pack` | — |
+| before 125 | + comment, `v_name_line := not v_money and v_item ? 'name'`, `v_repeat := v_name_line and v_entries ? (…)` | Both false. |
+| 130, 135 | `if g.completed` / `if found` + `and not v_repeat` | The same checks. |
+| after 159 | + comment, `v_own := g.name`, `v_snapshot`, a name line's own fields on `g`, `v_add_name` | `g` unchanged, `v_snapshot` = `to_jsonb(g)`. |
+| after 191 | + comment, a repeat takes the item its first line found | Skipped. |
+| 198 | the name match also reads `names`, an own name first; matches on `v_own` | The same row while no item has names. |
+| after 211 | + comment, `v_log_name` | `pi.name`. |
+| 225 | `and not (v_name_line and pi.id = any(v_done))` | The same. |
+| 248 | `pi.name` → `v_log_name` | The same value. |
+| after 259 | + `v_log_name := …` | `trim(g.name)`. |
+| 262, 275 | `trim(g.name)` → `trim(v_own)` / `v_log_name` (K50: the item is the entry's, the row the line's) | The same value. |
+| after 278 | + comment, `add_name` (K59), `name_pack` (K60), `v_done := v_done || v_pantry` | Skipped; `v_done` is read by name lines only. |
+| 305 | `to_jsonb(g)` → `v_snapshot` | The same value. |
+| 312, after 319 | `if not v_money` + `and not v_repeat`; + comment; `v_entries := …` | The same. |
+
+Every changed line of `reopen_shopping_trip` (032 compared with 031 lines
+73–223: 2 lines changed, the rest added):
+
+| Where (line in 031) | Change | A line without `merged_from`, no names |
+|---|---|---|
+| after 145 | + comment, `or exists (… n->>'from_item_id' is not null)` in `v_elsewhere` | False. |
+| 147 | + `if ti.merged_from is not null then` … stock only; the 031 `if` becomes `elsif` | The 031 branches. |
+| after 207 | + comment, the snapshot takes the line's item of now (when the snapshot had a link, or the line was moved, and that item exists) | The same value, or the 031 null below. |
+| 211 | + comment, `… on conflict (id) do nothing` | The same insert. |
+| after 219 | + comment, K61 and `pack_by_trip`: one `update` of items with an element of this purchase | No row. |
+
+Everything else of both functions is the 030 / 031 text line for line.
+
+**Known limit.** Two name lines of one purchase, the first separated later:
+Reopen takes the first as stock only and puts the parent back from the second
+line's `pantry_before`, which already holds the first line's payer (tested).
+The price is the same case only when the first line sent one.
+
+**Files.** New: `supabase/032_item_names.sql`, `src/lib/itemNames.js` (+
+test), `src/hooks/useItemNamesReady.js`, `src/hooks/itemNamesReady.test.jsx`.
+Changed: `supabase/migrations.test.js` (block "032"; the 9J guard allows 032,
+which never touches `arrive_order`), this plan.
+
+**Tests: 2102 → 2186 (115 → 117 files).** `supabase/migrations.test.js`
+block "032" (58, PGlite): the file; both line diffs; stops at 030 ("Run
+031_reopen_created_items.sql first."); run twice, every check ok, nothing else
+changed; anon and a stranger refused; old SHOP and MONEY payloads = 030 / 031
+row by row, Reopen too; €1.39 + €0.99 + €1.49 = €3.87, stock 1 → 4; K50; coupon
+−€0.58 = 0.20 + 0.12 + 0.26 and −€0.39 = 0.14 + 0.10 + 0.15; Shared €3.00 =
+1.02 + 0.65 + 1.33 and €2.58 = 0.87 + 0.55 + 1.16; 24 + 4 = 28 pcs and 10 + 12
+= 22 pcs; 500 gr + 1 kg into kg, ml into L at another store; MONEY names; K59;
+J.10; every Reopen case; merge: both proven bugs, K42 (10 variants, 11 pcs),
+group, variants, K44, K49, K62, K63, chain, orders of every status, every kind
+of entry, sent twice, changed meanwhile, K59; separate: with and without origin,
+K44, stock 0, refusals, purchases and arrivals before and after the merge, a
+Reopen and "Back on the way" of each, separate → merge → separate, expenses
+unchanged; `save_item_names`. `lib/itemNames.test.js` (19),
+`hooks/itemNamesReady.test.jsx` (7).
+
+**SQL 032 not run yet.** The household runs it after Claude has checked it.
+
+**Kata ragu (06/11, tanya Zidane).** See the round's message; built the safe
+way until answered.
+
+1. A merge of only some variants into a group: the stock sits on the group row,
+   which HOME doesn't show (`withGroupTotals` sums the variants), and a name on
+   a group isn't found by the purchase's name match, until the last variant
+   goes.
+2. Two cart entries of one expired item, both answered "throw away": 030's
+   second line also throws away what the first added. Kept for an old payload
+   (K.2.8 applied to lines with `name` only).
+3. The expiry of a source at stock 0 counts ("earliest non-empty").
+4. A moved line's Reopen also puts back `stock_discarded`.
+5. A name with `origin` can't be removed in "Other names".
+6. A source converted by the target's usual pack: separation knows only the
+   name's pack size, so it comes back in the parent's unit.
+7. After a separation into another unit, Reopen of a moved line can't convert
+   (the line in pcs, the item in pack): nothing taken out, the K27 toast.
+8. Without `origin`: the name's pack size is copied (not in the message), the
+   parent's expiry is not.
+9. A name line's price also updates the item's price, like every purchase line.
 
 ---
 
