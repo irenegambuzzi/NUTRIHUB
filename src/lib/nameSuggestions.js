@@ -1,7 +1,8 @@
 import { normName } from './grocery'
+import { otherNames } from './itemNames'
 
-// Name suggestions for the "Add to SHOP list" form: HOME items and open
-// SHOP cards, with what to fill in when one is picked.
+// Name suggestions for the "Add to SHOP list" form: HOME items, their other
+// names and open SHOP cards, with what to fill in when one is picked.
 
 // What a pantry item (source 'pantry') or a SHOP entry ('list') fills in.
 export const suggestionFrom = (row, source) => ({
@@ -17,8 +18,17 @@ export const suggestionFrom = (row, source) => ({
   source,
 })
 
+// Another name of an item, shown "Corn Snack · Chips & Snacks": the item's
+// unit and payer, the name's own price. Tapping it fills the name, which
+// then links the item (plan 9N).
+const suggestionFromName = (item, element) => ({
+  ...suggestionFrom({ ...item, name: element.name, price: element.price, price_qty: element.price_qty, price_unit: element.price_unit }, 'pantry'),
+  itemName: item.name.trim(),
+})
+
 // One suggestion per name. The pantry item wins (it has the last price,
-// unit and payer), then the newest grocery entry.
+// unit and payer), then another name of an item, then the newest grocery
+// entry.
 export function buildSuggestions(pantryItems, groceryItems) {
   const byName = new Map()
   const add = (s) => {
@@ -26,6 +36,7 @@ export function buildSuggestions(pantryItems, groceryItems) {
     if (key && !byName.has(key)) byName.set(key, s)
   }
   pantryItems.forEach((p) => add(suggestionFrom(p, 'pantry')))
+  pantryItems.forEach((p) => otherNames(p).forEach((element) => add(suggestionFromName(p, element))))
   ;[...groceryItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).forEach((g) => add(suggestionFrom(g, 'list')))
   return [...byName.values()]
 }

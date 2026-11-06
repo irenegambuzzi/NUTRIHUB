@@ -7,11 +7,14 @@ import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { isOneTime } from '../../lib/oneTime'
+import { alsoLine } from '../../lib/itemNames'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryStyles'
 
-export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
+// `namesReady`: supabase/032 is known to have run (plan 9N); only then the
+// grey line with the item's other names shows.
+export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, namesReady = false, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
   // A one-time purchase (1×) has no minimum and is never Low or Out.
@@ -24,6 +27,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
   const step = tapStep(item.unit)
   const perPack = Number(item.quantity_per_pack)
   const hasPack = item.packaging_unit && perPack > 0
+  const also = namesReady ? alsoLine(item) : null
 
   return (
     <div className={cn('relative rounded-3xl border p-3.5 shadow-sm flex flex-col', STATUS_STYLES[tone].tile)}>
@@ -47,6 +51,12 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
       <button onClick={() => onEdit(item)} className="text-left pr-10">
         <p className="text-sm font-bold leading-tight text-[var(--color-text)]">{item.name}</p>
       </button>
+      {also && (
+        <p className="mt-0.5 flex items-end gap-1 text-[10px] leading-snug text-[var(--color-text-muted)]">
+          <span className="min-w-0 line-clamp-2 break-words">{also.text}</span>
+          {also.more > 0 && <span className="shrink-0"> +{also.more}</span>}
+        </p>
+      )}
       {groupName && <span className="self-start mt-1 text-[10px] font-semibold text-[var(--color-text-muted)]">in {groupName}</span>}
       {subcategoryName && (
         <span className={cn('self-start mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border', c.bg, c.border, c.text)}>{subcategoryName}</span>

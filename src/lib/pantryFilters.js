@@ -1,4 +1,5 @@
 import { expiryState, shownStatus, stockFill } from './inventory'
+import { otherNames } from './itemNames'
 
 // Sorting, searching and filtering the pantry list.
 
@@ -22,13 +23,14 @@ export const SORTS = {
 }
 
 // 0 = exact name, 1 = name starts with, 2 = name contains, 3 = other
-// fields contain (a variant's group name too), -1 = no match.
+// fields contain (a variant's group name and the item's other names too),
+// -1 = no match.
 export function searchRank(item, q, categoryName, groupName = null) {
   const name = item.name.trim().toLowerCase()
   if (name === q) return 0
   if (name.startsWith(q)) return 1
   if (name.includes(q)) return 2
-  const other = [item.notes, item.batch_lot, categoryName(item.category_id), item.subcategory_id && categoryName(item.subcategory_id), groupName]
+  const other = [item.notes, item.batch_lot, categoryName(item.category_id), item.subcategory_id && categoryName(item.subcategory_id), groupName, ...otherNames(item).map((element) => element.name)]
   return other.some((s) => s && s.toLowerCase().includes(q)) ? 3 : -1
 }
 

@@ -5,6 +5,7 @@ import { couponFields, lineDiscountFields, priceLines } from './discounts'
 import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
 import { partFields } from './sharedParts'
 import { asksStockUnit, newItemKeys, sameNameProblems, stockUnitQuestion } from './newItemUnit'
+import { boughtAsOtherName, itemForName, packItemFor } from './itemNames'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -12,10 +13,17 @@ import { asksStockUnit, newItemKeys, sameNameProblems, stockUnitQuestion } from 
 // (supabase/014), which does everything at once.
 
 // The pantry item a grocery entry restocks: its linked item, else the one
-// with the same name. A name never matches a group (stock is never added
-// to a group itself, only to its variants): that makes a normal item.
+// with the same name, else the one that has it as another name (plan 9N;
+// an item's own name goes first). A name never matches a group (stock is
+// never added to a group itself, only to its variants): that makes a normal
+// item.
 export function pantryItemFor(item, pantryItems) {
-  return pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => !p.is_group && normName(p.name) === normName(item.name)) ?? null
+  return (
+    pantryItems.find((p) => p.id === item.pantry_item_id) ??
+    pantryItems.find((p) => !p.is_group && normName(p.name) === normName(item.name)) ??
+    itemForName(item.name, pantryItems, { groups: false })?.item ??
+    null
+  )
 }
 
 // The entry's quantity in the pantry item's base unit, or null when the
@@ -71,7 +79,8 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
   const chosen = group ? pantryItems.find((p) => p.id === variantId && p.group_id === group.id) ?? null : entry
   const newVariant = group && !chosen ? answer.newVariantName?.trim() || null : null
   const quantity = Number(item.quantity) || 1
-  const pack = entry ? packField({ item: entry, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(entry, item.unit)), canSave: chosen?.id === entry.id }) : null
+  const packItem = entry && packItemFor(entry, item.name, item.unit)
+  const pack = entry ? packField({ item: packItem, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(packItem, item.unit)), canSave: chosen?.id === entry.id && !boughtAsOtherName(entry, item.name) }) : null
   const add = entry ? purchasedQuantity(entry, item, pack?.value) : durable ? 0 : quantity
   const needsPackSize = Boolean(entry) && add === null
   const needsVariant = Boolean(group) && !chosen && !newVariant

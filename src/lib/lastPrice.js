@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient'
 import { LEGACY_UNITS } from '../data/constants'
 import { normName } from './grocery'
+import { nameElement } from './itemNames'
 
 // The last NORMAL price paid for a name, and the unit it was bought in, so
 // a form can fill them in (editable). "Normal" = before any discount:
@@ -13,7 +14,10 @@ import { normName } from './grocery'
 //                its `quantity` + `unit` (older SHOP lines keep them in
 //                grocery_snapshot)
 //   order        an online order for the name
-//   pantry       the HOME item with the name: price per price_qty price_unit
+//   name         another name of a HOME item (plan 9N, K55): the price kept
+//                on that name, per its price_qty price_unit
+//   pantry       the HOME item with the name, only when it is the item's own
+//                name: price per price_qty price_unit
 // → { price, quantity, unit, source, at } | null — `price` is for
 // `quantity` × `unit`.
 
@@ -44,12 +48,22 @@ function fromPantry(item) {
   return { price, quantity: positive(item.price_qty) ?? 1, unit: cleanUnit(item.price_unit || item.unit), source: 'pantry', at: when(item.updated_at ?? item.created_at) }
 }
 
+function fromName(item, element) {
+  const price = positive(element.price)
+  if (!price) return null
+  return { price, quantity: positive(element.price_qty) ?? 1, unit: cleanUnit(element.price_unit || item.unit), source: 'name', at: when(element.added_at) }
+}
+
 export function lastPriceFor(name, { tripLines = [], orders = [], pantryItems = [] } = {}) {
   const key = normName(name)
   if (!key) return null
   const found = [
     ...tripLines.filter((l) => normName(l.name) === key).map(fromTripLine),
     ...orders.filter((o) => normName(o.item_name) === key).map(fromOrder),
+    ...pantryItems.flatMap((p) => {
+      const element = nameElement(p, name)
+      return element ? [fromName(p, element)] : []
+    }),
     ...pantryItems.filter((p) => !p.is_group && normName(p.name) === key).map(fromPantry),
   ].filter(Boolean)
   if (!found.length) return null

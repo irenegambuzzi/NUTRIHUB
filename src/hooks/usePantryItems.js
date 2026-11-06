@@ -8,6 +8,7 @@ import { isOffline } from '../lib/connection'
 import { cancelQueuedStock, queueStock } from '../lib/offlineActions'
 import { withGroupTotals } from '../lib/groups'
 import { becameFinished, isOneTime } from '../lib/oneTime'
+import { nameElement, otherNames } from '../lib/itemNames'
 
 export const ITEM_FIELDS = [
   'name',
@@ -185,11 +186,16 @@ export function usePantryItems() {
           if (group) await followUp('the shopping list', () => syncShoppingForItem(group))
         }
       }
-      // A rename carries over to the item's open grocery entries.
+      // A rename carries over to the item's open grocery entries, except
+      // those bought under another name of the item: they keep it.
       if (data.name !== item.name) {
-        await followUp('the shopping list', async () =>
-          must(await supabase.from('grocery_items').update({ name: data.name }).eq('pantry_item_id', item.id).eq('completed', false))
-        )
+        await followUp('the shopping list', async () => {
+          const open = () => supabase.from('grocery_items').update({ name: data.name }).eq('pantry_item_id', item.id).eq('completed', false)
+          if (!otherNames(item).length) return must(await open())
+          const entries = must(await supabase.from('grocery_items').select('id, name').eq('pantry_item_id', item.id).eq('completed', false))
+          const ids = entries.filter((g) => !nameElement(item, g.name)).map((g) => g.id)
+          if (ids.length) must(await open().in('id', ids))
+        })
       }
       if (flagging) await takeOffShopList(data, toBuy)
       // Undo puts the stock back and takes away its "Adjusted" row; the

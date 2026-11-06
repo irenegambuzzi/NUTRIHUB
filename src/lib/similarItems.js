@@ -2,6 +2,7 @@ import { isAmountWord, isUnitWord, singular } from './categoryGuess'
 import { nameDistance } from './categoryNames'
 import { formatStock, isDurable, stockStatus } from './inventory'
 import { isFinished, isOneTime } from './oneTime'
+import { otherNames } from './itemNames'
 
 // The similar-name safety net (plan 9G): before something is added in
 // SHOP, in MONEY (Add to HOME on) or in HOME, the typed name is compared
@@ -129,29 +130,44 @@ export const needsStock = (item) => isFinished(item) || (!isOneTime(item) && sto
 // `exceptId`: the item being edited, never compared with itself.
 const searchable = (items, exceptId) => items.filter((p) => p.id !== exceptId && !isDurable(p) && String(p.name ?? '').trim())
 
-// The HOME items like `name`, best first: exact, then typo, then words;
-// within those Out / Low first, then fewer words, then the shorter name,
-// then A–Z. → { exact, similar, more }: `exact` is the item to use without
-// a question (a normal item before a group of the same name), or null;
-// `similar` up to `limit` { item, kind } to ask about (empty when there is
-// an exact one: that never needs a question); `more` how many more matched
-// than are shown ("4 more — type more of the name").
+// How `name` matches an item: its own name, or else the best of its other
+// names (plan 9N, then `via` is that name). → { item, kind, via? } or null.
+function matchItem(name, item) {
+  const own = matchKind(name, item.name)
+  const best = otherNames(item)
+    .map((element) => ({ kind: matchKind(name, element.name), via: element.name.trim() }))
+    .filter((m) => m.kind && (!own || KIND_ORDER.indexOf(m.kind) < KIND_ORDER.indexOf(own)))
+    .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))[0]
+  if (best) return { item, ...best }
+  return own ? { item, kind: own } : null
+}
+
+// The HOME items like `name` (by their own or another name), best first:
+// exact, then typo, then words; an item's own name before another item's
+// other name; within those Out / Low first, then fewer words, then the
+// shorter name, then A–Z. → { exact, exactVia, similar, more }: `exact` is
+// the item to use without a question (a normal item before a group of the
+// same name), or null, `exactVia` the other name it was found by; `similar`
+// up to `limit` { item, kind, via } to ask about (empty when there is an
+// exact one: that never needs a question); `more` how many more matched than
+// are shown ("4 more — type more of the name").
 export function matchHomeItems(name, items, { exceptId = null, limit = 3 } = {}) {
   if (!exactKey(name)) return { exact: null, similar: [], more: 0 }
   const found = searchable(items, exceptId)
-    .map((item) => ({ item, kind: matchKind(name, item.name) }))
-    .filter((m) => m.kind)
+    .map((item) => matchItem(name, item))
+    .filter(Boolean)
     .sort(
       (a, b) =>
         KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
+        Number(a.kind === 'exact' && Boolean(a.via)) - Number(b.kind === 'exact' && Boolean(b.via)) ||
         Number(a.kind === 'exact' && Boolean(a.item.is_group)) - Number(b.kind === 'exact' && Boolean(b.item.is_group)) ||
         Number(!needsStock(a.item)) - Number(!needsStock(b.item)) ||
         prepare(a.item.name).words.length - prepare(b.item.name).words.length ||
         a.item.name.trim().length - b.item.name.trim().length ||
         a.item.name.localeCompare(b.item.name)
     )
-  const exact = found.find((m) => m.kind === 'exact')?.item ?? null
-  if (exact) return { exact, similar: [], more: 0 }
+  const exact = found.find((m) => m.kind === 'exact')
+  if (exact) return { exact: exact.item, exactVia: exact.via, similar: [], more: 0 }
   return { exact: null, similar: found.slice(0, limit), more: Math.max(0, found.length - limit) }
 }
 
@@ -188,8 +204,11 @@ export function stockWords(item) {
 const STATE_SUFFIX = { 'to-buy': ' · already to buy', 'in-cart': ' · already in the cart', ordered: ' · ordered online' }
 const STATE_WORDS = { 'to-buy': 'to buy', 'in-cart': 'in the cart', ordered: 'ordered online' }
 
+// An item found by another name says so: "Chips & Snacks (Corn Snack)".
+const nameWithVia = (item, via) => (via ? `${item.name} (${via})` : item.name)
+
 // "Use Fresh Pumpkin · 2 pcs at home · already to buy".
-export const pickLabel = (item, state = null) => `Use ${item.name} · ${stockWords(item)}${inStock(item) ? ' at home' : ''}${state ? STATE_SUFFIX[state] : ''}`
+export const pickLabel = (item, state = null, via = null) => `Use ${nameWithVia(item, via)} · ${stockWords(item)}${inStock(item) ? ' at home' : ''}${state ? STATE_SUFFIX[state] : ''}`
 
 // "Added “cucumber” · in HOME: 2 pcs" (or "· out of stock", "· finished 1×
 // item, it comes back").
@@ -216,7 +235,7 @@ export const CREATE_NEW_HINT = 'Similar names can mix up later — make it clear
 
 // "Add it to Cat Wet Food · 12 pcs at home" in the HOME editor opened from
 // "It arrived!" (plan 9J, K12): the arrival goes to that item instead.
-export const arrivalPickLabel = (item) => `Add it to ${item.name} · ${stockWords(item)}${inStock(item) ? ' at home' : ''}`
+export const arrivalPickLabel = (item, via = null) => `Add it to ${nameWithVia(item, via)} · ${stockWords(item)}${inStock(item) ? ' at home' : ''}`
 
 // "Go to Fresh Pumpkin" / "Go to Balloons (finished 1×)" in the HOME editor.
-export const goToLabel = (item) => `Go to ${item.name}${isFinished(item) ? ' (finished 1×)' : ''}`
+export const goToLabel = (item, via = null) => `Go to ${nameWithVia(item, via)}${isFinished(item) ? ' (finished 1×)' : ''}`

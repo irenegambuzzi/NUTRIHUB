@@ -36,7 +36,7 @@ const data = vi.hoisted(() => {
     ],
   }
 })
-const fake = (rows) => ({ useRows: () => ({ rows, loaded: true }) })
+const fake = (rows) => ({ useRows: () => ({ rows, loaded: true }), getSnapshot: () => ({ rows, loaded: true }) })
 vi.mock('../lib/stores', async (original) => ({
   ...(await original()),
   pantryStore: fake(data.pantry),
@@ -492,7 +492,7 @@ describe('HOME item editor', () => {
     expect(screen.getByText('“cucumber” is already in HOME')).toBeTruthy()
     expect(onSave).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Go to cucumber' }))
-    expect(onGoTo).toHaveBeenCalledWith(data.cucumber)
+    expect(onGoTo).toHaveBeenCalledWith(data.cucumber, 'Cucumber')
     expect(onSave).not.toHaveBeenCalled()
   })
 

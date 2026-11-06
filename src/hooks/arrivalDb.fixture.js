@@ -89,7 +89,7 @@ export function arrivalDb({ units = false } = {}) {
     const q = {
       select: () => q,
       insert: (rows) => ((call.op = 'insert'), (call.rows = rows), q),
-      upsert: (rows, options = {}) => ((call.op = 'upsert'), (call.rows = rows), (call.options = options), q),
+      upsert: (rows, options = {}) => ((call.op = 'upsert'), (call.rows = [rows].flat()), (call.options = options), q),
       update: (patch) => ((call.op = 'update'), (call.patch = patch), q),
       delete: () => ((call.op = 'delete'), q),
       eq: (col, val) => (call.filters.push((r) => same(r[col], val)), q),

@@ -45,7 +45,7 @@ import {
   twiceProblems,
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
-import { exactKey, inHomeNote, pickLabel, shopEntryFor, similarOnListText } from '../../lib/similarItems'
+import { exactKey, inHomeNote, pickLabel, sameItemName, shopEntryFor, similarOnListText } from '../../lib/similarItems'
 import { PEOPLE, SHARED, checkSplit, emptySplit, spreadParts } from '../../lib/sharedParts'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
@@ -54,6 +54,7 @@ import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { useLastPrice } from '../../hooks/useLastPrice'
 import { useTypingPause } from '../../hooks/useTypingPause'
 import { recordMoneyPurchase } from '../../hooks/usePurchase'
+import { keepFirstWord, keepTypedName } from '../../hooks/itemNameActions'
 import { addExpenseOnce } from '../../hooks/useExpenses'
 import { useShops } from '../../hooks/useShops'
 import { checkExpenseParts, refuseUnknownParts } from '../../hooks/useExpenseParts'
@@ -150,9 +151,10 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // category (the first budget chip, until one is picked by hand; none
   // without a chip; lib/moneyPurchase.js budgetOf) and the unit
   // of the HOME item (or group) with that name (until one is picked), so
-  // its stock converts without asking.
-  const changeName = (row, name) => {
-    const patch = { name }
+  // its stock converts without asking. `usedWord`: "Use …" was pressed
+  // ({ word, itemId }); typing the name again forgets it.
+  const changeName = (row, name, usedWord = null) => {
+    const patch = { name, usedWord }
     if (!row.categoryTouched) {
       const pick = suggest(name)
       patch.categoryId = pick?.categoryId ?? ''
@@ -195,6 +197,17 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     if (error) return
     for (const line of lines) rememberPicks(line)
     onClose?.()
+    keepWords(lines)
+  }
+
+  // K58: once the purchase is saved, the word "Use …" was pressed for becomes
+  // another name of that item, and the word first typed before "Create new"
+  // a name of the new item, when the row was then given another name.
+  const keepWords = async (saved) => {
+    for (const { row, target, isNew } of saved) {
+      if (row.usedWord && target?.id === row.usedWord.itemId) await keepTypedName(row.usedWord.word, target.id)
+      else if (isNew && row.firstWord && !sameItemName(row.firstWord, row.name)) await keepFirstWord(row.firstWord, row.name)
+    }
   }
 
   // What was picked by hand is remembered for the name when it is not the
@@ -302,7 +315,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               similarEntry={similarListEntry(line, groceryItems, orderedIds)}
               ask={asks[index]}
               tried={tried}
-              optionLabel={(item) => pickLabel(item, shopEntryFor({ item, name: item.name }, groceryItems, { orderedIds })?.state)}
+              optionLabel={(item, via) => pickLabel(item, shopEntryFor({ item, name: item.name }, groceryItems, { orderedIds })?.state, via)}
               problem={tried ? problems[index] : ''}
               single={rows.length === 1}
               budgetId={budgetOf(line.row, budgetCtx)}
@@ -314,7 +327,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               onAddCategory={addHomeCategory}
               onAddSubcategory={addSubcategory}
               chipsFor={(name, home) => (home ? suggestions(name) : budgetSuggestions(name))}
-              onName={(name) => changeName(line.row, name)}
+              onName={(name, usedWord) => changeName(line.row, name, usedWord)}
               onChange={(patch) => change(line.row.key, patch)}
               onManageBudget={() => setManaging(line.row.key)}
               onRemove={rows.length > 1 ? () => setRows((all) => all.filter((r) => r.key !== line.row.key)) : null}
@@ -380,8 +393,9 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
   // a row without a HOME category, uses it; lib/moneyPurchase.js budgetOf).
   const budgetSuggested = autoBudget && !row.budgetTouched && budgetId === row.autoBudgetId
   // The similar-name question shows once the typing pauses (or after Save
-  // was pressed); "Use …" takes the HOME item's name, so the row is that
-  // item; "Create new" keeps the name (a changed name asks again).
+  // was pressed); "Use …" takes the HOME item's name, or the other name it
+  // was found by, so the row is that item; "Create new" keeps the name (a
+  // changed name asks again).
   const settledName = useTypingPause(row.name)
   const showAsk = Boolean(ask) && (tried || settledName === row.name)
   const createdNew = home && row.name.trim() && row.similarAnswer === exactKey(row.name)
@@ -416,10 +430,10 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
       {showAsk && (
         <SimilarItemsQuestion
           name={row.name}
-          options={ask.similar.map(({ item }) => ({ item, label: optionLabel(item) }))}
+          options={ask.similar.map(({ item, via }) => ({ item, via, label: optionLabel(item, via) }))}
           more={ask.more}
-          onPick={(item) => onName(item.name)}
-          onCreateNew={() => onChange({ similarAnswer: exactKey(row.name) })}
+          onPick={(item, via) => onName(via ?? item.name, { word: row.name.trim(), itemId: item.id })}
+          onCreateNew={() => onChange({ similarAnswer: exactKey(row.name), firstWord: row.firstWord || row.name.trim() })}
           scroll={false}
         />
       )}

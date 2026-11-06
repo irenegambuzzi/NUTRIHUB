@@ -4,8 +4,9 @@ import { formatUnitPrice } from '../../lib/pricing'
 
 // The names that match what is typed (lib/nameSuggestions.js
 // matchSuggestions), each a button with its category, unit, last price and
-// payer, and "on list" when an open SHOP card has that name. Shown under
-// the name of the "Add to SHOP list" form.
+// payer, and "on list" when an open SHOP card has that name. Another name
+// of an item says which: "Corn Snack · Chips & Snacks". Shown under the name
+// of the "Add to SHOP list" form.
 export function NameSuggestions({ matches, onPick, categoryName, listed = [] }) {
   if (!matches.length) return null
   return (
@@ -18,7 +19,7 @@ export function NameSuggestions({ matches, onPick, categoryName, listed = [] }) 
             <button type="button" onClick={() => onPick(s)} className="w-full min-h-9 flex items-center gap-3 px-3 py-2.5 text-left">
               <CategoryIcon category={s.categoryId} size={16} />
               <span className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{s.name}</span>
+                <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{s.itemName ? `${s.name} · ${s.itemName}` : s.name}</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
                   {[s.categoryId && categoryName(s.categoryId), s.unit, price, s.payer && payerLabel(s.payer)].filter(Boolean).join(' · ')}
                 </span>

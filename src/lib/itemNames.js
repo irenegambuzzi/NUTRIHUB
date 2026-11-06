@@ -1,6 +1,9 @@
 import { exactKey } from './similarItems'
+import { normName } from './grocery'
 import { isDurable } from './inventory'
 import { stockFactor } from './reopenUnits'
+import { usualPackSize } from './packSize'
+import { decimalProblem, parseDecimal } from './decimal'
 
 // One item, many names (plan 9N, round 6D). An item keeps one stock, and
 // pantry_items.names lists the other names it is really bought under. Every
@@ -9,7 +12,8 @@ import { stockFactor } from './reopenUnits'
 // never sends `names` in a plain update. Pure, so every rule can be tested.
 // The checks here come first, with the exact-name key of the safety net
 // (lib/similarItems.js, also accents and plurals); 032 checks again with
-// capitals and outer spaces. No screen uses this file yet (stage 2 on).
+// capitals and outer spaces. Before 032 no item has the list, so everything
+// here finds nothing and every screen stays as it was.
 
 export const NAMES_COLUMN = 'names'
 
@@ -26,9 +30,12 @@ export const nameElements = (item) => (Array.isArray(item?.names) ? item.names.f
 // The other names of an item: without its own name (a merge may keep an
 // element of that name for its row) and each only once.
 export function otherNames(item) {
+  // Most items have none, and this runs for every item on every key press.
+  const elements = nameElements(item)
+  if (!elements.length) return elements
   const own = exactKey(item?.name)
   const seen = new Set()
-  return nameElements(item).filter((element) => {
+  return elements.filter((element) => {
     const key = exactKey(element.name)
     if (!key || key === own || seen.has(key)) return false
     seen.add(key)
@@ -63,18 +70,122 @@ export function itemForName(name, items, { exceptId = null, groups = true } = {}
   return other ? { item: other, own: false } : null
 }
 
+// Only a normal item has other names of its own: a group, a variant or a
+// durable never (a merge decides for groups later, stage 4).
+export const canHaveNames = (item) => Boolean(item) && !item.is_group && !item.group_id && !isDurable(item)
+
+// A Map of names (normName → item) with every item's other names added: an
+// item's own name, already in the Map, stays first.
+export function addOtherNames(byName, items) {
+  for (const item of items ?? []) {
+    for (const { name } of otherNames(item)) if (!byName.has(normName(name))) byName.set(normName(name), item)
+  }
+  return byName
+}
+
+// The item's own name and its other names, for a search; `query` in lower case.
+export const anyNameIncludes = (item, query) => [item?.name, ...otherNames(item).map((element) => element.name)].some((name) => String(name ?? '').toLowerCase().includes(query))
+
+// The grey line under the name on a HOME tile (K57): the first two names,
+// and how many more. { text: "also: Corn Snack, Nuvole di drago…", more: 8 },
+// or null without other names.
+const NAMES_ON_TILE = 2
+export function alsoLine(item) {
+  const names = otherNames(item).map((element) => element.name.trim())
+  if (!names.length) return null
+  const more = Math.max(0, names.length - NAMES_ON_TILE)
+  return { text: `also: ${names.slice(0, NAMES_ON_TILE).join(', ')}${more ? '…' : ''}`, more }
+}
+
+// Whether something is bought under another name of `item`, not its own.
+export const boughtAsOtherName = (item, name) => !isOwnName(item, name) && Boolean(nameElement(item, name))
+
+// The item as a line bought under `name` in `unit` sees it for the pack
+// field: under another name with a pack size for that unit, that size; else
+// the item's own (report F). A first-time size is never saved on the item
+// from such a line (K60): saving it on the name comes with stage 3.
+export function packItemFor(item, name, unit) {
+  const element = boughtAsOtherName(item, name) ? nameElement(item, name) : null
+  return element && usualPackSize(element, unit) ? { ...item, packaging_unit: element.packaging_unit, quantity_per_pack: element.quantity_per_pack } : item
+}
+
 // K59: the item that already has this word, other than `exceptIds`, or
 // null. A word belongs to one item only; a similar word is allowed.
 export const nameTakenBy = (name, items, exceptIds = []) => (items ?? []).find((item) => !exceptIds.includes(item.id) && hasName(item, name)) ?? null
 
 // The refusals, word for word as supabase/032 says them.
 export const changedMeanwhileText = (name) => `"${name}" changed meanwhile (on the other phone?) — open it again. Nothing was changed.`
-export const takenText = (name, item) => `"${name}" is already a name of "${item.name}" in HOME. Nothing was changed.`
+export const takenNote = (name, item) => `"${String(name ?? '').trim()}" is already a name of "${item.name}" in HOME.`
+export const takenText = (name, item) => `${takenNote(name, item)} Nothing was changed.`
 const unitsText = (source, target) => `"${source.name}" is counted in ${source.unit}, "${target.name}" in ${target.unit}, and they can't be converted — change the unit first. Nothing was changed.`
 const durableText = (item) => `"${item.name}" is a durable, so it can't be merged. Nothing was changed.`
 const variantTargetText = (item) => `"${item.name}" is a variant — merge into its group, or take it out of the group first. Nothing was changed.`
 const otherGroupText = (item) => `"${item.name}" is a variant of another group — take it out of that group first. Nothing was changed.`
 const groupSourceText = (item) => `"${item.name}" is a group with variants — merge its variants into it first. Nothing was changed.`
+
+// "Other names" in "Edit item": one draft per name of the item, plus the new
+// ones typed. { key, name, unit, size, saved, merged }: `size` as typed, ''
+// for no pack size; `merged`: it came from a merge, so it has no × (K74).
+export const nameDrafts = (item) =>
+  otherNames(item).map((element) => ({
+    key: element.name,
+    name: element.name,
+    unit: element.packaging_unit ?? '',
+    size: Number(element.quantity_per_pack) > 0 ? String(Number(element.quantity_per_pack)) : '',
+    saved: true,
+    merged: element.origin != null,
+  }))
+
+export const newNameDraft = (key) => ({ key, name: '', unit: '', size: '', saved: false, merged: false })
+
+// The pack fields of a draft; a name without a size has no pack at all.
+function packOf(draft, defaultUnit) {
+  const size = parseDecimal(draft.size)
+  return size > 0 ? { packaging_unit: draft.unit || defaultUnit, quantity_per_pack: size } : { packaging_unit: null, quantity_per_pack: null }
+}
+
+// Per draft key, why it can't be saved (a Map, empty when all can). K59: a
+// new name that is another item's name or other name, or one already on this
+// list; `ownName`: the name in the form now.
+export function draftProblems(drafts, { item, ownName, items }) {
+  const problems = new Map()
+  const seen = []
+  for (const draft of drafts) {
+    const problem = decimalProblem(draft.size)
+    if (problem) problems.set(draft.key, problem)
+    else if (draft.size.trim() && !(parseDecimal(draft.size) > 0)) problems.set(draft.key, `Quantity per ${draft.unit || 'pack'} must be more than 0.`)
+    if (draft.saved) {
+      seen.push(draft.name)
+      continue
+    }
+    if (!draft.name.trim()) continue
+    const taken = nameTakenBy(draft.name, items, [item.id])
+    if (taken) problems.set(draft.key, takenNote(draft.name, taken))
+    else if (seen.some((name) => exactKey(name) === exactKey(draft.name)) || exactKey(draft.name) === exactKey(ownName)) problems.set(draft.key, takenNote(draft.name, { name: ownName }))
+    seen.push(draft.name)
+  }
+  return problems
+}
+
+// The payload for save_item_names, or null when the names stay as they are.
+// `was` is the list as the app read it, so a change on the other phone is
+// refused. A new name with no text is not one. `defaultUnit`: the unit shown
+// for a draft whose unit was not changed by hand.
+export function namesChange(item, drafts, defaultUnit) {
+  const kept = new Map(drafts.filter((draft) => draft.saved).map((draft) => [draft.name, draft]))
+  const saved = otherNames(item)
+  const remove = saved.filter((element) => !kept.has(element.name)).map((element) => element.name)
+  const edit = saved.flatMap((element) => {
+    const draft = kept.get(element.name)
+    if (!draft) return []
+    const pack = packOf(draft, defaultUnit)
+    const size = Number(element.quantity_per_pack) > 0 ? Number(element.quantity_per_pack) : null
+    const same = pack.quantity_per_pack === size && (size === null || pack.packaging_unit === element.packaging_unit)
+    return same ? [] : [{ name: element.name, ...pack }]
+  })
+  const add = drafts.filter((draft) => !draft.saved && draft.name.trim()).map((draft) => ({ name: draft.name.trim(), ...packOf(draft, defaultUnit), price: null, price_qty: null, price_unit: null }))
+  return add.length || remove.length || edit.length ? { item_id: item.id, add, remove, edit, was: { names: item.names ?? [] } } : null
+}
 
 // What merging `sources` into `target` would do, or why it can't (plan 9N,
 // K44, K46, K59), with `items` all the HOME rows.

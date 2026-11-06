@@ -8,6 +8,7 @@ import { usePantryItems } from './usePantryItems'
 import { useBudget } from './useBudget'
 import { groceryStore, orderStore, pantryStore } from '../lib/stores'
 import { useShopTidy } from './useShopTidy'
+import { addOtherNames } from '../lib/itemNames'
 
 // Reason order for each sort (lib/grocery.js); budget planning always
 // uses PRIORITY.
@@ -43,8 +44,12 @@ export function useGroceryList() {
   useShopTidy({ entries: groceryRows, pantryRows, ordered: orderedIds, ready: groceryLoaded && pantryLoaded && ordersLoaded })
 
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
-  // By name, never a group (see pantryItemFor): only a link by id points to one.
-  const pantryByName = useMemo(() => new Map(pantryItems.filter((p) => !p.is_group).map((p) => [normName(p.name), p])), [pantryItems])
+  // By name, never a group (see pantryItemFor): only a link by id points to
+  // one. Another name of an item counts too, after every item's own name.
+  const pantryByName = useMemo(() => {
+    const plain = pantryItems.filter((p) => !p.is_group)
+    return addOtherNames(new Map(plain.map((p) => [normName(p.name), p])), plain)
+  }, [pantryItems])
 
   const pantryFor = useCallback((g) => pantryById.get(g.pantry_item_id) || pantryByName.get(normName(g.name)), [pantryById, pantryByName])
 

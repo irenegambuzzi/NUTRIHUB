@@ -6,8 +6,12 @@ import { Select } from '../ui/Field'
 import { cn } from '../../lib/cn'
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { deleteStockLogs, useStockLogs } from '../../hooks/usePantryItems'
+import { normName } from '../../lib/grocery'
 
-const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded', converted: 'Unit changed' }
+const REASON_LABELS = { added: 'Added', used: 'Used', restocked: 'Restocked', edited: 'Adjusted', purchased: 'Bought', unpurchased: 'Purchase undone', discarded: 'Discarded', converted: 'Unit changed', merged: 'Merged', separated: 'Separated' }
+
+// Only supabase/032 writes these two (plan 9N).
+const NAMES_REASONS = ['merged', 'separated']
 
 // A unit change that converted the stock (2 pack → 8 pcs, plan 9L K11)
 // shows only the new stock: the difference of the numbers means nothing.
@@ -21,17 +25,32 @@ const itemGone = (log) => 'item_id' in log && !log.item_id
 // Filters combine: item + reason + date range. Entries can be deleted one
 // by one or several at once (Select), with Undo; that removes only the
 // record, never stock, expenses or items.
-export function HistoryView() {
+// `namesReady`: supabase/032 is known to have run (plan 9N, report J.2): a
+// row is titled with the item's name of now, from item_id (`items`: the HOME
+// items), with the stored name under it when that differs, and the Item
+// filter goes by item_id. Before that, and for a deleted item, the stored
+// name is the title.
+export function HistoryView({ items = [], namesReady = false }) {
   const logs = useStockLogs()
+  const currentNames = useMemo(() => new Map(items.map((p) => [p.id, p.name])), [items])
+  const titleOf = (log) => (namesReady && currentNames.get(log.item_id)) || log.item_name
+  const filterKey = (log) => (namesReady && log.item_id ? `id:${log.item_id}` : log.item_name)
   const [itemFilter, setItemFilter] = useState('all')
   const [reasonFilter, setReasonFilter] = useState('all')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
 
-  const itemNames = useMemo(() => [...new Set(logs.map((l) => l.item_name))].sort((a, b) => a.localeCompare(b)), [logs])
+  const itemOptions = useMemo(() => {
+    const options = new Map()
+    for (const log of logs) {
+      if (!options.has(filterKey(log))) options.set(filterKey(log), namesReady && itemGone(log) ? `${log.item_name} (${DELETED_ITEM_LABEL})` : titleOf(log))
+    }
+    return [...options].sort((a, b) => a[1].localeCompare(b[1]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs, namesReady, currentNames])
 
   const filtered = logs.filter((log) => {
-    if (itemFilter !== 'all' && log.item_name !== itemFilter) return false
+    if (itemFilter !== 'all' && filterKey(log) !== itemFilter) return false
     if (reasonFilter !== 'all' && log.reason !== reasonFilter) return false
     const day = new Date(log.created_at).toLocaleDateString('sv-SE')
     if (from && day < from) return false
@@ -67,15 +86,15 @@ export function HistoryView() {
         <div className="grid grid-cols-2 gap-2">
           <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className="text-xs" aria-label="Item">
             <option value="all">All items</option>
-            {itemNames.map((n) => (
-              <option key={n} value={n}>
-                {n}
+            {itemOptions.map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
               </option>
             ))}
           </Select>
           <Select value={reasonFilter} onChange={(e) => setReasonFilter(e.target.value)} className="text-xs" aria-label="Reason">
             <option value="all">All reasons</option>
-            {Object.entries(REASON_LABELS).map(([value, label]) => (
+            {Object.entries(REASON_LABELS).filter(([value]) => namesReady || !NAMES_REASONS.includes(value)).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -147,6 +166,8 @@ export function HistoryView() {
         <Card className="divide-y divide-[var(--color-border)]">
           {filtered.map((log) => {
             const change = Number(log.change)
+            const title = titleOf(log)
+            const storedName = normName(title) === normName(log.item_name) ? '' : log.item_name
             return (
               <div
                 key={log.id}
@@ -154,13 +175,14 @@ export function HistoryView() {
                 className={cn('flex items-center gap-3 py-2 text-xs', selecting && 'cursor-pointer')}
               >
                 {selecting && (
-                  <span role="checkbox" aria-checked={selected.has(log.id)} aria-label={`Select ${log.item_name}`} className="text-[var(--color-primary)] shrink-0">
+                  <span role="checkbox" aria-checked={selected.has(log.id)} aria-label={`Select ${title}`} className="text-[var(--color-primary)] shrink-0">
                     {selected.has(log.id) ? <CheckSquare size={16} /> : <Square size={16} className="text-[var(--color-icon-muted)]" />}
                   </span>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="font-bold text-[var(--color-text)] truncate">{log.item_name}</p>
+                  <p className="font-bold text-[var(--color-text)] truncate">{title}</p>
                   <p className="text-[10px] text-[var(--color-text-muted)]">
+                    {storedName && `${storedName} · `}
                     {REASON_LABELS[log.reason] || log.reason} ·{' '}
                     {new Date(log.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     {itemGone(log) && (
@@ -183,7 +205,7 @@ export function HistoryView() {
                 {!selecting && (
                   <button
                     onClick={() => deleteStockLogs([log.id])}
-                    aria-label={`Delete this entry for ${log.item_name}`}
+                    aria-label={`Delete this entry for ${title}`}
                     className="p-1 text-[var(--color-icon-muted)] hover:text-rose-400 shrink-0"
                   >
                     <Trash2 size={13} />

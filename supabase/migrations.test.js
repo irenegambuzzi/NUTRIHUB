@@ -6544,6 +6544,40 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
   })
 
   describe('save_item_names', () => {
+    // Stage 2: what the app really sends, from "Edit item" and from K58 / K85.
+    it('K85: the word is added, Undo with the list of now removes only it, and a second phone is refused without the list', async () => {
+      const item = await addItem(fx, 'Fresh Pumpkin', 'pcs', 2, { category: 'snacks' })
+      const word = { name: 'Pumkin', packaging_unit: null, quantity_per_pack: null, price: null, price_qty: null, price_unit: null }
+      await saveNames(fx, item, { add: [{ ...word, name: 'Zucca' }] })
+      const was = await namesOf(fx, item)
+      await saveNames(fx, item, { add: [word] }, was)
+      expect((await namesOf(fx, item)).map((n) => n.name)).toEqual(['Zucca', 'Pumkin'])
+      expect(await fails(() => saveNames(fx, item, { add: [{ ...word, name: 'Other' }] }, was))).toBe('"Fresh Pumpkin" changed meanwhile (on the other phone?) — open it again. Nothing was changed.')
+      await saveNames(fx, item, { remove: ['Pumkin'] })
+      expect((await namesOf(fx, item)).map((n) => n.name)).toEqual(['Zucca'])
+    })
+
+    it('"Edit item": a pack size emptied goes back to empty; an edit sends only its fields', async () => {
+      const item = await addItem(fx, 'Cat Wet Food', 'pcs', 12, { category: 'snacks' })
+      await saveNames(fx, item, { add: [{ name: 'Felix', packaging_unit: 'box', quantity_per_pack: 24, price: 9, price_qty: 1, price_unit: 'box' }] })
+      await saveNames(fx, item, { add: [], remove: [], edit: [{ name: 'Felix', packaging_unit: null, quantity_per_pack: null }] })
+      expect((await namesOf(fx, item)).map((n) => [n.name, n.packaging_unit, n.quantity_per_pack, n.price])).toEqual([['Felix', null, null, 9]])
+    })
+
+    it('3G: a delete and its Undo (the row as deleted, sent back) bring every name back, a merged one with its origin', async () => {
+      const item = await addItem(fx, 'Salty Snacks', 'pcs', 3, { category: 'snacks' })
+      const source = await addItem(fx, 'Bag of Corn', 'pcs', 2, { category: 'snacks' })
+      await merge(fx, item, [source])
+      await addNames(fx, item, ['Nuvole'])
+      const list = await namesOf(fx, item)
+      expect(list.map((n) => [n.name, n.origin?.id ?? null])).toEqual([['Bag of Corn', source], ['Nuvole', null]])
+      const row = await member(fx, async () => (await fx.query(`delete from pantry_items where id = $1 returning *`, [item])).rows[0])
+      expect(await stockOf(fx, item)).toBeNull()
+      await member(fx, () => fx.query(`insert into pantry_items select * from jsonb_populate_record(null::pantry_items, $1::jsonb)`, [row]))
+      expect(await namesOf(fx, item)).toEqual(list)
+      expect(await stockOf(fx, item)).toBe(5)
+    })
+
     it('adds, edits and removes, all or nothing; the app can\'t write origin or from_item_id; sent again it changes nothing', async () => {
       const item = await addItem(fx, 'Hair Wash', 'pcs', 1, { category: 'personal-care' })
       const saved = await saveNames(fx, item, { add: [{ name: ' Shampoo Blue ', packaging_unit: 'box', quantity_per_pack: 6, price: 3, price_qty: 1, price_unit: 'pcs', origin: { id: 'x' }, from_item_id: id(1) }, { name: 'Shampoo Green' }] })

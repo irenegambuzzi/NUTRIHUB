@@ -25,11 +25,13 @@ import { showToast } from '../../lib/feedback'
 import { buildSuggestions, matchSuggestions } from '../../lib/nameSuggestions'
 import { addedMessage, addedNameMessage, exactKey, matchHomeItems, pickLabel, shopEntryFor } from '../../lib/similarItems'
 import { AlreadyListed, CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
+import { keepTypedName } from '../../hooks/itemNameActions'
 
 const EMPTY_PRICE = { price: '', price_qty: '1', price_unit: '' }
 
 // What a name fills in: the suggested category (see useCategorySuggestions)
-// and the unit and last price of the pantry item with that name.
+// and the unit and last price of the pantry item with that name. Another
+// name of an item fills in its unit; its price comes from useLastPrice.
 function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) {
   const pick = suggest(value)
   // No (or no longer a) suggestion: drop an earlier one instead of keeping
@@ -38,7 +40,7 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
   const known = pantryByName.get(normName(value))
   if (known) {
     fields.unit = known.unit
-    if (Number(known.price) > 0 && !priceDraft.price) {
+    if (normName(known.name) === normName(value) && Number(known.price) > 0 && !priceDraft.price) {
       fields.priceDraft = { price: moneyText(known.price), price_qty: String(known.price_qty || 1), price_unit: known.price_unit || known.unit }
     }
   }
@@ -49,10 +51,10 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
 // `initialName` starts it filled in. The category is suggested from the name, or
 // left empty for the user to pick; a pick by hand is remembered for that
 // name on both phones.
-// While typing, the names of the HOME items (variants and groups too) and
-// of the open SHOP cards that match are listed under the name; tapping one
-// fills the name as if it had been typed. One is never picked by itself:
-// Enter and the buttons use the name as typed.
+// While typing, the names of the HOME items (variants and groups too), their
+// other names and the open SHOP cards that match are listed under the name;
+// tapping one fills the name as if it had been typed. One is never picked by
+// itself: Enter and the buttons use the name as typed.
 // "Save" and "Save & add another" run the similar-name safety net first
 // (plan 9G): `homeItems` every HOME item, `openEntries` the open entries
 // (ordered online too, `orderedIds`).
@@ -144,35 +146,40 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     again.current = addAnother
     setListOpen(false)
     if (exactKey(name) !== createNewKey && !isDurable({ category_id: categoryId })) {
-      const { exact, similar, more } = matchHomeItems(name, homeItems)
-      if (exact) return listCheck(exact)
+      const { exact, exactVia, similar, more } = matchHomeItems(name, homeItems)
+      // Another name of an item links the item; the entry keeps the name typed.
+      if (exact) return listCheck(exact, exactVia ? { name: name.trim() } : {})
       if (similar.length) {
-        const options = similar.map(({ item }) => ({ item, label: pickLabel(item, shopEntryFor({ item, name: item.name }, openEntries, { orderedIds })?.state) }))
+        const options = similar.map(({ item, via }) => ({ item, via, label: pickLabel(item, shopEntryFor({ item, name: item.name }, openEntries, { orderedIds })?.state, via) }))
         return setQuestion({ kind: 'similar', options, more })
       }
     }
     listCheck(null)
   }
 
-  const listCheck = (item) => {
-    const found = shopEntryFor({ item, name: item?.name ?? name.trim() }, openEntries, { orderedIds })
-    if (found) return setQuestion({ kind: 'listed', found, item })
-    save(item)
+  const listCheck = (item, pick = {}) => {
+    const found = shopEntryFor({ item, name: pick.name ?? item?.name ?? name.trim() }, openEntries, { orderedIds }) ?? (pick.name && item ? shopEntryFor({ item, name: item.name }, openEntries, { orderedIds }) : null)
+    if (found) return setQuestion({ kind: 'listed', found, item, pick })
+    save(item, pick)
   }
 
   // `item`: the HOME item used (the same name, or "Use …"): the entry takes
   // its name, and its category unless one was picked by hand. A group is
   // never linked from here, exactly as when its name is typed by hand.
+  // `pick`: { name } the entry's name when it isn't the item's own (one of
+  // its other names), { word } what was typed before "Use …" (K58): saved as
+  // another name of the item once the entry is.
   // ("Add anyway" next to an order online saves here too: a new card to
   // buy with what the form says.)
-  const save = async (item = null) => {
+  const save = async (item = null, pick = {}) => {
     const known = item ? (item.is_group ? null : item) : pantryByName.get(normName(name))
     const fromItem = item && !categoryTouched && item.category_id
     const pickedCategory = fromItem ? item.category_id : categoryId
     const pickedSub = fromItem ? item.subcategory_id || '' : subcategoryId
     setSaving(true)
+    const entryName = pick.name ?? item?.name ?? name.trim()
     const { error } = await onAdd({
-      name: item?.name ?? name.trim(),
+      name: entryName,
       categoryId: pickedCategory || null,
       subcategoryId: pickedCategory ? pickedSub || null : null,
       price: parseDecimal(priceDraft.price) || 0,
@@ -191,7 +198,8 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
     // Every save says what was added (also "Save & add another" and "Add
     // anyway"): with its HOME stock when it is a HOME item, else its name.
     const home = item ?? known
-    showToast({ message: home ? addedMessage(home) : addedNameMessage(name) })
+    showToast({ message: home ? addedMessage({ ...home, name: entryName }) : addedNameMessage(name) })
+    if (pick.word) keepTypedName(pick.word, item.id)
     done()
   }
 
@@ -236,7 +244,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
             options={question.options}
             more={question.more}
             busy={saving}
-            onPick={listCheck}
+            onPick={(item, via) => listCheck(item, { name: via, word: name.trim() })}
             onCreateNew={() => {
               setCreateNewKey(exactKey(name))
               setQuestion(null)
@@ -250,7 +258,7 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
             onOk={done}
             // Nothing typed here is used: the card is changed on the list.
             onGoToCard={() => (onGoToCard ? onGoToCard(question.found.entry) : onAdded?.())}
-            onAddAnyway={() => save(question.item)}
+            onAddAnyway={() => save(question.item, question.pick)}
           />
         )}
         {createNewKey && !question && <CreateNewHint />}

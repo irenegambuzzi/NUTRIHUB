@@ -4723,17 +4723,16 @@ iPhone test of 9M done 03/11/2026: all OK.
 
 K41: the old "one-time database update" notices are kept (03/11).
 
-### 9N. One item, many names (round 6D, decided 04–06/11, stage 1 as built)
+### 9N. One item, many names (round 6D, decided 04–06/11, stages 1 and 2 as built)
 
 Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
 household chose **option C** (`pantry_items.names jsonb`) and the decisions
 below; where they differ from the report, they win. SQL:
-`supabase/032_item_names.sql` (written, **not run**; the household runs it
-after Claude has checked it, after 031). The app is deployed before 032 and
-works exactly as today until it has run. No new browser storage, no new
-offline queue. Stage 1 changes no screen and removes no group or variant
-code: nothing uses `lib/itemNames.js` or `useItemNamesReady` yet, and `names`
-is sent in no plain update.
+`supabase/032_item_names.sql`. **SQL 032 run on Supabase 06/11/2026: all 9
+checks ok.** The app is deployed before 032 and works exactly as today until
+it has run. No new browser storage, no new offline queue. Stage 1 changed no
+screen and removed no group or variant code. `names` is sent in no plain
+update, also after stage 2.
 
 **Decisions.**
 
@@ -4844,6 +4843,17 @@ is sent in no plain update.
 
 - **K82** Stock rounded to 3 decimals may not return exactly after a later merge
   (2 pcs → 0.667 pack → 2.001 pcs). Accepted.
+- **K83** Reopen after a merge may put back an old date (accepted; it can be
+  fixed in "Edit item"). Target 0 pcs, 2020; bought 2 dated 2028; merged 5 pcs
+  dated 2027 → 7 pcs, 2027; Reopen → 5 pcs dated 2020.
+- **K84** A target's old date at stock 0 is not kept after separating
+  (accepted). Target 0 pcs, 2020; source 5 pcs, 2027; separated again: the
+  source is back with 2027, the target stays at 0 pcs with 2027.
+- **K85** A word saved by "Use …" shows a toast with Undo: `"{word}" saved as
+  another name of "{item}"`, 20 seconds. Undo removes only that name; the SHOP
+  card, expense or arrival stays. A failed save keeps the normal action, and
+  the toast offers Retry. Offline the name is simply not saved: no extra toast,
+  no queue.
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5014,37 +5024,184 @@ K81 (the five rows, each in its own unit; after a conversion; several sources
 in any order; a group as target; the two Kata ragu cases below).
 `lib/itemNames.test.js` (19), `hooks/itemNamesReady.test.jsx` (7).
 
-**SQL 032 not run yet.** The household runs it after Claude has checked it.
+**SQL 032 run on Supabase 06/11/2026: all 9 checks ok.**
 
 **Kata ragu (06/11).** (Answered 06/11: 1 → K70, 2 → K71, 3 → K72, 4 → K73,
 5 → K74, 6 → K75, 7 → K76, 8 → K77, 9 → K78.)
 
 **Kata ragu (06/11 follow-up).** (Answered 06/11: 1 → K80, 2 → K81, 3 → K82.)
 
-**Kata ragu (06/11 second follow-up, tanya Zidane).** See the round's message;
-built as written until answered, both tested.
+**Kata ragu (06/11 second follow-up).** (Answered 06/11: 1 → K83, 2 → K84.)
 
-1. Reopen after a merge. Reopen of the target's own older purchase still puts
-   its date back from `pantry_before` (031), so K81's problem can return: target
-   0 pcs, 2020; bought 2 dated 2028; merged 5 pcs dated 2027 → 7 pcs, 2027;
-   Reopen → 5 pcs dated 2020. The same happens with K72 alone.
-2. Separate after a merge. Target 0 pcs, 2020; source 5 pcs, 2027; separated
-   again: the source is back with 2027, the target stays at 0 pcs with 2027. Its
-   old date is gone, because nothing keeps it.
+### Stage 2 as built (06/11; code and tests only, no SQL)
+
+Names are read everywhere and can be edited in HOME. No new column, no new
+browser storage, no new offline queue. `names` is still not in `ITEM_FIELDS`
+and is written only through `save_item_names`
+(`hooks/itemNameActions.js`). `GroupTile`, `GroupShopCard`, `syncGroup`,
+`useShopTidy`, `lib/groups.js`, `lib/groupShop.js` and the variant selects are
+not touched. An item with no names renders exactly as before.
+
+**Ready or not.** `PantryPage` reads `useItemNamesReady(items)` and passes
+`namesReady` to `ItemTile`, `ItemEditor` and `HistoryView`; each defaults to
+false, so nothing new shows. The pure readers work from `item.names`, which
+doesn't exist before 032. K58 asks first (`checkItemNames`) and sends nothing
+without a yes. The pantry store reads every column (`columns = '*'`, realtime
+rows not cut), so `names` arrives through the existing cache and realtime.
+
+**Reading names (3A).** All through `lib/itemNames.js`:
+
+- `similarItems.matchHomeItems`: each item by its own name, then the best of
+  its other names (`via`, only when strictly better). An own name goes before
+  another item's other name, then a normal item before a group. → `{ exact,
+  exactVia, similar: [{ item, kind, via }], more }`. Exact: no question.
+  Similar: "Use Chips & Snacks (Corn Snack) · 11 pcs at home". The same in
+  "Go to …" and "Add it to …". Durables are still never searched. It only
+  reads the phone's copy, so offline is the same as online.
+- `moneyPurchase.homeItemFor` and `purchase.pantryItemFor`: own name first,
+  then `itemForName`; `pantryItemFor` never a group, as before.
+- `AddItemForm`: an exact other name links the item and the entry keeps the
+  name typed. The toast names what was added ("Added “corn snack” · in HOME:
+  11 pcs"). The item's price is filled in only for its own name.
+  `useGroceryList.pantryByName` and `useCategorySuggestions` also hold other
+  names, after every own name, so the unit, the category and an unlinked card
+  of that name find the item.
+- `nameSuggestions`: after the items, before the SHOP cards, each other name
+  as "Corn Snack · Chips & Snacks" with the name's own price; tapped, the name
+  fills in and Save links the item.
+- `lastPrice`: the order of report F. 1 purchase line, 2 order, 3 the name's
+  stored price (`source: 'name'`, time `added_at`, a missing unit = the item's),
+  4 the item, only when the name IS the item's name; the most recent found wins.
+  `!is_group` stays until stage 5 (groups are not touched here). **Which forms
+  use `lastPriceFor`:** "+ Add to SHOP list" and the MONEY row (`useLastPrice`).
+  The order form does NOT: it starts from `prefill` / the order itself, so it is
+  unchanged.
+- `pantryFilters.searchRank`: other names count like the other fields (rank
+  3). The list of finished 1× items searches them too.
+- `GroceryPage.variantNamesOf`: also the item's other names, so SHOP search
+  finds the entry with the existing "In it: Svelto".
+- `ArrivedDialog`: "Which item?" also finds other names. No other change there
+  except K58 below.
+- Pack size under another name (added to keep K60, not asked in the prompt):
+  `packItemFor` starts the field with the name's own size for that unit, else
+  the item's; a first-time size is never saved on the item from such a line.
+  Saving it on the name comes with stage 3 (`name_pack`).
+- A rename carries over to open SHOP entries as before, except entries under
+  another name of the item: they keep their name. Without names the query is
+  the old one.
+
+**HOME tile (K57).** `ItemTile` only: under the name one grey line, the first
+two names, "…" and "+N" when there are more: "also: Corn Snack, Nuvole di
+drago… +8". `line-clamp-2`, `break-words`, the "+N" on its own so it is never
+cut. No line without names.
+
+**"Edit item" → "Other names"** (`inventory/OtherNamesFields.jsx`). Before
+Notes. Only editing a normal item: never "Add an item", a group, a variant
+(also not after choosing a group in the form) or a durable. Each name as text,
+"Purchase unit", "{stock unit} per {unit}" (empty = no pack size) and × (aria
+"Remove {name}"); no × when `origin` is not empty (K74). "+ Add a name" adds a
+field "e.g. Corn Snack". "Save changes" sends `{ item_id, add, remove, edit,
+was: { names } }` first, then the other fields, so a refusal leaves everything
+as it was (shown as it is; the editor stays open). After a later failure, Save
+again changes nothing in the names. No change to the names: not called.
+
+**K59.** A new name equal to another item's name or other name, to a name
+already on the list, or to the item's own name stops at Save, under that name:
+`"{name}" is already a name of "{item}" in HOME.` Renaming an item, or adding
+one, to another item's other name stops with the same note and "Go to {item}"
+(the exact-name way of 9G; "Add it to …" from "It arrived!"). A similar word is
+allowed.
+
+**K58 + K85: every place with the buttons.**
+
+| Place | Button | The word is saved | "Create new" with a changed name |
+|---|---|---|---|
+| SHOP "+ Add to SHOP list" (List and Shop mode) | "Use …" | after the card is saved, also "Add anyway"; not after "OK" / "Go to card" (nothing was saved) | not built: the HOME item is made later, at Confirm (Kata ragu 1) |
+| MONEY "Add expense" row | "Use …" | after the purchase is saved, while the row still is that item | built: the item is made by that purchase, found by name after a reload |
+| "It arrived!" → "Create a new item" | "Add it to …" | after the arrival is saved, while it goes to that item | built: the item is made with the arrival |
+| HOME "Add an item" | "Go to …": nothing is used, so no word | never | built: the item is made there |
+
+"Use …" with a `via`: the card or row takes that other name. Never when the
+word already is a name of that item, never for a group, a variant or a durable
+(Kata ragu 2), never when another item has it. The first word typed counts: a
+second "Create new" keeps it; a name changed back to it saves nothing. Failed
+save: `"{word}" was not saved as another name of "{item}".` with Retry; a Retry
+reads the list again, so `was` is fresh. Undo reads the list of now too.
+
+**History (report J.2).** With `namesReady`: title = the item's name now, from
+`item_id`; under it, when different (capitals ignored), "Corn Snack · Bought ·
+4 Nov 2026, 10:30" (the date format stays). "Item" filter: one option per
+`item_id`; rows of deleted items by stored name, "{name} (deleted item)"; K29
+unchanged. Reasons "Merged" and "Separated"; in the filter only with
+`namesReady`. Before that the view is exactly the old one.
+
+**Delete + Undo (3G).** Nothing to change: `deleteItem` keeps the whole row it
+deleted and `upsert`s it, so `names` comes back, a merged name with its
+`origin`. Tested in memory and on the real SQL (PGlite).
+
+**Files.** New: `hooks/itemNameActions.js`,
+`components/inventory/OtherNamesFields.jsx`, tests `lib/itemNamesRead.test.js`,
+`hooks/itemNameActions.test.js`, `hooks/itemNamesPantry.test.jsx`,
+`components/itemNames.render.test.jsx`,
+`components/itemNamesArrived.render.test.jsx`,
+`pages/itemNamesPages.render.test.jsx`. Changed: `lib/itemNames.js`,
+`similarItems.js`, `moneyPurchase.js`, `purchase.js`, `nameSuggestions.js`,
+`lastPrice.js`, `pantryFilters.js`, `grocerySearch.js` (comment),
+`hooks/usePantryItems.js`, `useGroceryList.js`, `useCategorySuggestions.js`,
+`pages/PantryPage.jsx`, `GroceryPage.jsx`, `inventory/ItemEditor.jsx`,
+`ItemTile.jsx`, `HistoryView.jsx`, `grocery/AddItemForm.jsx`,
+`NameSuggestions.jsx`, `expenses/PurchaseForm.jsx`, `ArrivedDialog.jsx`,
+`ui/SimilarItemsPrompt.jsx`.
+
+**Tests: 2204 → 2319 (117 → 123 files).** Existing tests changed:
+`similarItems.render.test.jsx` (`getSnapshot` on the fake stores, needed by K58;
+"Go to …" now also says the word typed); `hooks/arrivalDb.fixture.js` (`upsert`
+takes one row too, as `deleteItem` really sends it). Added to
+`supabase/migrations.test.js`: K85, a pack size emptied, delete + Undo.
+
+**Kata ragu (06/11 stage 2, tanya Zidane).** Built as written until answered.
+
+1. "Create new" in SHOP. Typed "Pumpkin" → "Create new" → changed to "Frozen
+   Pumpkin Cubes" → "Save". There is only a SHOP card; the HOME item is made at
+   Confirm, and nothing can carry "Pumpkin" until then without a new column.
+   Not built. Options: (a) leave it; (b) a column on `grocery_items`; (c) after
+   Confirm, ask. Suggestion: (a).
+2. K58 for a group or a variant. Typed "Patatine" → "Use Chips & Snacks" (a
+   group). The card is added as today; no name is saved, because a group or
+   variant shows no "Other names", so the word could not be seen or removed.
+   Options: (a) leave it until the merge; (b) save it anyway. Suggestion: (a).
+3. "Use …" and then "OK". Typed "Pumpkin" → "Use Fresh Pumpkin" → "Already on
+   your SHOP list" → "OK" (or "Go to card"). Nothing was saved, so the word is
+   not saved either, and the question comes back next time. Options: (a) leave
+   it; (b) save the word there too. Suggestion: (a).
+4. First-time pack at Arrived. An order "Felix" linked to Cat
+   Wet Food, Arrived "1 pack" = 4: `LinkedArrivedDialog` still saves that size
+   on the item, not the name (K60 covers purchases). The brief says no other
+   change to Arrived. Options: (a) fix in stage 5 with the Arrived work; (b)
+   stop saving it now. Suggestion: (a).
+5. Renaming to the item's own other name. "Chips & Snacks" renamed "Corn
+   Snack", which is already its other name: allowed; the element stays, hidden
+   (`otherNames` leaves out the own name), and shows again after a rename back.
+   Renaming "A" to "B" and adding "A" in one Save: refused as it is ("already the
+   name of this item"), because the names go first; two Saves work. Options: (a)
+   leave both; (b) rename first when the old name is added. Suggestion: (a).
 
 **Notes for later stages.**
 
-- **Stage 2:** K59 also applies when a HOME item is renamed or a new HOME item
-  is typed; the app must check other names too.
-- **Stage 3:** `discard_expired` is sent only on an item's first line.
+- **Stage 3:** K53: the SHOP card shows the item name with the entry's own name
+  under it. `discard_expired` is sent only on an item's first line.
   `reopen_shopping_trip` counts lines, not cards, so a toast must not say the
   wrong number of cards. A first line that keeps the item's own name has no name
-  element, so its pack follows the item's 9H rule.
+  element, so its pack follows the item's 9H rule. The usual size saved under
+  another name goes on the name (`name_pack`, K60): stage 2 only stops it going
+  on the item.
 - **Stage 4:** merge `was` must send the stored `current_stock`, never the group
   total from `withGroupTotals`. A group target always sends all its variants,
   ticked and locked. The app's Reopen and Undo toasts must treat lines with
   `merged_from` as stock only, never as "stays in HOME" of a created item. The
-  restore guard K64 is built here, before real data is merged.
+  restore guard K64 is built here, before real data is merged. Deleting an item
+  that has merged names also loses the way back, so the delete question must
+  say so.
 
 ---
 

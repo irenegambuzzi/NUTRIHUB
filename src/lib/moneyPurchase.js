@@ -12,6 +12,7 @@ import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } fr
 import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
 import { partFields } from './sharedParts'
 import { asksStockUnit, newItemKeys, newStockUnit, sameNameProblems, stockUnitQuestion } from './newItemUnit'
+import { boughtAsOtherName, itemForName, packItemFor } from './itemNames'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -34,6 +35,10 @@ const round2 = (n) => Math.round(n * 100) / 100
 //   newUnit     the answer to "Count it at home in" for a new item bought in
 //               a package (plan 9L, lib/newItemUnit.js): { unit, stockUnit,
 //               text }, or null
+//   usedWord    the word "Use …" was pressed for: { word, itemId } (K58);
+//               saved as another name of that item once the row is saved
+//   firstWord   the word first typed when "Create new" was pressed (K58):
+//               a real name of the new item, when the name was changed
 export function emptyRow(key) {
   return {
     key,
@@ -61,6 +66,8 @@ export function emptyRow(key) {
     discountKind: 'percent',
     discountText: '',
     similarAnswer: '',
+    usedWord: null,
+    firstWord: '',
   }
 }
 
@@ -68,12 +75,13 @@ export function emptyRow(key) {
 // finished 1× item too: buying it again brings it back), else a group with
 // that name (its stock then goes to one of its variants, never the group).
 // The same name ignoring capitals and spaces first, then apart from
-// accents, punctuation and a plural too ("cucumbers" is "Cucumber", plan 9G).
+// accents, punctuation and a plural too ("cucumbers" is "Cucumber", plan 9G);
+// an item's own name goes first, then another name of an item (plan 9N).
 export function homeItemFor(name, pantryItems) {
   const key = normName(name)
   if (!key) return null
   const by = (same) => pantryItems.find((p) => !p.is_group && same(p.name)) ?? pantryItems.find((p) => p.is_group && same(p.name))
-  return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? null
+  return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? itemForName(name, pantryItems)?.item ?? null
 }
 
 // The similar-name question of a row (plan 9G): { similar, more } — the
@@ -180,7 +188,8 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null } = {}) {
   const variantId = group ? (row.variantId === undefined ? (firstOutVariant(variants) ?? variants[0])?.id ?? null : row.variantId) : null
   const target = group ? variants.find((v) => v.id === variantId) ?? null : match
   const count = quantity > 0 ? quantity : 1
-  const pack = home && target ? packField({ item: target, unit: row.unit, quantity: count, text: packTextFor({ text: row.packSizeText, unit: row.packUnit }, row.unit, packStartText(target, row.unit)) }) : null
+  const packItem = target && packItemFor(target, row.name, row.unit)
+  const pack = home && target ? packField({ item: packItem, unit: row.unit, quantity: count, text: packTextFor({ text: row.packSizeText, unit: row.packUnit }, row.unit, packStartText(packItem, row.unit)), canSave: !boughtAsOtherName(target, row.name) }) : null
   const add = !home ? 0 : target ? purchasedQuantity(target, { quantity: count, unit: row.unit }, pack?.value) : count
   const minStock = parseDecimal(row.minText)
   const isNew = home && !match

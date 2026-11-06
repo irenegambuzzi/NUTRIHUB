@@ -11,17 +11,19 @@ import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT
 import { purchaseUnitOptions } from '../../lib/units'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { checkMoveIntoGroup } from '../../lib/groups'
-import { roundQuantity, unitFactor } from '../../lib/inventory'
+import { isDurable, roundQuantity, unitFactor } from '../../lib/inventory'
 import { money, priceUnitOptions } from '../../lib/pricing'
 import { COUNT_STOCK_UNITS, isPackageUnit } from '../../lib/newItemUnit'
 import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { OneTimeToggle } from './OneTimeToggle'
+import { OtherNamesFields } from './OtherNamesFields'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { durableLookalike } from '../../lib/durable'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
-import { exactKey, goToLabel, matchHomeItems } from '../../lib/similarItems'
+import { exactKey, goToLabel, matchHomeItems, sameItemName } from '../../lib/similarItems'
+import { draftProblems, nameDrafts, namesChange, newNameDraft, takenNote } from '../../lib/itemNames'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 function initialState(item, group, prefill) {
@@ -68,11 +70,17 @@ function initialState(item, group, prefill) {
 // `homeItems` (every HOME item) turns on the similar-name safety net (plan
 // 9G): a new name, or a renamed one, that is already in HOME is not saved
 // ("Go to …" opens that item instead, `onGoTo`); a similar one asks first.
-// `optionLabel`: the text of each item's button ("Go to …" by default).
-// `onSave(fields, { converted })`: `converted` when the stock was converted
-// to a new unit ("Convert the numbers" / "Convert with the pack size"), so
-// its history row says the new stock, not a difference (plan 9L K11).
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel }) {
+// `onGoTo(item, word)`: also says the word typed. `optionLabel(item, via)`:
+// the text of each item's button ("Go to …" by default).
+// `namesReady`: supabase/032 is known to have run (plan 9N): a normal item
+// being edited gets "Other names".
+// `onSave(fields, { converted, names, firstWord })`: `converted` when the
+// stock was converted to a new unit ("Convert the numbers" / "Convert with
+// the pack size"), so its history row says the new stock, not a difference
+// (plan 9L K11); `names` the save_item_names payload, only when the names
+// changed; `firstWord`, a new item only: the word first typed before "Create
+// new", when the name was then changed (K58).
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel, namesReady = false }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
@@ -97,6 +105,13 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // 'similar', options }) and the name "Create new" was pressed for.
   const [question, setQuestion] = useState(null)
   const [createNewKey, setCreateNewKey] = useState(null)
+  // The word the first "Create new" was pressed for (K58).
+  const [firstWord, setFirstWord] = useState('')
+  // "Other names": every name as it stands in the form, the notes of the
+  // last Save, and the next key for a new one.
+  const [names, setNames] = useState(() => nameDrafts(item))
+  const [nameProblems, setNameProblems] = useState(() => new Map())
+  const [nextName, setNextName] = useState(1)
   // "Usually bought at" (supabase/021): for items and groups, not variants
   // (their group's store counts).
   const flow = useFlow()
@@ -113,6 +128,25 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     setForm((f) => ({ ...f, name, category_id: pick?.categoryId ?? '', subcategory_id: pick?.subcategoryId ?? '' }))
     setSuggested(Boolean(pick))
     if (pick) setCategoryError('')
+  }
+
+  const createNew = () => {
+    setCreateNewKey(exactKey(form.name))
+    setFirstWord((word) => word || form.name.trim())
+    setQuestion(null)
+  }
+
+  const changeDraft = (key, patch) => {
+    setNames((all) => all.map((draft) => (draft.key === key ? { ...draft, ...patch } : draft)))
+    setNameProblems(new Map())
+  }
+  const removeDraft = (key) => {
+    setNames((all) => all.filter((draft) => draft.key !== key))
+    setNameProblems(new Map())
+  }
+  const addDraft = () => {
+    setNames((all) => [...all, newNameDraft(`new-${nextName}`)])
+    setNextName((n) => n + 1)
   }
 
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }))
@@ -223,6 +257,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   }
 
   const oneTime = !isGroup && form.one_time
+  // Only a normal item being edited, never a group, a variant or a durable.
+  const showNames = namesReady && Boolean(item) && !isGroup && !form.group_id && !isDurable(form)
   const perPack = parseDecimal(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
@@ -267,14 +303,20 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     // item being edited never with itself, and an unchanged name not at all.
     const renamed = !item || exactKey(form.name) !== exactKey(item.name)
     if (homeItems && renamed && exactKey(form.name) !== createNewKey) {
-      const { exact, similar, more } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
-      if (exact) return setQuestion({ kind: 'exact', item: exact })
-      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, label: optionLabel(m.item) })), more })
+      const { exact, exactVia, similar, more } = matchHomeItems(form.name, homeItems, { exceptId: item?.id })
+      if (exact) return setQuestion({ kind: 'exact', item: exact, via: exactVia })
+      if (similar.length) return setQuestion({ kind: 'similar', options: similar.map((m) => ({ item: m.item, via: m.via, label: optionLabel(m.item, m.via) })), more })
+    }
+    if (showNames) {
+      const problems = draftProblems(names, { item, ownName: form.name, items: homeItems })
+      setNameProblems(problems)
+      if (problems.size) return
     }
     setSaving(true)
     setError('')
 
     const subcategoryId = form.subcategory_id || null
+    const namesChanged = showNames ? namesChange(item, names, purchaseUnitOptions(form.unit)[0]) : null
 
     const { error: saveError } = await onSave(
       {
@@ -304,7 +346,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           ? { price: parseDecimal(form.price), price_qty: parseDecimal(form.price_qty) || 1, price_unit: priceUnits.includes(form.price_unit) ? form.price_unit : form.unit }
           : { price: null, price_qty: null, price_unit: null }),
       },
-      { converted }
+      {
+        converted,
+        ...(namesChanged ? { names: namesChanged } : {}),
+        ...(!item && firstWord && !sameItemName(firstWord, form.name) ? { firstWord } : {}),
+      }
     )
     setSaving(false)
     // The toast explains; the editor stays open so Save can be pressed again.
@@ -336,9 +382,9 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           {question?.kind === 'exact' && (
             <SimilarItemsQuestion
               name={form.name}
-              title={`“${question.item.name}” is already in HOME`}
+              title={question.via ? takenNote(form.name, question.item) : `“${question.item.name}” is already in HOME`}
               options={[{ item: question.item, label: optionLabel(question.item) }]}
-              onPick={onGoTo}
+              onPick={(picked) => onGoTo(picked, form.name.trim())}
               className="mt-1.5"
             />
           )}
@@ -347,11 +393,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
               name={form.name}
               options={question.options}
               more={question.more}
-              onPick={onGoTo}
-              onCreateNew={() => {
-                setCreateNewKey(exactKey(form.name))
-                setQuestion(null)
-              }}
+              onPick={(picked) => onGoTo(picked, form.name.trim())}
+              onCreateNew={createNew}
               className="mt-1.5"
             />
           )}
@@ -621,6 +664,8 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1">An online store (e.g. Amazon) means you usually order it: on the SHOP list "Order online" comes first.</p>
           </div>
         )}
+
+        {showNames && <OtherNamesFields drafts={names} problems={nameProblems} stockUnit={form.unit} onChange={changeDraft} onRemove={removeDraft} onAdd={addDraft} />}
 
         <div>
           <Label>Notes</Label>

@@ -3,7 +3,8 @@
 // the cart.
 //
 // An entry for a group ("Chips & Snacks") is also found by the name or
-// brand of any of its variants (`variantNames`).
+// brand of any of its variants, and an entry of an item by the item's other
+// names (`variantNames`).
 export function matchesGrocerySearch(item, query, categoryName, variantNames = []) {
   if (!query) return true
   return (
@@ -15,7 +16,8 @@ export function matchesGrocerySearch(item, query, categoryName, variantNames = [
 
 export const matchingVariants = (names, query) => (query ? names.filter((n) => n.toLowerCase().includes(query)) : [])
 
-// "Lays paprika" when a group entry was found through its variant.
+// "Lays paprika" when a group entry was found through its variant, or an
+// entry through another name of its item.
 export function variantHint(item, query, variantNames) {
   if (!query || item.name.toLowerCase().includes(query)) return null
   const hit = matchingVariants(variantNames, query)

@@ -6,6 +6,7 @@ import { normName } from '../lib/grocery'
 import { normalizeName } from '../lib/categoryGuess'
 import { differsFromFirst, suggestBudgetCategories, suggestCategories, suggestCategory, worthRemembering } from '../lib/categorySuggest'
 import { categoryMemoryStore, pantryStore } from '../lib/stores'
+import { addOtherNames } from '../lib/itemNames'
 
 // Category suggestions for item names among `parents` (the categories a
 // form offers), and remembering what the user picks by hand — shared by
@@ -16,7 +17,7 @@ export function useCategorySuggestions({ parents, subsByParent, expenseCategorie
   const { rows: memoryRows } = categoryMemoryStore.useRows()
   const { rows: pantryItems } = pantryStore.useRows()
   const memory = useMemo(() => new Map(memoryRows.map((r) => [r.id, r])), [memoryRows])
-  const pantryByName = useMemo(() => new Map(pantryItems.map((p) => [normName(p.name), p])), [pantryItems])
+  const pantryByName = useMemo(() => addOtherNames(new Map(pantryItems.map((p) => [normName(p.name), p])), pantryItems), [pantryItems])
   const context = useMemo(
     () => ({ memory, pantryByName, parents, subsByParent, expenseCategories, budgetFor }),
     [memory, pantryByName, parents, subsByParent, expenseCategories, budgetFor]

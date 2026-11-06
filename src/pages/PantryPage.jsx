@@ -15,12 +15,15 @@ import { BudgetMappingView } from '../components/inventory/BudgetMappingView'
 import { WhereToRecord } from '../components/ui/WhereToRecord'
 import { EXPIRY_STYLES } from '../lib/inventoryStyles'
 import { cn } from '../lib/cn'
+import { anyNameIncludes } from '../lib/itemNames'
 import { SORTS, matchesExpiryDeep, matchesStatus, searchRank } from '../lib/pantryFilters'
 import { groupsReady, newVariantFields, variantOrder } from '../lib/groups'
 import { variantPurchase } from '../lib/groupShop'
 import { showToast } from '../lib/feedback'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useNewItemIds } from '../hooks/useNewItemIds'
+import { useItemNamesReady } from '../hooks/useItemNamesReady'
+import { keepTypedName, saveItemNames } from '../hooks/itemNameActions'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { daysUntil, expiryLabel, expiryState, restockReason, shownStatus, suggestedPurchase } from '../lib/inventory'
@@ -33,6 +36,7 @@ export function PantryPage() {
   const { categories, pantryParents: parents, parents: allParents, subsByParent, byId, categoryName, addCategory, addSubcategory } = useInventoryCategories()
   const navigate = useNavigate()
   const newIds = useNewItemIds(items)
+  const namesReady = useItemNamesReady(items) === true
   // Finished one-time items are listed apart, at the bottom (the group of
   // a finished variant stays in the grid).
   const { active: shownItems, finished: finishedItems } = useMemo(() => splitFinished(items), [items])
@@ -177,7 +181,20 @@ export function PantryPage() {
 
   const openGroupEditor = (next) => (ready ? setEditor(next) : setGroupNotice(true))
 
-  const handleSave = (fields, how) => (editor?.item ? updateItem(editor.item, fields, how) : addItem(fields))
+  // The names go first: when they are refused nothing else was saved. Saved
+  // again after a later failure they change nothing (save_item_names).
+  const handleSave = async (fields, { names, firstWord, ...how } = {}) => {
+    if (editor?.item) {
+      if (names) {
+        const { error } = await saveItemNames(names)
+        if (error) return { error }
+      }
+      return updateItem(editor.item, fields, how)
+    }
+    const result = await addItem(fields)
+    if (!result.error && firstWord) keepTypedName(firstWord, result.data.id)
+    return result
+  }
 
   return (
     <div className="space-y-4">
@@ -373,6 +390,7 @@ export function PantryPage() {
                     item={item}
                     isNew={newIds.has(item.id)}
                     groupName={groupById.get(item.group_id)?.name}
+                    namesReady={namesReady}
                     subcategoryName={item.subcategory_id ? byId.get(item.subcategory_id)?.name : null}
                     onAdjust={adjustStock}
                     onDiscard={discardExpired}
@@ -389,7 +407,7 @@ export function PantryPage() {
 
       {view === 'items' && (
         <FinishedItems
-          items={query ? finishedItems.filter((i) => i.name.toLowerCase().includes(query)) : finishedItems}
+          items={query ? finishedItems.filter((i) => anyNameIncludes(i, query)) : finishedItems}
           groupName={(id) => groupById.get(id)?.name}
           onNotOneTime={(item) => updateItem(item, { one_time: false })}
           onEdit={(i) => setEditor({ item: i })}
@@ -397,7 +415,7 @@ export function PantryPage() {
         />
       )}
 
-      {view === 'history' && <HistoryView />}
+      {view === 'history' && <HistoryView items={items} namesReady={namesReady} />}
 
       {view === 'budget' && <BudgetMappingView parents={categories.filter((c) => c.type === 'parent')} subsByParent={subsByParent} />}
 
@@ -420,6 +438,7 @@ export function PantryPage() {
           onClose={() => setEditor(null)}
           homeItems={items}
           onGoTo={(existing) => setEditor({ item: existing })}
+          namesReady={namesReady}
         />
       )}
     </div>

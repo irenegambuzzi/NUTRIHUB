@@ -23,6 +23,7 @@ import { entryIsOneTime } from '../lib/oneTime'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
 import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
+import { otherNames } from '../lib/itemNames'
 import { OnTheWay } from '../components/grocery/OnTheWay'
 import { OrderOnlineDialog } from '../components/grocery/OrderOnlineDialog'
 import { LinkedArrivedDialog } from '../components/expenses/LinkedArrivedDialog'
@@ -193,7 +194,8 @@ export function GroceryPage() {
   const query = search.trim().toLowerCase()
   // The names of a group's variants, so searching "Lays" finds a
   // group-level line; a variant's row is also found by its group's name.
-  const variantNamesOf = (g) => pantryFor(g)?.variants?.map((v) => v.name) ?? []
+  // An entry of an item is also found by the item's other names.
+  const variantNamesOf = (g) => [...(pantryFor(g)?.variants?.map((v) => v.name) ?? []), ...otherNames(pantryFor(g)).map((element) => element.name)]
   const searchNamesOf = (g) => [...variantNamesOf(g), groupOf(g)?.name].filter(Boolean)
   // Searching looks through every category, to buy and in the cart alike.
   const inCategory = query

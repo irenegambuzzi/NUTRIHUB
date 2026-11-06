@@ -23,7 +23,7 @@ const choice =
   'w-full min-h-9 px-3 py-1.5 rounded-xl text-left text-xs font-bold bg-[var(--color-surface-soft)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-primary)] disabled:opacity-50'
 
 // "Similar item in HOME:" with a button per item (`options`: [{ item,
-// label }]), "4 more — type more of the name" when more matched than
+// label, via }], `via`: the other name it was found by), "4 more — type more of the name" when more matched than
 // are shown (`more`) and, when `onCreateNew` is given, "Create new “…”".
 // `title` replaces the first line (the HOME editor's "… is already in HOME").
 export function SimilarItemsQuestion({ name, options, more = 0, onPick, onCreateNew = null, title = 'Similar item in HOME:', busy = false, scroll = true, className = '' }) {
@@ -33,8 +33,8 @@ export function SimilarItemsQuestion({ name, options, more = 0, onPick, onCreate
       <p className="text-[11px] text-yellow-300 flex items-start gap-1.5">
         <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {title}
       </p>
-      {options.map(({ item, label }) => (
-        <button key={item.id} type="button" disabled={busy} onClick={() => onPick(item)} className={choice}>
+      {options.map(({ item, label, via }) => (
+        <button key={item.id} type="button" disabled={busy} onClick={() => onPick(item, via)} className={choice}>
           {label}
         </button>
       ))}

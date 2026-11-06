@@ -8,9 +8,11 @@ import { RestockForm } from '../inventory/RestockForm'
 import { pickFields, usePantryItems } from '../../hooks/usePantryItems'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast, discardUnusedItem } from '../../hooks/useOrders'
+import { keepTypedName } from '../../hooks/itemNameActions'
 import { newVariantFields } from '../../lib/groups'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { arrivalPickLabel } from '../../lib/similarItems'
+import { anyNameIncludes } from '../../lib/itemNames'
 import { arrivalPrefill } from '../../lib/newItemUnit'
 import { localDateString } from '../../lib/week'
 
@@ -53,11 +55,13 @@ export function ArrivedDialog({ order, onClose }) {
   // New items made by a try whose second step failed: deleted again when
   // the dialog closes without them having arrived.
   const tried = useRef(new Set())
+  // The word "Add it to …" was pressed for (K58): { word, itemId }.
+  const typedWord = useRef(null)
 
   const plainItems = useMemo(() => items.filter((i) => !i.is_group && !i.group_id).sort((a, b) => a.name.localeCompare(b.name)), [items])
   const groups = useMemo(() => items.filter((i) => i.is_group).sort((a, b) => a.name.localeCompare(b.name)), [items])
   const query = search.trim().toLowerCase()
-  const matching = query ? plainItems.filter((i) => i.name.toLowerCase().includes(query)) : plainItems
+  const matching = query ? plainItems.filter((i) => anyNameIncludes(i, query)) : plainItems
   const item = plainItems.find((i) => i.id === itemId)
   const group = groups.find((g) => g.id === groupId)
   const variants = group ? items.filter((i) => i.group_id === group.id).sort((a, b) => a.name.localeCompare(b.name)) : []
@@ -88,7 +92,11 @@ export function ArrivedDialog({ order, onClose }) {
     return result
   }
 
-  const restockItem = ({ delta }) => arrive({ itemId: item.id, delta }, `Added ${formatPurchaseQuantity(delta, item.unit, item)} to "${item.name}"`)
+  const restockItem = async ({ delta }) => {
+    const result = await arrive({ itemId: item.id, delta }, `Added ${formatPurchaseQuantity(delta, item.unit, item)} to "${item.name}"`)
+    if (result.added && typedWord.current?.itemId === item.id) keepTypedName(typedWord.current.word, item.id)
+    return result
+  }
 
   const restockGroup = ({ delta, variantId, newName }) => {
     const variant = variantId ? variants.find((v) => v.id === variantId) : null
@@ -100,11 +108,14 @@ export function ArrivedDialog({ order, onClose }) {
 
   // "Create a new item": the item is made with stock 0, then the arrival
   // adds the "Current stock" typed (0 is allowed: it arrives with nothing
-  // added, plan 9J K6).
-  const createItem = (fields) => {
+  // added, plan 9J K6). `firstWord`: the word first typed before "Create
+  // new" (K58), a real name of the new item.
+  const createItem = async (fields, { firstWord = '' } = {}) => {
     const { current_stock: stock, ...rest } = pickFields(fields)
     const delta = Math.max(0, Math.round((Number(stock) || 0) * 100) / 100)
-    return arrive({ newItem: { id: newItemId.current, fields: rest }, delta }, `"${fields.name}" is now in HOME`)
+    const result = await arrive({ newItem: { id: newItemId.current, fields: rest }, delta }, `"${fields.name}" is now in HOME`)
+    if (result.added && firstWord) keepTypedName(firstWord, newItemId.current)
+    return result
   }
 
   const withoutStock = async () => {
@@ -115,9 +126,11 @@ export function ArrivedDialog({ order, onClose }) {
 
   // The new item's name is (like) one already in HOME (plan 9G safety
   // net, K12): its button adds the arrival to that item instead — a
-  // variant through its group — with the quantity asked as usual.
-  const pickExisting = (existing) => {
+  // variant through its group — with the quantity asked as usual. The word
+  // typed (`word`) becomes another name of that item once it has arrived.
+  const pickExisting = (existing, word) => {
     setSearch('')
+    typedWord.current = { word, itemId: existing.id }
     if (existing.is_group || existing.group_id) {
       setGroupId(existing.is_group ? existing.id : existing.group_id)
       setVariantStart(existing.is_group ? null : existing.id)
@@ -129,6 +142,7 @@ export function ArrivedDialog({ order, onClose }) {
   }
 
   const back = () => {
+    typedWord.current = null
     setMode(null)
     setItemId('')
     setGroupId('')
