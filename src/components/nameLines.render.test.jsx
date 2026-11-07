@@ -65,7 +65,8 @@ const crackers = item('crackers', 'Crackers', ['Tuc'])
 const yogurt = item('yogurt', 'Yogurt Pots', ['Yogurt Greco'], { category_id: 'dairy', current_stock: 3, expiry_date: '2020-01-01' })
 const tea = item('tea', 'Tea Tin', [], { category_id: 'beverages' })
 const group = item('g', 'Teas', [], { is_group: true })
-data.pantry = [chips, crackers, yogurt, tea, group]
+const trail = item('trail', 'Trail Mix', ['Frutta secca'], { unit: 'gr', current_stock: 200 })
+data.pantry = [chips, crackers, yogurt, tea, group, trail]
 
 const card = (id, name, pantryId, extra = {}) => ({ id, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, price_qty: 1, price_unit: 'pcs', payer: 'shared', category_id: 'snacks', in_cart: true, ...extra })
 
@@ -383,5 +384,242 @@ describe('Arrived under another name (K90): the pack field of the name', () => {
     arrived('Gourmet')
     expect(screen.getByLabelText('pcs per pack').value).toBe('6')
     expect(screen.queryByText('It will be saved as the usual size for next time.')).toBeNull()
+  })
+})
+
+// Follow-up of 07/11 (K98, K101).
+const chipOf = (cardName, name) => within(screen.getByRole('group', { name: `Names for ${cardName}` })).getByRole('button', { name })
+const totalOn = (cardName) => screen.getByLabelText(`Total for ${cardName}`).value
+const NUVOLE = { price: 1.49, quantity: 1, unit: 'pcs', source: 'trip', at: 2 }
+
+describe('K98: line 1 takes the price of its name, only while it was not typed by hand here', () => {
+  it('card €1.20 for 1 pcs, chip "Nuvole di drago" (last €1.49 per 1 pcs) → €1.49; quantity and unit unchanged; sent and saved on the card exactly like a typed €1.49', async () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE }
+    confirmScreen([card('k1', 'Chips & Snacks', 'chips', { price: 1.2 })])
+    expect(totalOn('Chips & Snacks')).toBe('1.20')
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('1.49')
+    expect(screen.getByLabelText('Quantity of Chips & Snacks').value).toBe('1')
+    expect(screen.getByLabelText('Unit of Chips & Snacks').value).toBe('pcs')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €1.49')
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    const filled = confirmPurchase.mock.calls[0][0].patches
+    expect(filled).toEqual([{ id: 'k1', patch: { price: 1.49 } }])
+    expect(sent().items[0]).toMatchObject({ name: 'Nuvole di drago', price: 1.49, price_qty: 1, price_unit: 'pcs', quantity: 1, unit: 'pcs', line_total: 1.49 })
+    // The same price typed by hand: the same patch, the same line.
+    const autoLine = sent().items[0]
+    cleanup()
+    confirmScreen([card('k1', 'Chips & Snacks', 'chips', { price: 1.2 })])
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    typeIn('Total for Chips & Snacks', '1,49')
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(2))
+    expect(confirmPurchase.mock.calls[1][0].patches).toEqual(filled)
+    expect(sent().items[0]).toEqual(autoLine)
+  })
+
+  it('2 pcs at €1.20 = €2.40 → chip → €2.98 (2 × 1.49); 3 pcs → €4.47 (it follows while filled in)', () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE }
+    confirmScreen([card('k2', 'Chips & Snacks', 'chips', { price: 1.2, quantity: 2 })])
+    expect(totalOn('Chips & Snacks')).toBe('2.40')
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('2.98')
+    expect(screen.getByLabelText('Quantity of Chips & Snacks').value).toBe('2')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €2.98')
+    typeIn('Quantity of Chips & Snacks', '3')
+    expect(totalOn('Chips & Snacks')).toBe('4.47')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €4.47')
+  })
+
+  it('a price typed by hand (€1.10) is never overwritten: chip, card name, chip again → €1.10', () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE }
+    confirmScreen([card('k3', 'Chips & Snacks', 'chips', { price: 1.2 })])
+    typeIn('Total for Chips & Snacks', '1,10')
+    fireEvent.blur(screen.getByLabelText('Total for Chips & Snacks'))
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('1.10')
+    fireEvent.click(chipOf('Chips & Snacks', 'Chips & Snacks'))
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('1.10')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €1.10')
+  })
+
+  it('back on the card\'s name (chip or emptied), or the item\'s own name without a price → the price of the opening (€1.35); the item\'s own name with a price (€2.10) → that price', () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE }
+    confirmScreen([card('k4', 'Corn Snack', 'chips', { price: 1.35 })])
+    fireEvent.click(chipOf('Corn Snack', 'Nuvole di drago'))
+    expect(totalOn('Corn Snack')).toBe('1.49')
+    fireEvent.click(chipOf('Corn Snack', 'Corn Snack'))
+    expect(totalOn('Corn Snack')).toBe('1.35')
+    fireEvent.click(chipOf('Corn Snack', 'Nuvole di drago'))
+    typeIn('Name of Corn Snack', '')
+    expect(totalOn('Corn Snack')).toBe('1.35')
+    fireEvent.click(chipOf('Corn Snack', 'Nuvole di drago'))
+    fireEvent.click(chipOf('Corn Snack', 'Chips & Snacks'))
+    expect(totalOn('Corn Snack')).toBe('1.35')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €1.35')
+    cleanup()
+    data.lastPrices = { 'Chips & Snacks': { price: 2.1, quantity: 1, unit: 'pcs', source: 'pantry', at: 1 } }
+    confirmScreen([card('k4', 'Corn Snack', 'chips', { price: 1.35 })])
+    fireEvent.click(chipOf('Corn Snack', 'Chips & Snacks'))
+    expect(totalOn('Corn Snack')).toBe('2.10')
+  })
+
+  it('a name with no price leaves the total as it is: €1.20 stays; after a fill €1.49 stays', () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE }
+    confirmScreen([card('k5', 'Chips & Snacks', 'chips', { price: 1.2 })])
+    typeIn('Name of Chips & Snacks', 'Patatine Lime')
+    expect(totalOn('Chips & Snacks')).toBe('1.20')
+    fireEvent.click(chipOf('Chips & Snacks', 'Corn Snack'))
+    expect(totalOn('Chips & Snacks')).toBe('1.20')
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    typeIn('Name of Chips & Snacks', 'Patatine Lime')
+    expect(totalOn('Chips & Snacks')).toBe('1.49')
+  })
+
+  it('a price that can\'t be converted (€5.40 per pack, line in pcs) leaves €1.20; kg → gr converts: 500 gr at €3.00, "Frutta secca" €8.00 per 1 kg → €4.00, still 500 gr', () => {
+    data.lastPrices = { 'Nuvole di drago': { price: 5.4, quantity: 1, unit: 'pack', source: 'trip', at: 2 }, 'Frutta secca': { price: 8, quantity: 1, unit: 'kg', source: 'trip', at: 2 } }
+    confirmScreen([card('k6', 'Chips & Snacks', 'chips', { price: 1.2 }), card('t1', 'Trail Mix', 'trail', { quantity: 500, unit: 'gr', price: 3, price_qty: 500, price_unit: 'gr' })])
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('1.20')
+    expect(totalOn('Trail Mix')).toBe('3.00')
+    fireEvent.click(chipOf('Trail Mix', 'Frutta secca'))
+    expect(totalOn('Trail Mix')).toBe('4.00')
+    expect(screen.getByLabelText('Quantity of Trail Mix').value).toBe('500')
+    expect(screen.getByLabelText('Unit of Trail Mix').value).toBe('gr')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €5.20')
+  })
+
+  it('lines 2…N are unchanged: line 2 Corn Snack €1.35 (its own last price), line 3 €0.80 typed; line 1 → Nuvole €1.49; 1.49 + 1.35 + 0.80 = €3.64', async () => {
+    data.lastPrices = { 'Nuvole di drago': NUVOLE, 'Corn Snack': { price: 2.7, quantity: 2, unit: 'pcs', source: 'trip', at: 3 } }
+    confirmScreen([card('k7', 'Chips & Snacks', 'chips', { price: 1.2, payer: P2 })])
+    fireEvent.click(screen.getByRole('button', { name: 'Add another name' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Names for line 2 of Chips & Snacks' })).getByRole('button', { name: 'Corn Snack' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add another name' }))
+    typeIn('Name of line 3 of Chips & Snacks', 'Patatine Lime')
+    typeIn('Total for line 3 of Chips & Snacks', '0,80')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €3.35')
+    fireEvent.click(chipOf('Chips & Snacks', 'Nuvole di drago'))
+    expect(totalOn('Chips & Snacks')).toBe('1.49')
+    expect(screen.getByLabelText('Total for line 2 of Chips & Snacks').value).toBe('1.35')
+    expect(screen.getByLabelText('Total for line 3 of Chips & Snacks').value).toBe('0,80')
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €3.64')
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    expect(sent().items.map((l) => [l.name, l.line_total, l.payer])).toEqual([
+      ['Nuvole di drago', 1.49, P2],
+      ['Corn Snack', 1.35, P2],
+      ['Patatine Lime', 0.8, P2],
+    ])
+  })
+})
+
+describe('K101: a new name only once in a purchase', () => {
+  const TWICE = (name) => `"${name}" is also another line of this purchase — use it only once.`
+  const lineGroup = (n, cardName) => screen.getByRole('group', { name: `Line ${n} of ${cardName}` })
+  const addLine = (index = 0) => fireEvent.click(screen.getAllByRole('button', { name: 'Add another name' })[index])
+  const locked = () => {
+    expect(confirmButton().disabled).toBe(true)
+    expect(screen.getByText('Answer the question above to confirm.')).toBeTruthy()
+  }
+  const free = () => {
+    expect(screen.queryByText(/is also another line of this purchase/)).toBeNull()
+    expect(confirmButton().disabled).toBe(false)
+  }
+
+  it('(1) the name of another card that makes a new HOME item: refused under the name line, never on that card; Confirm locked; another name or × frees it', () => {
+    const cart = [card('p1', 'Patatine Paprika', null, { price: 1.8 }), card('c1', 'Chips & Snacks', 'chips', { price: 1.2 })]
+    confirmScreen(cart)
+    addLine(1)
+    typeIn('Name of line 2 of Chips & Snacks', 'patatine paprika')
+    expect(within(lineGroup(2, 'Chips & Snacks')).getByText(TWICE('patatine paprika'))).toBeTruthy()
+    expect(screen.getAllByText(/is also another line of this purchase/)).toHaveLength(1)
+    expect(within(lineGroup(2, 'Chips & Snacks')).queryByText('New name of Chips & Snacks — it will be remembered.')).toBeNull()
+    locked()
+    fireEvent.click(confirmButton())
+    expect(confirmPurchase).not.toHaveBeenCalled()
+    typeIn('Name of line 2 of Chips & Snacks', 'Patatine Lime')
+    free()
+    typeIn('Name of line 2 of Chips & Snacks', 'Patatine Paprika')
+    locked()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove line 2 of Chips & Snacks' }))
+    free()
+    expect(confirmButton().textContent.trim()).toBe('Confirm purchase · €3.00')
+  })
+
+  it('(1) also on line 1, and with the new card after it; untick the new card ("Not in this trip") and the name is free', () => {
+    confirmScreen([card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), card('p2', 'Popcorn Caramel', null, { price: 2.5 })], { splitTrips: true })
+    typeIn('Name of Chips & Snacks', 'Popcorn Caramel')
+    const field = screen.getByLabelText('Name of Chips & Snacks').closest('.space-y-1')
+    expect(within(field).getByText(TWICE('Popcorn Caramel'))).toBeTruthy()
+    expect(screen.getAllByText(/is also another line of this purchase/)).toHaveLength(1)
+    locked()
+    fireEvent.click(screen.getAllByRole('checkbox')[1])
+    free()
+  })
+
+  it('(2) the same new name on two cards: refused on the later one in screen order; renaming or removing a line frees it', () => {
+    confirmScreen([card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), card('r1', 'Crackers', 'crackers', { price: 2.1 })])
+    addLine(0)
+    typeIn('Name of line 2 of Chips & Snacks', 'Pop Paprika')
+    addLine(1)
+    typeIn('Name of line 2 of Crackers', 'POP PAPRIKA ')
+    expect(within(lineGroup(2, 'Crackers')).getByText(TWICE('POP PAPRIKA'))).toBeTruthy()
+    expect(within(lineGroup(2, 'Chips & Snacks')).getByText('New name of Chips & Snacks — it will be remembered.')).toBeTruthy()
+    expect(screen.getAllByText(/is also another line of this purchase/)).toHaveLength(1)
+    locked()
+    typeIn('Name of line 2 of Crackers', 'Pop Lime')
+    free()
+    typeIn('Name of line 2 of Crackers', 'Pop Paprika')
+    locked()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove line 2 of Chips & Snacks' }))
+    free()
+    expect(within(lineGroup(2, 'Crackers')).getByText('New name of Crackers — it will be remembered.')).toBeTruthy()
+  })
+
+  it('(2) the cards the other way round: the refusal moves to the later card', () => {
+    confirmScreen([card('r1', 'Crackers', 'crackers', { price: 2.1 }), card('c1', 'Chips & Snacks', 'chips', { price: 1.2 })])
+    addLine(1)
+    typeIn('Name of line 2 of Chips & Snacks', 'Pop Paprika')
+    addLine(0)
+    typeIn('Name of line 2 of Crackers', 'Pop Paprika')
+    expect(within(lineGroup(2, 'Chips & Snacks')).getByText(TWICE('Pop Paprika'))).toBeTruthy()
+    expect(within(lineGroup(2, 'Crackers')).queryByText(/is also another line/)).toBeNull()
+    locked()
+  })
+
+  it('different names: no refusal; the same name twice in ONE card: no refusal, both lines sent with add_name (as built)', async () => {
+    confirmScreen([card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), card('r1', 'Crackers', 'crackers', { price: 2.1 })])
+    addLine(0)
+    typeIn('Name of line 2 of Chips & Snacks', 'Pop Paprika')
+    addLine(1)
+    typeIn('Name of line 2 of Crackers', 'Tuc Rosmarino')
+    free()
+    addLine(0)
+    typeIn('Name of line 3 of Chips & Snacks', 'pop paprika')
+    typeIn('Total for line 3 of Chips & Snacks', '0,90')
+    free()
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    expect(sent().items.map((l) => [l.grocery_item_id, l.name, Boolean(l.add_name), l.line_total])).toEqual([
+      ['c1', 'Chips & Snacks', false, 1.2],
+      ['c1', 'Pop Paprika', true, 0],
+      ['c1', 'pop paprika', true, 0.9],
+      ['r1', 'Crackers', false, 2.1],
+      ['r1', 'Tuc Rosmarino', true, 0],
+    ])
+  })
+
+  it('K94 stays for a name HOME has: "Corn Snack" on Crackers, "Tuc" on Chips', () => {
+    confirmScreen([card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), card('r1', 'Crackers', 'crackers', { price: 2.1 })])
+    addLine(1)
+    typeIn('Name of line 2 of Crackers', 'Corn Snack')
+    expect(within(lineGroup(2, 'Crackers')).getByText('"Corn Snack" is already a name of "Chips & Snacks" in HOME.')).toBeTruthy()
+    addLine(0)
+    typeIn('Name of line 2 of Chips & Snacks', 'Tuc')
+    expect(within(lineGroup(2, 'Chips & Snacks')).getByText('"Tuc" is already a name of "Crackers" in HOME.')).toBeTruthy()
+    expect(screen.queryByText(/is also another line of this purchase/)).toBeNull()
+    expect(confirmButton().disabled).toBe(true)
   })
 })

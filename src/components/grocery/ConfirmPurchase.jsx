@@ -20,8 +20,10 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { cardStock, editPatch, editedItem, emptyNameLine, expiryOncePerItem, laterNameLine, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
+import { cardStock, editPatch, editedItem, emptyNameLine, expiryOncePerItem, laterNameLine, namePriceTotal, newNameOnce, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
 import { cardTitle, nameChips, otherNames } from '../../lib/itemNames'
+import { exactKey } from '../../lib/similarItems'
+import { useLastPrice } from '../../hooks/useLastPrice'
 import { durableLookalike, durableLookalikeText } from '../../lib/durable'
 import { useLastBoughtNames } from '../../hooks/useLastBoughtNames'
 import { variantOrder } from '../../lib/groups'
@@ -80,6 +82,9 @@ import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../l
 // 2…N exist only on this screen (K52) and are paid like line 1 (K92).
 // Expired stock is asked about once per item (K71). `homeCategories` ({
 // parents, subsByParent }) lets a new name that looks durable be pointed out.
+// Line 1 under another name takes that name's last price (K98) until its
+// total is typed by hand on this screen; a new name is used once per
+// purchase (K101).
 export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits, namesReady = false, homeCategories = null }) {
   const { confirmPurchase } = usePurchase()
   const partsFound = useExpensePartsReady()
@@ -158,6 +163,34 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     setEdits(editsRef.current)
   }
 
+  // K98: line 1's total set from the price of its name (card ids), the cards
+  // whose total was typed by hand here (never filled again), and each card's
+  // price as the screen opened, to go back to.
+  const filledPrice = useRef(new Set())
+  const [typedPrice, setTypedPrice] = useState(() => new Set())
+  const priceFields = (item) => ({ price: item.price ?? null, price_qty: item.price_qty ?? null, price_unit: item.price_unit ?? null })
+  const [openingPrice] = useState(() => new Map(cartItems.map((item) => [item.id, priceFields(item)])))
+  const fillPrice = (id, total) => {
+    if (typedPrice.has(id) || (filledPrice.current.has(id) && editsRef.current[id]?.total === total)) return
+    filledPrice.current.add(id)
+    edit(id, { total })
+  }
+  // Back to the price of the opening: the card's own when it still has it,
+  // else that price for the quantity and unit of now.
+  const restorePrice = (item) => {
+    if (typedPrice.has(item.id) || !filledPrice.current.has(item.id)) return
+    const stored = cartItems.find((i) => i.id === item.id) ?? item
+    const opening = openingPrice.get(item.id) ?? priceFields(stored)
+    const same = Object.entries(opening).every(([k, v]) => (stored[k] ?? null) === v)
+    const total = same ? null : totalOf({ ...item, ...opening })
+    if (total === null) filledPrice.current.delete(item.id)
+    if ((editsRef.current[item.id]?.total ?? null) !== total) edit(item.id, { total })
+  }
+  const typePrice = (id) => {
+    filledPrice.current.delete(id)
+    if (!typedPrice.has(id)) setTypedPrice((all) => new Set(all).add(id))
+  }
+
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
   const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item), unitsReady: unitsKnown, typedName: namesReady ? typedNames[item.id] ?? item.name : undefined })
   // The lines of this trip: each card's own line, then its name lines.
@@ -165,7 +198,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const flat = cards
       .filter((l) => inTrip(l.item))
       .flatMap((first) => [first, ...(first.takesNames ? (nameLines[first.item.id] ?? []).map((draft) => laterNameLine(first, draft, pantryItems, answers[`${first.item.id}:${draft.key}`])) : [])])
-    return namesReady ? expiryOncePerItem(flat) : flat
+    return namesReady ? newNameOnce(expiryOncePerItem(flat)) : flat
   }
   const allLines = itemsFor(edits).map(lineFor)
   // A group's lines together in one card, one line per variant (each its
@@ -308,6 +341,10 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               onDiscount: (id, next) => setDiscounts((all) => ({ ...all, [id]: next })),
               onPack: (id, unit, text) => answer(id, { pack: { text, unit } }),
               durableTextOf,
+              priceTyped: typedPrice.has(line.item.id),
+              onFillPrice: (total) => fillPrice(line.item.id, total),
+              onRestorePrice: () => restorePrice(line.item),
+              onTypePrice: () => typePrice(line.item.id),
             }
           : null
       }
@@ -530,6 +567,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
 
   // A total typed here becomes the price for exactly this quantity.
   const changeTotal = (text) => {
+    names?.onTypePrice()
     setTotalText(text)
     const amount = Math.round(parseDecimal(text) * 100) / 100
     if (amount >= 0) onEdit({ total: amount })
@@ -608,6 +646,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
       {!item.category_id && !pantry && !line.durable && <p className="text-[11px] text-[var(--color-text-muted)]">Is this a consumable? Durable items don't go into HOME stock.</p>}
       {fixing && !item.category_id && <FixCategory item={item} onUpdateCategory={onUpdateCategory} onDone={() => setFixing(false)} />}
 
+      {names && <FirstLinePrice item={item} typed={names.typed} naming={line.naming} priceTyped={names.priceTyped} onFill={names.onFillPrice} onRestore={names.onRestorePrice} />}
       {names && (
         <NameField
           value={names.typed}
@@ -773,6 +812,26 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
       )}
     </div>
   )
+}
+
+// K98: line 1 changed to a name with a last price (report F) takes that
+// price for its own quantity and unit, never changing them; a price that
+// can't be converted, or a name without one, leaves the total as it is.
+// Back on the card's name (or the item's own name without a price) the
+// total is the one of the opening. A total typed by hand on this screen
+// ends it. Shows nothing.
+function FirstLinePrice({ item, typed, naming, priceTyped, onFill, onRestore }) {
+  const onCard = exactKey(typed.trim() || item.name) === exactKey(item.name)
+  const named = !onCard && ['own', 'known', 'new'].includes(naming?.kind)
+  const last = useLastPrice(named ? naming.name : '')
+  const filled = named ? namePriceTotal(last, item.quantity, item.unit) : null
+  const action = priceTyped ? '' : onCard ? 'restore' : filled !== null ? `fill:${filled}` : named && naming.kind === 'own' ? 'restore' : ''
+  useEffect(() => {
+    if (action === 'restore') onRestore()
+    else if (action.startsWith('fill:')) onFill(filled)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action, item.quantity, item.unit])
+  return null
 }
 
 // Differences between the receipt and the cart, with a suggestion each —

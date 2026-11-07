@@ -4884,6 +4884,35 @@ update, also after stage 2.
   ("Purchase confirmed · 3 items · €3.87", "Undo this purchase?", the Confirm
   screen's "{n} item · {date}"). The 9M notes after Reopen / Undo: one per
   ITEM, its lines added up; a line with `merged_from` is stock only.
+- **K97** Line 1's name changed on "Confirm purchase" is NOT saved as the SHOP
+  card's name; after Reopen the card comes back with its old name (as built).
+- **K98** Line 1's name changed (chip or typing) to a name with a suggested
+  price (K55 order): line 1's price is filled from that name, ONLY while line
+  1's price has not been changed by hand on this Confirm screen; once typed by
+  hand there, it is never overwritten. The TOTAL for line 1's current quantity
+  and unit, converted like lines 2…N (last €1.49 per 1 pcs, line 1 = 2 pcs →
+  €2.98). Line 1's quantity and unit never change. A price that can't be
+  converted to line 1's unit, or a name with no price: the price stays as it
+  is. Back on the card's own name (or the item's own name with no price of its
+  own), still untouched by hand: the price of when the screen opened. An
+  auto-filled price is saved on the card exactly like a price typed there.
+- **K99** A name with no pack size, bought in the item's usual size and left at
+  that value: nothing is saved on the name (as built).
+- **K100** Lines 2…N of a NEW item: their "pcs per pack" starts empty and is
+  required (as built).
+- **K101** One new name only once in a purchase. A name line is refused, under
+  that line, with `"{name}" is also another line of this purchase — use it only
+  once.`, and "Confirm purchase · €…" is locked (bottom: "Answer the question
+  above to confirm.") until the name is changed or the line removed. Compared
+  with exactKey. (1) The name equals the name of ANOTHER card of this purchase
+  that is not linked to a HOME item ("new in the pantry"): new card "Patatine
+  Paprika" + card "Chips & Snacks" line 2 "Patatine Paprika"; the refusal is on
+  the name line, never on the other card. (2) The same new name (no name of
+  any HOME item) on name lines of two DIFFERENT cards: the later line in screen
+  order is refused. A name of an existing HOME item stays K94. Two lines of the
+  same name in the SAME card are not K101 (as built; see the follow-up below).
+- **K102** An old card whose name is not one of its item's names: line 1 is
+  sent without add_name (as built).
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5378,6 +5407,8 @@ another name" now also expects `name_pack`, K60), `hooks/reopenNotes.test.js`
 **Kata ragu (07/11 stage 3, tanya Zidane).** Built the safe way until
 answered.
 
+(Answered 07/11: 1 → K97, 2 → K98, 3 → K99, 4 → K100, 5 → K101, 6 → K102.)
+
 1. Line 1's name is not saved on the SHOP card (it is sent on the line;
    K52 saves only quantity, unit, price, payer). Card "Chips & Snacks", line 1
    changed to "Corn Snack", Confirm → expense "Corn Snack"; Reopen → the card
@@ -5406,6 +5437,97 @@ answered.
    to an item renamed since) sends that word without add_name. Card "Snack
    mix" linked to Chips & Snacks, 2 lines → expense "Snack mix", not
    remembered. Options: (a) as built; (b) add it as a new name. Suggestion: (a).
+
+### Stage 3 follow-up as built (07/11; K98 and K101, code and tests only, no SQL)
+
+No SQL, no new column, no change to any 032 function, no new browser storage,
+no new offline queue. K97, K99, K100 and K102 stay as built.
+
+**K98** (`grocery/ConfirmPurchase.jsx` `FirstLinePrice`, `lib/purchase.js`
+`namePriceTotal`). Only on a card with name lines (`namesReady`). Line 1's
+name ≠ the card's name (exactKey; emptied counts as the card's) and it is the
+item's own name, one of its names or a new name: `useLastPrice(name)` (report
+F) → `namePriceTotal(last, quantity, unit)` = `lineTotal` with that price,
+converting only the same unit, kg/gr and L/ml (no pack sizes). A total → the
+screen's edit `{ total }`, exactly as if it had been typed (the field
+"Total for {card}", visible only as "€" and "0.00"); it follows a later
+quantity or unit of line 1 while filled in. No price or no conversion → the
+total stays as it is. Back on the card's name, or the item's own name with no
+price: the opening price (the card's own price fields as the screen opened;
+when the card still has them the edit is simply dropped, else that price for
+the quantity and unit of now). Typing in "Total for {card}" ends it for that
+card on this screen (`typedPrice`). Quantity and unit are never changed. What
+is saved: the same `patches` (`editPatch`) and the same line as a typed
+price; lines 2…N untouched.
+
+**K101** (`lib/purchase.js` `newNameOnce`, `lib/itemNames.js`
+`NAME_TWICE_TEXT`). Run on the trip's lines after `expiryOncePerItem`
+(`tripLinesOf`, also at Confirm). Only lines of kind `new` (they would send
+`add_name`): (1) its name equals (exactKey) a card of this trip with `isNew`
+other than its own card; (2) a line of another card added that name earlier
+in screen order (cards with name lines are never in a group card, so screen
+order = cart order). The line gets `naming.problem` = `"{name}" is also another
+line of this purchase — use it only once.` ({name} as typed, trimmed), no "New
+name of …" note, and `ready: false`; it shows under that line's "Name" field
+(line 1: "Name of {card}"; line n: "Name of line {n} of {card}"), the card
+gets the amber border, and the bottom says "Answer the question above to
+confirm." with "Confirm purchase · €…" disabled. A card left out of the trip
+("Not in this trip — stays in the cart") does not count. K94 is checked first
+and stays as it is.
+
+**Proven with the real 032 (PGlite), before this fix:**
+
+- Case (1), the named card first: saved; the name went on the item and the
+  new card's stock went to that item too, no new item (Chips Box F1 2 → 5 pcs).
+- Case (1), the new card first: 032 refused the whole purchase (`"Paprika F2"
+  is already a name of "Paprika F2" in HOME — check the line and save again.`),
+  nothing saved.
+- Case (2): 032 refused the whole purchase (`"lime f3" is already a name of
+  "Chips Box F3" in HOME — check the line and save again.`), nothing saved.
+- The same new name twice in ONE card (not K101, unchanged): saved; the name is
+  added once (by that purchase), 2 + 1 + 1 + 1 = 5 pcs, three expenses (€1.20,
+  €0.90, €0.80), three history rows each with its line's spelling; Reopen → 2
+  pcs and the name gone.
+
+After the fix such a line is never ready, so Confirm never sends it; renamed,
+the same purchase saves both items (Paprika F1 made with 1 pcs, the item 2 → 4).
+
+**Files.** Changed: `lib/purchase.js`, `lib/itemNames.js`,
+`grocery/ConfirmPurchase.jsx`; tests `components/nameLines.render.test.jsx`,
+`lib/nameLines.test.js`, `supabase/migrations.test.js`; this plan.
+
+**Tests: 2387 → 2407 (127 files, unchanged).** `nameLines.render.test.jsx`
+(+13: K98 €1.20 → €1.49 and the same patch and line as typed €1.49; 2 pcs
+€2.40 → €2.98, 3 pcs → €4.47; typed €1.10 stays; back to the card's name
+(chip, emptied) and the item's own name without a price → €1.35, with a price
+→ €2.10; no price → unchanged, also after a fill; €5.40 per pack → unchanged;
+500 gr, €8.00 per kg → €4.00, total €5.20; lines 2…N 1.49 + 1.35 + 0.80 =
+€3.64. K101 (1) on line 2 and line 1, either order, × and renaming free it,
+"Not in this trip" frees it; (2) the later card either order; different
+names; the same name twice in one card sent with add_name twice; K94 stays);
+`nameLines.test.js` (+3: `namePriceTotal`, `newNameOnce` both cases);
+`migrations.test.js` block "032" → "stage 3" → "follow-up K101" (+4, PGlite:
+the four results above, and the renamed purchase).
+
+**Kata ragu (07/11 stage 3 follow-up, tanya Zidane).** Built the safe way
+until answered.
+
+1. When a filled price reaches the card. A price typed in "Total for {card}"
+   is written to the SHOP card when the field is left; a filled one only at
+   Confirm (or when the quantity or unit field of line 1 is left, as for any
+   edit). "Back" without confirming: the card keeps €1.20. Options: (a) as
+   built; (b) write it to the card at once. Suggestion: (a).
+2. After Confirm the card carries the name's price, so Reopen brings back
+   "Chips & Snacks" (K97) at €1.49 (Nuvole's), exactly like a typed €1.49
+   today. Options: (a) as built (the same as typed); (b) never save line 1's
+   price on the card when its name was changed. Suggestion: (a).
+3. No conversion through a pack size. Nuvole di drago last "€5.40 per 1 pack"
+   (6 pcs in a pack on the name), line 1 in pcs → €1.20 stays. Options: (a) as
+   built (the same unit, kg/gr, L/ml only); (b) also through the name's pack
+   size (€0.90 per pcs). Suggestion: (a).
+4. A filled price follows line 1's quantity (2 pcs €2.98 → 3 pcs €4.47), as
+   lines 2…N do; the decision did not say. Options: (a) as built; (b) keep the
+   total of the moment of filling. Suggestion: (a).
 
 **Notes for later stages.**
 

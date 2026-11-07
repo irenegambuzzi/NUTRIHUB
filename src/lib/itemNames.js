@@ -140,6 +140,8 @@ export function cardTitle(entry, item) {
 
 export const NEW_NAME_LINE_TEXT = (item) => `New name of ${item.name} — it will be remembered.`
 export const EMPTY_NAME_TEXT = 'Type the name of this line.'
+// K101: a new name used on two lines of one purchase.
+export const NAME_TWICE_TEXT = (name) => `"${String(name ?? '').trim()}" is also another line of this purchase — use it only once.`
 
 // What the name on a purchase line means for its item (K50, K59, K94).
 // `item`: the HOME item, or for a new one { name } (the card's); `cardName`:

@@ -15,7 +15,7 @@ const { normalizeName } = await import('../src/lib/categoryGuess.js')
 const { budgetCategoryFor, pastPurchaseChanges, purchasedItemsByExpense } = await import('../src/lib/budgetMap.js')
 const { LIVE_MONEY_CATEGORIES } = await import('../src/data/moneyCategories.fixture.js')
 // For 026: Confirm purchase again after Reopen, with the app's own code.
-const { confirmationPayload, emptyNameLine, expiryOncePerItem, laterNameLine, purchaseLine, purchasePricing } = await import('../src/lib/purchase.js')
+const { confirmationPayload, emptyNameLine, expiryOncePerItem, laterNameLine, newNameOnce, purchaseLine, purchasePricing } = await import('../src/lib/purchase.js')
 const { cardCount } = await import('../src/lib/trips.js')
 const { DURABLE_MONEY_CATEGORY_IDS, WORK_CATEGORY_ID } = await import('../src/data/constants.js')
 const { MONEY_CATEGORY_IDS_026 } = await import('../src/data/budgetKeywords.js')
@@ -6792,6 +6792,98 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       expect((await namesOf(fx, item))[0]).toMatchObject({ packaging_unit: null, quantity_per_pack: null })
       // `was` is not the list of now: refused, nothing changed.
       expect(await fails(() => saveNames(fx, item, { edit: [{ name: 'Felix S3', packaging_unit: 'pack', quantity_per_pack: 4 }] }, []))).toBe('"Cat Pouches S3" changed meanwhile (on the other phone?) — open it again. Nothing was changed.')
+    })
+    // Follow-up of 07/11 (K101): what the real 032 did with such a payload
+    // before the fix, and that the app now never sends it.
+    describe('follow-up K101: one new name once per purchase', () => {
+      const TWICE = (name) => `"${name}" is also another line of this purchase — use it only once.`
+      const firstLine = (entry, name, itemId, price, home) => purchaseLine(entryRow(entry, name, itemId, { price }), home, {}, { typedName: name })
+
+      it('(1) before the fix, the named card first: saved, the new name added to the item and the new card\'s stock went there too (no new item); now refused under the line; renamed it saves both', async () => {
+        const item = await addItem(fx, 'Chips Box F1', 'pcs', 2)
+        const chipsEntry = await addEntry(fx, 'Chips Box F1', { pantry: item, price: 1.2 })
+        const newEntry = await addEntry(fx, 'Paprika F1', { price: 1.8 })
+        const home = [await appItem(item)]
+        const first = firstLine(chipsEntry, 'Chips Box F1', item, 1.2, home)
+        const lines = [first, laterNameLine(first, nameDraft(1, 'Paprika F1', '1.6'), home), firstLine(newEntry, 'Paprika F1', null, 1.8, home)]
+        expect(lines.every((l) => l.ready)).toBe(true)
+        const trip = next()
+        expect(Number((await confirm(fx, appPayload(trip, lines))).total)).toBe(4.6)
+        expect(await stockOf(fx, item)).toBe(5)
+        expect(await count(fx, 'pantry_items', `name = 'Paprika F1'`)).toBe(0)
+        expect((await namesOf(fx, item)).map((n) => n.name)).toEqual(['Paprika F1'])
+        expect(await reopen(fx, trip)).toBe(3)
+        expect(await stockOf(fx, item)).toBe(2)
+        // Now: the name line is not ready, so Confirm never sends it.
+        const now = newNameOnce(lines)
+        expect(now.map((l) => [l.ready, l.naming.problem])).toEqual([[true, ''], [false, TWICE('Paprika F1')], [true, '']])
+        const renamed = newNameOnce([first, laterNameLine(first, nameDraft(1, 'Paprika Lime F1', '1.6'), home), lines[2]])
+        expect(renamed.every((l) => l.ready)).toBe(true)
+        await confirm(fx, appPayload(next(), renamed))
+        expect(await stockOf(fx, item)).toBe(4)
+        expect(await fieldsOf(fx, (await row(`select id from pantry_items where name = 'Paprika F1'`)).id)).toMatchObject({ stock: 1, unit: 'pcs', price: 1.8 })
+        expect((await namesOf(fx, item)).map((n) => n.name)).toEqual(['Paprika Lime F1'])
+      })
+
+      it('(1) before the fix, the new card first: 032 refused the whole purchase, nothing saved; now refused on the line before sending', async () => {
+        const item = await addItem(fx, 'Chips Box F2', 'pcs', 2)
+        const chipsEntry = await addEntry(fx, 'Chips Box F2', { pantry: item, price: 1.2 })
+        const newEntry = await addEntry(fx, 'Paprika F2', { price: 1.8 })
+        const home = [await appItem(item)]
+        const first = firstLine(chipsEntry, 'Chips Box F2', item, 1.2, home)
+        const lines = [firstLine(newEntry, 'Paprika F2', null, 1.8, home), first, laterNameLine(first, nameDraft(1, 'Paprika F2', '1.6'), home)]
+        expect(lines.every((l) => l.ready)).toBe(true)
+        const trip = next()
+        expect(await fails(() => confirm(fx, appPayload(trip, lines)))).toBe('"Paprika F2" is already a name of "Paprika F2" in HOME — check the line and save again.')
+        expect(await stockOf(fx, item)).toBe(2)
+        expect(await count(fx, 'pantry_items', `name = 'Paprika F2'`)).toBe(0)
+        expect(await count(fx, 'shopping_trips', 'id = $1', [trip])).toBe(0)
+        expect(await namesOf(fx, item)).toEqual([])
+        expect(newNameOnce(lines).map((l) => l.ready)).toEqual([true, true, false])
+      })
+
+      it('(2) before the fix, one new name on two cards of two items, at a store: 032 refused the whole purchase; now the later line is refused', async () => {
+        const shopId = (await row(`insert into shops (name) values ('Store F3') returning id`)).id
+        const a = await addItem(fx, 'Chips Box F3', 'pcs', 1)
+        const b = await addItem(fx, 'Crackers F3', 'pcs', 4)
+        const ea = await addEntry(fx, 'Chips Box F3', { pantry: a, price: 1.25 })
+        const eb = await addEntry(fx, 'Crackers F3', { pantry: b, price: 2.3 })
+        const home = [await appItem(a), await appItem(b)]
+        const fa = firstLine(ea, 'Chips Box F3', a, 1.25, home)
+        const fb = firstLine(eb, 'Crackers F3', b, 2.3, home)
+        const lines = [fa, laterNameLine(fa, nameDraft(1, 'Lime F3', '0.95'), home), fb, laterNameLine(fb, nameDraft(1, 'lime f3', '1.05'), home)]
+        expect(lines.every((l) => l.ready)).toBe(true)
+        const trip = next()
+        expect(await fails(() => confirm(fx, appPayload(trip, lines, { shopId })))).toBe('"lime f3" is already a name of "Chips Box F3" in HOME — check the line and save again.')
+        expect([await stockOf(fx, a), await stockOf(fx, b)]).toEqual([1, 4])
+        expect([await namesOf(fx, a), await namesOf(fx, b)]).toEqual([[], []])
+        expect(await count(fx, 'expenses', 'trip_id = $1', [trip])).toBe(0)
+        expect(newNameOnce(lines).map((l) => l.naming.problem)).toEqual(['', '', '', TWICE('lime f3')])
+      })
+
+      it('the same new name twice in ONE card (as built): saved, the name added once, both lines in stock and expenses; Reopen takes it all back', async () => {
+        const item = await addItem(fx, 'Chips Box F4', 'pcs', 2)
+        const entry = await addEntry(fx, 'Chips Box F4', { pantry: item, price: 1.2 })
+        const home = [await appItem(item)]
+        const first = firstLine(entry, 'Chips Box F4', item, 1.2, home)
+        const lines = newNameOnce([first, laterNameLine(first, nameDraft(1, 'Lime F4', '0.80'), home), laterNameLine(first, nameDraft(2, 'lime f4', '0,90'), home)])
+        expect(lines.every((l) => l.ready)).toBe(true)
+        const payload = appPayload(next(), lines)
+        expect(payload.items.map((l) => [l.name, l.add_name ?? false])).toEqual([['Chips Box F4', false], ['Lime F4', true], ['lime f4', true]])
+        const t = await confirm(fx, payload)
+        expect(Number(t.total)).toBe(2.9)
+        expect(await stockOf(fx, item)).toBe(5)
+        expect((await namesOf(fx, item)).map((n) => [n.name, n.added_by_trip])).toEqual([['Lime F4', payload.id]])
+        expect(await expensesOf(fx, payload.id)).toEqual([
+          { description: 'Chips Box F4', amount: 1.2 },
+          { description: 'lime f4', amount: 0.9 },
+          { description: 'Lime F4', amount: 0.8 },
+        ])
+        expect((await logsOf(fx, item)).map((l) => [l.item_name, l.change])).toEqual([['Chips Box F4', 1], ['Lime F4', 1], ['lime f4', 1]])
+        expect(await reopen(fx, payload.id)).toBe(3)
+        expect(await stockOf(fx, item)).toBe(2)
+        expect(await namesOf(fx, item)).toEqual([])
+      })
     })
   })
 })

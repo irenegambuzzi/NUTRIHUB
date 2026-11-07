@@ -6,7 +6,9 @@ import { parseDecimal } from './decimal'
 import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
 import { partFields } from './sharedParts'
 import { asksStockUnit, newItemKeys, newStockUnit, sameNameProblems, stockUnitQuestion } from './newItemUnit'
-import { boughtAsOtherName, itemForName, lineNaming, namedPack, namePackKeys, onName, packItemFor } from './itemNames'
+import { NAME_TWICE_TEXT, boughtAsOtherName, itemForName, lineNaming, namedPack, namePackKeys, onName, packItemFor } from './itemNames'
+import { exactKey } from './similarItems'
+import { lineTotal } from './pricing'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -175,6 +177,39 @@ export function expiryOncePerItem(lines) {
     if (!line.expired) return line
     return { ...line, expired: false, expiredStock: 0, needsExpiryChoice: false, ready: !line.needsPackSize && !line.needsVariant && !line.needsStockUnit && !line.naming?.problem }
   })
+}
+
+// K101: a new name only once in a purchase. A line that would add a new name
+// (kind 'new') is refused, under that line, when the name is the name of
+// another card of the purchase that makes a new HOME item (1), or when a line
+// of another card added it earlier in screen order (2). Lines of one card may
+// share it (032 adds it once). Confirm stays locked while one is refused.
+export function newNameOnce(lines) {
+  const cardOf = (line) => line.item.cardId ?? line.item.id
+  const newCards = new Map()
+  for (const line of lines.filter((l) => l.isNew)) {
+    const key = exactKey(line.item.name)
+    newCards.set(key, [...(newCards.get(key) ?? []), cardOf(line)])
+  }
+  const first = new Map()
+  return lines.map((line) => {
+    if (line.naming?.kind !== 'new' || line.naming.problem) return line
+    const key = exactKey(line.naming.name)
+    const card = cardOf(line)
+    if (!first.has(key)) first.set(key, card)
+    const clash = (newCards.get(key) ?? []).some((c) => c !== card) || first.get(key) !== card
+    if (!clash) return line
+    return { ...line, naming: { ...line.naming, problem: NAME_TWICE_TEXT(line.naming.name), note: '' }, ready: false }
+  })
+}
+
+// K98: what line 1 costs under a name with a last price (`last`, report F:
+// { price, quantity, unit }), for its quantity and unit; null when there is
+// no price or it can't be converted (the same unit, kg/gr, L/ml only).
+export function namePriceTotal(last, quantity, unit) {
+  if (!(Number(last?.price) > 0)) return null
+  const total = lineTotal({ price: last.price, price_qty: last.quantity, price_unit: last.unit, quantity, unit })
+  return total > 0 ? total : null
 }
 
 // What a card's lines add up to at home, or null when it can't be told yet:

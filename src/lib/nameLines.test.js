@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PAID_BY_OPTIONS } from '../data/constants'
-import { cardStock, confirmationPayload, emptyNameLine, expiryOncePerItem, laterNameLine, purchaseLine, purchasePricing } from './purchase'
+import { cardStock, confirmationPayload, emptyNameLine, expiryOncePerItem, laterNameLine, namePriceTotal, newNameOnce, purchaseLine, purchasePricing } from './purchase'
 import { cardTitle, EMPTY_NAME_TEXT, lineNaming, namedPack, nameChips } from './itemNames'
 import { emptyRow, homeNote, moneyPurchasePayload, pricedLines, rowLine } from './moneyPurchase'
 import { spreadParts } from './sharedParts'
@@ -288,5 +288,45 @@ describe('MONEY "It\'s another name of…" (K54)', () => {
     const group = item('g', 'Teas', [], { is_group: true })
     expect(rowLine(row({ attachedTo: 'g' }), [tea, group], undefined, { namesReady: true }).attached).toBeNull()
     expect(rowLine(row({ attachedTo: null }), [tea], undefined, { namesReady: true })).toMatchObject({ isNew: true, attached: null })
+  })
+})
+
+describe('follow-up 07/11: K98 price of a name, K101 a new name once', () => {
+  const TWICE = (name) => `"${name}" is also another line of this purchase — use it only once.`
+  const problems = (lines) => newNameOnce(lines).map((l) => [l.item.name, l.naming?.problem ?? '', l.ready])
+
+  it('K98: the total for line 1\'s quantity and unit; null without a price or a conversion', () => {
+    expect(namePriceTotal({ price: 1.49, quantity: 1, unit: 'pcs' }, 1, 'pcs')).toBe(1.49)
+    expect(namePriceTotal({ price: 1.49, quantity: 1, unit: 'pcs' }, 2, 'pcs')).toBe(2.98)
+    expect(namePriceTotal({ price: 1.98, quantity: 2, unit: 'pcs' }, 3, 'pcs')).toBe(2.97)
+    expect(namePriceTotal({ price: 8, quantity: 1, unit: 'kg' }, 500, 'gr')).toBe(4)
+    expect(namePriceTotal({ price: 2.4, quantity: 1, unit: 'L' }, 250, 'ml')).toBe(0.6)
+    expect(namePriceTotal({ price: 5.4, quantity: 1, unit: 'pack' }, 1, 'pcs')).toBeNull()
+    expect(namePriceTotal(null, 1, 'pcs')).toBeNull()
+  })
+
+  it('K101 (1): a new name equal to a card that makes a new item is refused on the name line, whatever the order; never on that card', () => {
+    const fresh = purchaseLine(card('p1', 'Patatine Paprika', null, { price: 1.8 }), home, {}, { typedName: 'Patatine Paprika' })
+    const first = purchaseLine(card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), home, {}, { typedName: 'Chips & Snacks' })
+    const second = laterNameLine(first, draft(1, 'patatine  paprika', '1'), home)
+    expect(problems([fresh, first, second])).toEqual([
+      ['Patatine Paprika', '', true],
+      ['Chips & Snacks', '', true],
+      ['patatine  paprika', TWICE('patatine  paprika'), false],
+    ])
+    expect(problems([first, second, fresh]).map((p) => p[2])).toEqual([true, false, true])
+    // On line 1 too.
+    const renamed = purchaseLine(card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), home, {}, { typedName: 'Patatine Paprika' })
+    expect(problems([renamed, fresh])[0]).toEqual(['Chips & Snacks', TWICE('Patatine Paprika'), false])
+  })
+
+  it('K101 (2): the same new name on two cards — the later line; on one card — no refusal; K94 stays K94', () => {
+    const a = purchaseLine(card('c1', 'Chips & Snacks', 'chips', { price: 1.2 }), home, {}, { typedName: 'Chips & Snacks' })
+    const b = purchaseLine(card('d1', 'Dog Treats', 'treats', { price: 3, category_id: 'pets' }), home, {}, { typedName: 'Dog Treats' })
+    const lines = [a, laterNameLine(a, draft(1, 'Lime Chips', '1'), home), laterNameLine(a, draft(2, 'Lime Chips', '1'), home), b, laterNameLine(b, draft(1, 'LIME CHIPS', '1'), home)]
+    expect(problems(lines).map((p) => p[1])).toEqual(['', '', '', '', TWICE('LIME CHIPS')])
+    const taken = laterNameLine(b, draft(2, 'Tuc', '1'), home)
+    expect(newNameOnce([a, b, taken])[2].naming.problem).toBe('"Tuc" is already a name of "Crackers" in HOME.')
+    expect(newNameOnce([a, laterNameLine(a, draft(1, 'Lime Chips', '1'), home), b, laterNameLine(b, draft(1, 'Salt Chips', '1'), home)]).every((l) => l.ready)).toBe(true)
   })
 })
