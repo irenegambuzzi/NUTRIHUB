@@ -45,9 +45,11 @@ import {
   twiceProblems,
   usesAutoBudget,
 } from '../../lib/moneyPurchase'
-import { exactKey, inHomeNote, pickLabel, sameItemName, shopEntryFor, similarOnListText } from '../../lib/similarItems'
+import { exactKey, inHomeNote, moreMatchesText, pickLabel, sameItemName, shopEntryFor, similarOnListText } from '../../lib/similarItems'
 import { PEOPLE, SHARED, checkSplit, emptySplit, spreadParts } from '../../lib/sharedParts'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
+import { SearchBox } from '../ui/SearchBox'
+import { anyNameIncludes, canHaveNames } from '../../lib/itemNames'
 import { budgetMapStore, groceryStore, inventoryCategoryStore, orderStore, pantryStore } from '../../lib/stores'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
@@ -83,7 +85,11 @@ import { checkNewItemUnits, useNewItemUnitsReady } from '../../hooks/useNewItemU
 // home in" (plan 9L) once supabase/030 is known (`unitsReady`, found by
 // itself when not given); while it isn't, saving such a row asks first
 // (`checkUnits`), in the same way.
-export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits }) {
+// With supabase/032 (`namesReady`, plan 9N K54) a row added to HOME whose
+// name is no HOME item's can be "another name of…" an item chosen from a
+// search: the stock goes to that item, the row keeps its name, and the name
+// becomes one of the item's (add_name) when the purchase is saved.
+export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor, onClose, partsReady = false, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits, namesReady = false }) {
   // One id per form: pressing Save again after a dropped connection can't
   // save the purchase (or the expense) twice.
   const [id] = useState(() => crypto.randomUUID())
@@ -121,7 +127,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
 
   // A row is locked out of HOME when its HOME category or its budget
   // category is a durable one (lib/durable.js), so it needs both lists.
-  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx, { unitsReady: unitsKnown })), coupon), [rows, pantryItems, budgetCtx, coupon, unitsKnown])
+  const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx, { unitsReady: unitsKnown, namesReady })), coupon), [rows, pantryItems, budgetCtx, coupon, unitsKnown, namesReady])
   const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
   // The similar-name safety net (plan 9G), for rows added to HOME: a name
@@ -152,9 +158,10 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // without a chip; lib/moneyPurchase.js budgetOf) and the unit
   // of the HOME item (or group) with that name (until one is picked), so
   // its stock converts without asking. `usedWord`: "Use …" was pressed
-  // ({ word, itemId }); typing the name again forgets it.
+  // ({ word, itemId }); typing the name again forgets it, and an item chosen
+  // with "It's another name of…" too.
   const changeName = (row, name, usedWord = null) => {
-    const patch = { name, usedWord }
+    const patch = { name, usedWord, attachedTo: null }
     if (!row.categoryTouched) {
       const pick = suggest(name)
       patch.categoryId = pick?.categoryId ?? ''
@@ -167,6 +174,16 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     if (normName(name) !== normName(row.name)) patch.variantId = undefined
     change(row.key, patch)
   }
+
+  // K54: the row's name is another name of `item`: its stock goes there,
+  // with the item's category and unit (until either was picked by hand).
+  // "Not this item" is changeName with the same name.
+  const attach = (row, item) =>
+    change(row.key, {
+      attachedTo: item.id,
+      ...(row.categoryTouched ? {} : { categoryId: item.category_id ?? '', subcategoryId: item.subcategory_id ?? '', suggested: false }),
+      ...(row.unitTouched || row.autoFilled ? {} : { unit: item.unit }),
+    })
 
   const addRow = () => {
     setRows((all) => [...all, emptyRow(nextKey)])
@@ -328,6 +345,8 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
               onAddSubcategory={addSubcategory}
               chipsFor={(name, home) => (home ? suggestions(name) : budgetSuggestions(name))}
               onName={(name, usedWord) => changeName(line.row, name, usedWord)}
+              attachable={namesReady ? pantryItems : null}
+              onAttach={(item) => attach(line.row, item)}
               onChange={(patch) => change(line.row.key, patch)}
               onManageBudget={() => setManaging(line.row.key)}
               onRemove={rows.length > 1 ? () => setRows((all) => all.filter((r) => r.key !== line.row.key)) : null}
@@ -368,6 +387,42 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   )
 }
 
+// K54: "It's another name of…" opens a search of the HOME items that can
+// have names (never a group, a variant or a durable); a tap chooses one.
+const SHOWN_ITEMS = 6
+function AnotherNameOf({ items, label, onPick }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const query = search.trim().toLowerCase()
+  const matching = query ? items.filter((item) => canHaveNames(item) && anyNameIncludes(item, query)).sort((a, b) => a.name.localeCompare(b.name)) : []
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="min-h-9 text-[11px] font-bold text-[var(--color-accent)]">
+        It's another name of…
+      </button>
+    )
+  }
+  return (
+    <div role="group" aria-label={label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <SearchBox value={search} onChange={setSearch} placeholder="Search your items…" />
+        </div>
+        <button type="button" onClick={() => setOpen(false)} aria-label="Close the search" className="w-9 h-9 flex items-center justify-center shrink-0 text-[var(--color-icon-muted)]">
+          <X size={14} />
+        </button>
+      </div>
+      {query && matching.length === 0 && <p className="text-[11px] text-[var(--color-text-muted)]">No item matches</p>}
+      {matching.slice(0, SHOWN_ITEMS).map((item) => (
+        <button key={item.id} type="button" onClick={() => onPick(item)} className="w-full min-h-9 px-2 rounded-lg text-left text-xs text-[var(--color-text)] break-words hover:bg-[var(--color-surface)]">
+          {item.name} ({item.current_stock} {item.unit})
+        </button>
+      ))}
+      {matching.length > SHOWN_ITEMS && <p className="text-[11px] text-[var(--color-text-muted)]">{moreMatchesText(matching.length - SHOWN_ITEMS)}</p>}
+    </div>
+  )
+}
+
 // What a tapped (or newly made) chip fills in: the HOME category and sub
 // (the budget category then follows the mapping again), or — for a row not
 // added to HOME — the budget category itself.
@@ -377,7 +432,7 @@ function pickPatch(pick, home) {
 }
 
 // One item of the receipt.
-function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove }) {
+function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel, problem, single, budgetId, autoBudget, mainCategories, subsOf, parents, subsByParent, onAddCategory, onAddSubcategory, chipsFor, onName, onChange, onManageBudget, onRemove, attachable = null, onAttach = () => {} }) {
   const { row } = line
   // Durable (by its HOME or its budget category): never HOME stock, so
   // "Add to HOME" is off and can't be turned on, and there is no 1×.
@@ -520,6 +575,12 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
           <span className="block text-[11px] text-[var(--color-text-muted)]">{homeNote(line)}</span>
         </span>
       </label>
+      {attachable && line.canAttach && <AnotherNameOf items={attachable} label={label('Which HOME item?')} onPick={onAttach} />}
+      {line.attached && (
+        <button type="button" onClick={() => onName(row.name)} className="min-h-9 text-[11px] font-bold text-[var(--color-accent)]">
+          Not this item
+        </button>
+      )}
 
       {home && line.group && (
         <div className={cn('rounded-xl border p-2 space-y-1.5', line.needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>

@@ -116,7 +116,8 @@ describe('Reopen / Undo purchase: the notes', () => {
     expect(await undo).toBeNull()
     const reopen = askUndoPurchase({ id: 't1', source: 'shop' }, { count: 1, total: 3 })
     await vi.waitFor(() => expect(getDialog()).toBeTruthy())
-    expect(getDialog()).toMatchObject({ title: 'Reopen this purchase?', message: 'The 1 item (€3.00) go back to the cart, and the stock, history and expenses from this purchase are undone.' })
+    // K96 (07/11): one card "goes" back (was "go").
+    expect(getDialog()).toMatchObject({ title: 'Reopen this purchase?', message: 'The 1 item (€3.00) goes back to the cart, and the stock, history and expenses from this purchase are undone.' })
     closeDialog(null)
     expect(await reopen).toBeNull()
   })

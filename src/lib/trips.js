@@ -32,6 +32,11 @@ export function purchaseUndo(source) {
   return { kind: 'reopen', label: 'Reopen purchase' }
 }
 
+// How many SHOP cards the lines of a purchase are (plan 9N, K96): name lines
+// of one card are one card; a line whose card was deleted counts by the card
+// it keeps a copy of.
+export const cardCount = (lines) => new Set(lines.map((l) => l.grocery_item_id ?? l.grocery_snapshot?.id ?? l.id)).size
+
 // "Already deleted by hand, so not undone: …" for the reopen message.
 export function goneSummary(lines) {
   const parts = lines.flatMap((l) => [

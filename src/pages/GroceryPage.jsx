@@ -24,6 +24,7 @@ import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
 import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
 import { otherNames } from '../lib/itemNames'
+import { useItemNamesReady } from '../hooks/useItemNamesReady'
 import { OnTheWay } from '../components/grocery/OnTheWay'
 import { OrderOnlineDialog } from '../components/grocery/OrderOnlineDialog'
 import { LinkedArrivedDialog } from '../components/expenses/LinkedArrivedDialog'
@@ -103,6 +104,9 @@ export function GroceryPage() {
     openOrderOf,
   } = useGroceryList()
   const flow = useFlow()
+  // supabase/032 (plan 9N): the SHOP cards show the HOME item's name, and
+  // Confirm purchase has name lines. Nothing new until it is known.
+  const namesReady = useItemNamesReady(pantryItems) === true
   const { byId: shopById } = useShops()
   const { rows: orders } = orderStore.useRows()
   const { rows: expenseCategories } = expenseCategoryStore.useRows()
@@ -309,6 +313,7 @@ export function GroceryPage() {
         onUpdateCategory={updateCategory}
         oneTime={entryIsOneTime(item, pantryFor(item))}
         highlighted={spotted(unit)}
+        namesReady={namesReady}
         {...orderProps(item)}
       />
     )
@@ -553,6 +558,7 @@ export function GroceryPage() {
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
             spotId={spot?.id ?? null}
+            namesReady={namesReady}
           />
           {onTheWaySection}
         </>
@@ -573,6 +579,8 @@ export function GroceryPage() {
           onCancelOrder={(order) => askCancelOrder(order, { orders, today })}
           splitTrips={flow.ready}
           durableBudgetOf={durableBudgetOf}
+          namesReady={namesReady}
+          homeCategories={{ parents, subsByParent }}
           onClose={() => setConfirming(false)}
         />
       )}

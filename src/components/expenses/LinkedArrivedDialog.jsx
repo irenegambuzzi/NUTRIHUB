@@ -7,6 +7,7 @@ import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast, discardUnusedIt
 import { newVariantFields } from '../../lib/groups'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { packColumnsReady } from '../../lib/orders'
+import { boughtAsOtherName } from '../../lib/itemNames'
 import { localDateString } from '../../lib/week'
 
 // "Arrived" on an order linked to a HOME item (ordered from the SHOP
@@ -20,7 +21,9 @@ import { localDateString } from '../../lib/week'
 // so "Put back on the way" undoes it exactly. Confirming marks the order
 // arrived and adds the stock in one step; only the first confirmation
 // adds anything, on whichever phone. Never an expense: that was made when
-// ordering. The toast after it has Undo (plan 9J). Closed
+// ordering. The toast after it has Undo (plan 9J). An order under another
+// name of the item (plan 9N, K90) counts its pack with that name's size, and
+// a first-time size is saved on the name. Closed
 // with × or a tap outside, nothing happens: the order stays on the way.
 export function LinkedArrivedDialog({ order, item, onClose }) {
   const { items } = usePantryItems()
@@ -87,6 +90,7 @@ export function LinkedArrivedDialog({ order, item, onClose }) {
           initial={{ quantity: Number(order.quantity) || 1, unit: order.unit || null, packSize: order.pack_size ?? null }}
           packs
           canSaveUsual={!item.is_group && packColumnsReady(order)}
+          boughtAs={!item.is_group && boughtAsOtherName(item, order.item_name) ? order.item_name : null}
           submitLabel="Arrived — add to HOME"
           onSubmit={submit}
           onClose={close}

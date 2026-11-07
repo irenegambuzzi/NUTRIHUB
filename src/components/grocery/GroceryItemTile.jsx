@@ -8,6 +8,7 @@ import { PayerPicker } from './shared'
 import { EntryEditor, PriceButton, QuantityStepper } from './EntryControls'
 import { useEntryEditing } from '../../hooks/useEntryEditing'
 import { payerLabel } from '../../lib/grocery'
+import { cardTitle } from '../../lib/itemNames'
 import { GROCERY_LIST_LABELS, listOf } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
@@ -18,11 +19,14 @@ import { RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryS
 // `usualShop`). `oneTime`: a one-time purchase (grey "1× purchase"). A
 // group's variants are shown in the group's card instead (GroupShopCard).
 // `highlighted`: outlined for a moment after "Go to card" (data-spot).
-export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onUpdateCategory = null, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false, highlighted = false }) {
+// `namesReady` (supabase/032, plan 9N K53): the title is the HOME item's
+// name (`pack`), with the card's own name under it when that differs.
+export function GroceryItemTile({ item, showList = false, hint = null, reason, pack, total, budgetMark, categoryName, onToggle, onDelete, onUpdatePricing, onUpdatePayer, onUpdateCategory = null, onOrderOnline = null, orderFirst = false, usualShop = null, oneTime = false, highlighted = false, namesReady = false }) {
   const c = inventoryCategoryColor(item.category_id)
   const edit = useEntryEditing(item, pack, onUpdatePricing)
   const label = RESTOCK_LABELS[reason]
   const [fixing, setFixing] = useState(false)
+  const { title, subtitle } = namesReady ? cardTitle(item, pack) : { title: item.name, subtitle: '' }
 
   // Background follows why the item is here: red Out, yellow Low,
   // purple Expired, blue New; items already in stock keep their category
@@ -58,8 +62,9 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
         </div>
 
         <p className={cn('text-sm font-bold leading-tight pr-4', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
-          {item.name}
+          {title}
         </p>
+        {subtitle && <p className="text-[10px] text-[var(--color-text-muted)] leading-tight break-words pr-4">{subtitle}</p>}
         <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
           {item.in_cart && 'In the cart · '}
           {item.category_id && categoryName(item.category_id)}

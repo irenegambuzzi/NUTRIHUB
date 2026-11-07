@@ -1,11 +1,12 @@
 import { expiryState, isDurable, toBaseQuantity } from './inventory'
 import { normName } from './grocery'
 import { firstOutVariant } from './groups'
-import { couponFields, lineDiscountFields, priceLines } from './discounts'
+import { couponFields, lineDiscountFields, priceLines, round2 } from './discounts'
+import { parseDecimal } from './decimal'
 import { firstTimePatch, hasPackField, packField, packStartText, packTextFor } from './packSize'
 import { partFields } from './sharedParts'
-import { asksStockUnit, newItemKeys, sameNameProblems, stockUnitQuestion } from './newItemUnit'
-import { boughtAsOtherName, itemForName, packItemFor } from './itemNames'
+import { asksStockUnit, newItemKeys, newStockUnit, sameNameProblems, stockUnitQuestion } from './newItemUnit'
+import { boughtAsOtherName, itemForName, lineNaming, namedPack, namePackKeys, onName, packItemFor } from './itemNames'
 
 // Confirming a purchase: for each item in the cart, the pantry item it
 // restocks, how much stock that adds, and the questions still open (pack
@@ -63,12 +64,16 @@ export function purchasedQuantity(pantry, item, packSize) {
 //   asksStockUnit   – the line would get that question once 030 is known
 //                     (to check first while that isn't known)
 //   ready           – every question that must be answered is
+//   takesNames      – the card can have name lines (plan 9N): `typedName` was
+//                     given (supabase/032 is known) and it is a normal item,
+//                     or a new one; never a group, a variant or a durable
+//   naming          – what the name on the line means (itemNames lineNaming)
 // `pantry` is the item (or group) the line restocks, for showing; `target`
 // the item whose stock really changes — the chosen variant for a group.
 // A durable line (its HOME category is in the Durables tree, or
 // `durableBudget`: its budget category is a durable one, lib/durable.js)
 // is an expense only: no HOME item, no stock (plan 9F).
-export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = false, unitsReady = null } = {}) {
+export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = false, unitsReady = null, typedName } = {}) {
   const durable = isDurable(item) || durableBudget
   const entry = durable ? null : pantryItemFor(item, pantryItems)
   const group = entry?.is_group ? entry : null
@@ -79,8 +84,10 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
   const chosen = group ? pantryItems.find((p) => p.id === variantId && p.group_id === group.id) ?? null : entry
   const newVariant = group && !chosen ? answer.newVariantName?.trim() || null : null
   const quantity = Number(item.quantity) || 1
+  const takesNames = typedName !== undefined && !durable && !group && !entry?.group_id
+  const naming = takesNames ? lineNaming({ item: entry ?? { name: item.name }, cardName: item.name, name: typedName, items: pantryItems, first: true }) : null
   const packItem = entry && packItemFor(entry, item.name, item.unit)
-  const pack = entry ? packField({ item: packItem, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(packItem, item.unit)), canSave: chosen?.id === entry.id && !boughtAsOtherName(entry, item.name) }) : null
+  const pack = !entry ? null : onName(naming) ? namedPack(entry, naming.name, item.unit, { quantity, typed: answer.pack }) : packField({ item: packItem, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(packItem, item.unit)), canSave: chosen?.id === entry.id && !boughtAsOtherName(entry, item.name) })
   const add = entry ? purchasedQuantity(entry, item, pack?.value) : durable ? 0 : quantity
   const needsPackSize = Boolean(entry) && add === null
   const needsVariant = Boolean(group) && !chosen && !newVariant
@@ -108,8 +115,77 @@ export function purchaseLine(item, pantryItems, answer = {}, { durableBudget = f
     needsStockUnit,
     isNew,
     asksStockUnit: isNew && asksStockUnit(item.unit),
-    ready: !needsPackSize && !needsExpiryChoice && !needsVariant && !needsStockUnit,
+    takesNames,
+    naming,
+    ready: !needsPackSize && !needsExpiryChoice && !needsVariant && !needsStockUnit && !naming?.problem,
   }
+}
+
+// One more name line of a card (plan 9N): it exists only on the confirm
+// screen (K52). `draft`: { key, name, quantityText, unit, totalText } as
+// typed. The line stands in for the card, with what was typed: the same item,
+// category and payer (K92, line 1's at the moment of Confirm). A total typed
+// is the price for exactly this quantity, as on line 1.
+export function emptyNameLine(key, unit) {
+  return { key, name: '', quantityText: '1', unit, totalText: '', priceEdited: false, unitTouched: false, autoFilled: false, autoPer: null }
+}
+
+export function nameLineItem(card, draft) {
+  const quantity = parseDecimal(draft.quantityText) > 0 ? parseDecimal(draft.quantityText) : 1
+  const total = parseDecimal(draft.totalText) >= 0 ? round2(parseDecimal(draft.totalText)) : 0
+  return { ...card, id: `${card.id}:${draft.key}`, cardId: card.id, name: draft.name.trim(), quantity, unit: draft.unit, price: total, price_qty: quantity, price_unit: draft.unit }
+}
+
+// The item a later line of a card counts its stock in: the card's, or for a
+// new HOME item the unit its first line chose (J.1, D10; null until it is
+// chosen). It starts without a usual size: each name has its own.
+function laterLineHome(first) {
+  if (first.target) return first.target
+  if (first.stockUnit && !first.stockUnit.stockUnit) return null
+  return { name: first.item.name, unit: newStockUnit(first.stockUnit, first.item.unit) }
+}
+
+// Line 2…N of a card, as purchaseLine gives line 1 (`first`): it goes to the
+// item the first line finds or makes, never makes one itself, and asks about
+// neither the unit nor expired stock (the item's first line does).
+export function laterNameLine(first, draft, pantryItems, answer = {}) {
+  const item = nameLineItem(first.item, draft)
+  const home = laterLineHome(first)
+  const naming = lineNaming({ item: first.target ?? { name: first.item.name }, cardName: first.item.name, name: draft.name, items: pantryItems })
+  const quantity = Number(item.quantity) || 1
+  const canSave = Boolean(first.target) || !first.stockUnit?.pack
+  const pack = !home ? null : onName(naming) ? namedPack(home, naming.name, item.unit, { quantity, typed: answer.pack }) : packField({ item: home, unit: item.unit, quantity, text: packTextFor(answer.pack, item.unit, packStartText(home, item.unit)), canSave })
+  const add = home ? purchasedQuantity(home, item, pack?.value) : null
+  const needsPackSize = Boolean(home) && add === null
+  return { item, pantry: first.pantry, target: first.target, group: null, newVariant: null, durable: false, add, pack, needsPackSize, needsVariant: false, expired: false, expiredStock: 0, needsExpiryChoice: false, stockUnit: null, needsStockUnit: false, isNew: false, asksStockUnit: false, takesNames: true, naming, ready: !needsPackSize && !naming.problem }
+}
+
+// K71 + K80: expired stock is asked about once per item, on its first line
+// in the purchase; a later line (of the card, or another card of the item)
+// says nothing and sends nothing.
+export function expiryOncePerItem(lines) {
+  const seen = new Set()
+  return lines.map((line) => {
+    const id = line.target?.id
+    if (!id) return line
+    if (!seen.has(id)) {
+      seen.add(id)
+      return line
+    }
+    if (!line.expired) return line
+    return { ...line, expired: false, expiredStock: 0, needsExpiryChoice: false, ready: !line.needsPackSize && !line.needsVariant && !line.needsStockUnit && !line.naming?.problem }
+  })
+}
+
+// What a card's lines add up to at home, or null when it can't be told yet:
+// { total, unit }. A line of a new item counted in another unit has `add` in
+// the unit bought.
+export function cardStock(lines) {
+  const [first] = lines
+  if (first.stockUnit && !first.stockUnit.stockUnit) return null
+  if (lines.some((l) => l.add === null)) return null
+  const adds = lines.map((l) => (l.stockUnit?.pack ? l.add * (l.stockUnit.pack.value ?? 0) : l.add))
+  return { total: round2(adds.reduce((sum, add) => sum + add, 0)), unit: first.pantry?.unit ?? newStockUnit(first.stockUnit, first.item.unit) }
 }
 
 // Per line, what the same new name twice says (lib/newItemUnit.js
@@ -149,7 +225,11 @@ export function purchasePricing(items, totalOf, discounts = {}, coupon = null) {
 // without it, send none.
 // A line making a new item counted in another unit (plan 9L) sends
 // new_stock_unit / new_pack_size; `add` stays in the line's unit.
+// Name lines (plan 9N) repeat the card's grocery_item_id and send what is
+// theirs alone (nameKeys); a card of one line under its own word sends what
+// it always sent.
 export function confirmationPayload({ id, date, at, lines, answers, totalOf, expenseCategoryFor, photoIds = [], variantIds = new Map(), shopId = null, paidBy = null, pricing = null, partsByItem = null }) {
+  const several = new Set(lines.map((l) => l.item.cardId).filter(Boolean))
   return {
     ...(pricing ? couponFields(pricing.priced) : {}),
     id,
@@ -158,11 +238,11 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
     photo_ids: photoIds,
     shop_id: shopId || null,
     paid_by: paidBy || null,
-    items: lines.map(({ item, target, durable, add, expired, pack, stockUnit }) => {
+    items: lines.map(({ item, target, durable, add, expired, pack, stockUnit, naming }) => {
       const answer = answers[item.id] ?? {}
       const priced = pricing?.byItem.get(item.id) ?? null
       const row = {
-        grocery_item_id: item.id,
+        grocery_item_id: item.cardId ?? item.id,
         line_total: priced && Number.isFinite(priced.paid) ? priced.paid : (totalOf(item) ?? 0),
         ...(priced ? lineDiscountFields(priced) : {}),
         ...partFields(partsByItem?.get(item.id)),
@@ -178,10 +258,23 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
         row.expiry_date = answer.expiryDate || null
       }
       // The item's usual size only the first time (it has none yet).
-      if (target) Object.assign(row, firstTimePatch(pack))
-      Object.assign(row, newItemKeys(stockUnit))
+      if (target || item.cardId) Object.assign(row, firstTimePatch(pack))
+      Object.assign(row, newItemKeys(stockUnit), nameKeys(item, naming, pack, several))
       return row
     }),
+  }
+}
+
+// What a line sends about its name: the six fields of that line only, when
+// the card has several lines or the name was changed; add_name for a new
+// name; name_pack for a first size on a name.
+function nameKeys(item, naming, pack, several) {
+  if (!naming) return {}
+  const own = item.cardId || several.has(item.id) || naming.changed
+  return {
+    ...(own ? { name: naming.name, quantity: item.quantity, unit: item.unit, price: item.price ?? null, price_qty: item.price_qty ?? null, price_unit: item.price_unit ?? null } : {}),
+    ...(naming.kind === 'new' ? { add_name: true } : {}),
+    ...namePackKeys(pack),
   }
 }
 

@@ -6,7 +6,7 @@ import { PriceCheck } from './PriceCheck'
 import { deleteExpenses, setReceiptLineAmount, useCategoryExpenses, useExpenseCategories } from '../../hooks/useExpenses'
 import { useReceiptPhotos } from '../../hooks/useReceiptPhotos'
 import { askUndoPurchase, deleteTripRecord } from '../../hooks/usePurchase'
-import { goneSummary, purchaseUndo, tripState } from '../../lib/trips'
+import { cardCount, goneSummary, purchaseUndo, tripState } from '../../lib/trips'
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
 import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
@@ -88,7 +88,7 @@ export function ReceiptsView() {
   // Undoes what's left of the purchase the way it was made — Reopen (SHOP),
   // Undo purchase (MONEY) or Split (merged expenses, never deleted); parts
   // deleted by hand are skipped and named afterwards.
-  const reopen = ({ trip, items, total, state }) => askUndoPurchase(trip, { count: items.length + state.merged.length, total, gone: goneSummary(state.lines) })
+  const reopen = ({ trip, items, total, state }) => askUndoPurchase(trip, { count: items.length + state.merged.length, cards: cardCount(items) + state.merged.length, total, gone: goneSummary(state.lines) })
 
   // Removes only the record of the purchase; stock and expenses stay.
   // Expenses merged into it become single expenses again first.

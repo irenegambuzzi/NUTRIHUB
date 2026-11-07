@@ -2,7 +2,7 @@ import { exactKey } from './similarItems'
 import { normName } from './grocery'
 import { isDurable } from './inventory'
 import { stockFactor } from './reopenUnits'
-import { usualPackSize } from './packSize'
+import { packField, packStartText, packTextFor, savesUsualSize, usualPackSize } from './packSize'
 import { decimalProblem, parseDecimal } from './decimal'
 
 // One item, many names (plan 9N, round 6D). An item keeps one stock, and
@@ -103,15 +103,83 @@ export const boughtAsOtherName = (item, name) => !isOwnName(item, name) && Boole
 // The item as a line bought under `name` in `unit` sees it for the pack
 // field: under another name with a pack size for that unit, that size; else
 // the item's own (report F). A first-time size is never saved on the item
-// from such a line (K60): saving it on the name comes with stage 3.
+// from such a line (K60): it goes on the name (namedPack).
 export function packItemFor(item, name, unit) {
   const element = boughtAsOtherName(item, name) ? nameElement(item, name) : null
   return element && usualPackSize(element, unit) ? { ...item, packaging_unit: element.packaging_unit, quantity_per_pack: element.quantity_per_pack } : item
 }
 
+// K60: the pack field of a line of `item` bought under `name`, another name
+// of it or a new one (packField for the rest). It starts with the name's own
+// size for that unit, else the item's. A first-time size belongs to the name
+// (`onName`, sent as name_pack): only while the name has none, and not when
+// it is just the item's usual size, which the field starts with anyway.
+export function namedPack(item, name, unit, { quantity = 1, typed = null, canSave = true } = {}) {
+  const packItem = packItemFor(item, name, unit)
+  const pack = packField({ item: packItem, unit, quantity, text: packTextFor(typed, unit, packStartText(packItem, unit)), canSave: false })
+  if (!pack) return null
+  const firstTime = canSave && pack.value !== null && savesUsualSize(nameElement(item, name) ?? {}, pack.unit) && pack.value !== usualPackSize(item, pack.unit)
+  return { ...pack, firstTime, onName: true, differs: pack.differs && !firstTime }
+}
+
+// What a line sends so that first-time size lands on the name ({} for none).
+export const namePackKeys = (pack) => (pack?.firstTime && pack.onName ? { name_pack: { packaging_unit: pack.unit, quantity_per_pack: pack.value } } : {})
+
 // K59: the item that already has this word, other than `exceptIds`, or
 // null. A word belongs to one item only; a similar word is allowed.
 export const nameTakenBy = (name, items, exceptIds = []) => (items ?? []).find((item) => !exceptIds.includes(item.id) && hasName(item, name)) ?? null
+
+// The title of a SHOP card (K53): the HOME item's name, with the card's own
+// name under it when that differs. A card without a HOME item, and a group
+// or a variant, keeps its own name.
+export function cardTitle(entry, item) {
+  const own = entry?.name ?? ''
+  if (!item || item.is_group || item.group_id || exactKey(own) === exactKey(item.name)) return { title: own, subtitle: '' }
+  return { title: item.name, subtitle: own }
+}
+
+export const NEW_NAME_LINE_TEXT = (item) => `New name of ${item.name} — it will be remembered.`
+export const EMPTY_NAME_TEXT = 'Type the name of this line.'
+
+// What the name on a purchase line means for its item (K50, K59, K94).
+// `item`: the HOME item, or for a new one { name } (the card's); `cardName`:
+// the SHOP card's own name; `first`: the card's own line, whose name may stay
+// the card's or be emptied (then it counts as the card's).
+// → { name (sent: the stored spelling of a name the item has), kind, changed
+// (another word than the card's was typed), problem, note }. kind: 'own' / 'known' (the
+// item's name or other name, a plain line), 'new' (add_name), 'card' (the
+// card's own word, not a name of the item: left as it is), 'empty' / 'taken'
+// (refused: `problem`, Confirm stays locked).
+export function lineNaming({ item, cardName, name, items, first = false }) {
+  const typed = String(name ?? '').trim()
+  const card = String(cardName ?? '').trim()
+  if (!typed && !first) return { name: '', kind: 'empty', changed: true, problem: EMPTY_NAME_TEXT, note: '' }
+  const word = typed || card
+  const changed = word !== card
+  if (isOwnName(item, word)) return { name: item.name.trim(), kind: 'own', changed, problem: '', note: '' }
+  const element = nameElement(item, word)
+  if (element) return { name: element.name.trim(), kind: 'known', changed, problem: '', note: '' }
+  if (first && exactKey(word) === exactKey(card)) return { name: word, kind: 'card', changed, problem: '', note: '' }
+  const taken = nameTakenBy(word, items, item.id ? [item.id] : [])
+  if (taken) return { name: word, kind: 'taken', changed, problem: takenNote(word, taken), note: '' }
+  return { name: word, kind: 'new', changed, problem: '', note: NEW_NAME_LINE_TEXT(item) }
+}
+
+// A line under a name that is not the item's own: its pack counts on the name.
+export const onName = (naming) => naming?.kind === 'known' || naming?.kind === 'new'
+
+// The name chips of one line (K56): the item's names, last bought first
+// (`recent`: names of its purchase lines, newest first), then in the order of
+// the list. A name already on another line of the card is left out.
+export function nameChips(item, recent = [], usedElsewhere = []) {
+  const names = [item?.name, ...otherNames(item).map((element) => element.name)].map((name) => String(name ?? '').trim()).filter(Boolean)
+  const used = usedElsewhere.map(exactKey).filter(Boolean)
+  const last = (name) => {
+    const at = recent.findIndex((r) => exactKey(r) === exactKey(name))
+    return at < 0 ? Infinity : at
+  }
+  return names.filter((name) => !used.includes(exactKey(name))).sort((a, b) => last(a) - last(b))
+}
 
 // The refusals, word for word as supabase/032 says them.
 export const changedMeanwhileText = (name) => `"${name}" changed meanwhile (on the other phone?) — open it again. Nothing was changed.`

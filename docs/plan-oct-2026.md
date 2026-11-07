@@ -4723,7 +4723,7 @@ iPhone test of 9M done 03/11/2026: all OK.
 
 K41: the old "one-time database update" notices are kept (03/11).
 
-### 9N. One item, many names (round 6D, decided 04–06/11, stages 1 and 2 as built)
+### 9N. One item, many names (round 6D, decided 04–07/11, stages 1–3 as built)
 
 Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
 household chose **option C** (`pantry_items.names jsonb`) and the decisions
@@ -4854,6 +4854,36 @@ update, also after stage 2.
   card, expense or arrival stays. A failed save keeps the normal action, and
   the toast offers Retry. Offline the name is simply not saved: no extra toast,
   no queue.
+- **K86** Moved to a new chat after the stage-2 test (07/11).
+- **K87** "Create new" in SHOP: the first typed word is not saved, only asked
+  again next time.
+- **K88** "Use …" on a group: the word is not saved until the group is merged.
+- **K89** "Use …" then "OK" / "Go to card": nothing is saved.
+- **K90** A first-time pack size at a linked arrival under another name is
+  saved on the name (never on the item) — built in stage 3.
+- **K91** Renaming an item to one of its own other names: allowed.
+- **K92** ONE payer per card: the pill stays where it is (line 1); lines 2…N
+  have no pill and are sent with line 1's payer at the moment of Confirm.
+  "Paid by (everything)" unchanged.
+- **K93** No "+ Add another name" on group cards, variant lines, old
+  group-level lines ("You choose the variant when confirming") and durable /
+  service / "expense only" lines.
+- **K94** A line name equal (exactKey) to the name or other name of ANOTHER
+  HOME item is refused under that line with `"{name}" is already a name of
+  "{item}" in HOME.`, and "Confirm purchase · €…" is locked until the name is
+  changed or the line removed. No "Use other item" button. The item's own name
+  or one of its own names = a plain line (no add_name); a merely similar name
+  is allowed with no question.
+- **K95** Undo on the Arrived toast and "Back on the way" put a name's pack
+  size saved by that arrival back to empty, only while the name still has
+  exactly those values (changed by hand → left as it is). Recorded inside the
+  existing `orders.arrival_pack_before` (no new column), like the 9H item case.
+- **K96** Counts: a sentence about cards in the cart counts CARDS ("Reopen
+  this purchase?" → "The 1 item (€3.87) goes back to the cart, …" for one card
+  with 3 name lines); a sentence about items bought or expenses counts LINES
+  ("Purchase confirmed · 3 items · €3.87", "Undo this purchase?", the Confirm
+  screen's "{n} item · {date}"). The 9M notes after Reopen / Undo: one per
+  ITEM, its lines added up; a line with `merged_from` is stock only.
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5159,7 +5189,10 @@ deleted and `upsert`s it, so `names` comes back, a merged name with its
 takes one row too, as `deleteItem` really sends it). Added to
 `supabase/migrations.test.js`: K85, a pack size emptied, delete + Undo.
 
-**Kata ragu (06/11 stage 2, tanya Zidane).** Built as written until answered.
+**Kata ragu (06/11 stage 2, tanya Zidane).** (Answered 07/11: 1 → K87, 2 →
+K88, 3 → K89, 4 → K90, 5 → K91.)
+
+iPhone test of stage 2 done 07/11/2026: all OK.
 
 1. "Create new" in SHOP. Typed "Pumpkin" → "Create new" → changed to "Frozen
    Pumpkin Cubes" → "Save". There is only a SHOP card; the HOME item is made at
@@ -5186,22 +5219,209 @@ takes one row too, as `deleteItem` really sends it). Added to
    name of this item"), because the names go first; two Saves work. Options: (a)
    leave both; (b) rename first when the old name is added. Suggestion: (a).
 
+### Stage 3 as built (07/11; code and tests only, no SQL)
+
+Name lines in SHOP "Confirm purchase" and MONEY "Add expense", the SHOP card
+title, and a first pack size saved on a name at a linked arrival. No SQL, no
+new column, no change to any 032 function: the payloads are exactly the ones
+block "032" proves. No new browser storage, no new offline queue. Group code
+(`GroupShopCard`, `syncGroup`, `useShopTidy`, `lib/groups.js`,
+`lib/groupShop.js`, the variant selects) is not touched.
+
+**Ready or not.** `GroceryPage` and `ExpensesPage` read
+`useItemNamesReady(…) === true` and pass `namesReady` to `ConfirmPurchase`,
+`GroceryItemTile`, `ShoppingMode` and `PurchaseForm` (each defaults to
+false). While it isn't true nothing new shows and every payload is today's
+(one line per card): `purchaseLine` gets no `typedName`, so it has no
+`naming` and sends no name key. A card of one line under its own word sends
+exactly today's line also after 032 (tested equal).
+
+**Confirm purchase** (`grocery/ConfirmPurchase.jsx`, `grocery/NameLines.jsx`,
+`lib/purchase.js`, `lib/itemNames.js`).
+
+- Which cards (K93): `purchaseLine(…).takesNames` — a normal HOME item or a
+  new one; never a group, a variant, a durable / "expense only" line, an
+  order on the way or a card left for another trip.
+- Card title (K53): `cardTitle(entry, item)` — the HOME item's name, the
+  card's own name under it in small grey text when it differs (exactKey).
+- Line 1 = the card: field **"Name"** (aria "Name of {card}"), starting with
+  the card's own name (K50); emptied, it counts as the card's name (no
+  refusal). Its quantity, unit, total, discount and payer are the card's, and
+  its edits are saved on the card as today (`editPatch`). Its name is sent on
+  the line only (032: the card keeps its own name; Reopen brings the card back
+  with it).
+- Lines 2…N (`laterNameLine`, K51, K52): **"+ Add another name"** under the
+  card's last line adds one at quantity 1, in the card's unit of now, with no
+  name; it changes no other line and lives only on this screen. Each has
+  "Name" + × (aria "Remove line {n} of {card}"), quantity, unit, € total,
+  "−% / −€" (J.5), and its 9H field when the unit needs one (K60). No payer
+  pill (K92): sent with line 1's payer at Confirm.
+- Price (K55, report F): `useLastPrice(name)` of each line 2…N, per its
+  quantity (2 for €1.98 → €0.99 for 1; a new quantity follows), until the
+  total or the unit is typed by hand; a brand-new name stays empty. Line 1 keeps the
+  card's price.
+- Chips (K56, `nameChips`): the item's own name and other names, last bought
+  first (`useLastBoughtNames` → the item's purchase lines, newest first; read
+  only for an item with other names), then in list order. A name already on
+  another line of the card is **left out**. A new item: its card name only.
+- What a name means (`lineNaming`, K59, K94): own name / one of its names →
+  plain line (the stored spelling is sent); a new word → `add_name` and "New
+  name of {item} — it will be remembered."; a word of ANOTHER item → `"{name}"
+  is already a name of "{item}" in HOME.` and the line is not ready; an empty
+  line 2…N → "Type the name of this line." and not ready. Not ready locks
+  "Confirm purchase · €…" (bottom: "Answer the question above to confirm.").
+  A new name that looks durable (9F keywords, `durableLookalike` with the
+  HOME categories) shows the HOME editor's text, not blocking
+  (`durable.durableLookalikeText`, shared with `ItemEditor`).
+- Pack (K60, `namedPack`): under another name or a new one the field starts
+  with the name's size for that unit, else the item's; a first-time size is
+  the name's (`onName`, sent as `name_pack`) only while the name has none and
+  only when it differs from the item's usual size (Kata ragu 3). Under the
+  item's own name: the 9H item rule (`firstTimePatch`, never for `onName`).
+- A new HOME item (J.1, D10): "Count it at home in" only on line 1; lines
+  2…N count in the unit chosen there (`laterLineHome`), their own required
+  9H field starting empty, first time → `name_pack`. 10 + 12 = 22 pcs.
+- Expired stock once per item (K71, K80, `expiryOncePerItem`): the question
+  and `discard_expired` / `expiry_date` only on the item's first line in the
+  purchase (also across two cards of one item).
+- Several lines: "= {n} {stock unit} added to the stock" under the card
+  (`cardStock`; hidden while a line can't tell its stock — the K9 / pack locks
+  stay).
+- Payload (`confirmationPayload` → `nameKeys`): every line of a card with 2+
+  lines, and a line 1 whose name was changed, sends `name, quantity, unit,
+  price, price_qty, price_unit`; plus `add_name: true` for a new name and
+  `name_pack` for a first size on a name; lines 2…N repeat the card's
+  `grocery_item_id`. Coupon spread over all lines (`purchasePricing`), Shared
+  parts per line in the 9K box (J.9: "What each one paid of the N Shared
+  items (€…)." counts lines).
+- K96: bottom "{n} item(s) · {date}" and the toast "Purchase confirmed · {n}
+  items · €…" count lines; "{n} item(s) stay in the cart" counts cards.
+
+**MONEY "Add expense"** (`expenses/PurchaseForm.jsx`, `lib/moneyPurchase.js`,
+K54). A row with "Add to HOME" on, not locked, whose name is no HOME item
+(`rowLine` `canAttach`): link **"It's another name of…"** → a search
+("Search your items…", group aria "Which HOME item?") over normal items only
+(`canHaveNames`: no group, variant or durable), up to 6 buttons "{name}
+({stock} {unit})", then "{n} more — type more of the name"; × "Close the
+search". Picked: the row keeps its name, takes the item's category and unit
+(unless changed by hand), the note reads `Adds to "{item}" in HOME (+{qty}
+{unit}) — new name, it will be remembered.`, and **"Not this item"** undoes
+the choice (typing the name again does too). Saved: `pantry_item_id` +
+`add_name` (+ `name_pack` for a first size). Undo / Reopen removes the name
+(K61). The "Use …" / K85 path is unchanged.
+
+**Linked arrival (K90 + K95)** (`expenses/LinkedArrivedDialog.jsx`,
+`inventory/RestockForm.jsx` `boughtAs`, `hooks/useOrders.js`,
+`hooks/itemNameActions.setNamePack`). An order whose `item_name` is another
+name (exactKey) of its linked item: the pack field starts with that name's
+size; a first-time size is the name's. After `arrive_order`: the order gets
+`pack_size` and `arrival_pack_before = { packaging_unit, quantity_per_pack,
+name, saved }` (what the name had), then `save_item_names` `edit` with a
+fresh `was`, only while the name still has no size (else
+`arrival_pack_before` is emptied). Undo on the toast and "Back on the way":
+the name gets back what it had, only while it still has exactly `saved`.
+Texts unchanged. Unlinked "It arrived!" still never saves a usual size.
+
+**Reopen / Undo (K96).** `askUndoPurchase(trip, { count, cards })`:
+"Reopen this purchase?" says "The {cards} item(s) (€…) go(es) back to the
+cart, …" (`trips.cardCount`: one per card, a deleted card by its copy; from
+Receipts and from Money's purchase row); "Undo this purchase?" keeps
+counting lines. `reopenNotes`: a created item that stays adds up all its
+lines ("this purchase's 5 pcs were taken out"); a line with `merged_from`
+never counts as having created the item.
+
+**How a name line shows elsewhere.** Money → the opened purchase row: one
+row per line with its own name and amount (as built in round 4). Shop →
+"Receipts": one line per name with its price. Home → "History": title = the
+item of now, the line's name under it (stage 2).
+
+**Files.** New: `components/grocery/NameLines.jsx`,
+`hooks/useLastBoughtNames.js`, tests `lib/nameLines.test.js`,
+`components/nameLines.render.test.jsx`, `hooks/nameArrival.test.js`,
+`hooks/nameLinesToasts.test.js`. Changed: `lib/purchase.js`,
+`lib/itemNames.js`, `lib/moneyPurchase.js`, `lib/packSize.js`
+(`firstTimePatch` skips `onName`), `lib/lastPrice.js`
+(`fetchItemLineNames`), `lib/reopenUnits.js`, `lib/trips.js`,
+`lib/durable.js`, `hooks/usePurchase.js`, `hooks/useOrders.js`,
+`hooks/itemNameActions.js`, `grocery/ConfirmPurchase.jsx`,
+`GroceryItemTile.jsx`, `ShoppingMode.jsx`, `ReceiptsView.jsx`,
+`expenses/PurchaseForm.jsx`, `LinkedArrivedDialog.jsx`,
+`inventory/RestockForm.jsx`, `ItemEditor.jsx`, `pages/GroceryPage.jsx`,
+`ExpensesPage.jsx`.
+
+**Tests: 2319 → 2387 (123 → 127 files).** `lib/nameLines.test.js` (28:
+every naming kind, €3.87, K92, coupon 0.14 + 0.10 + 0.15 → €3.48, Shared
+0.72 + 0.51 + 0.77 / 0.67 + 0.48 + 0.72, K51, K94, one-line payload equal
+before and after 032, K93, K60 pcs item "1 pack" typed 4 → name_pack, the
+item's own name → item rule, J.1 22 pcs, K71, K53, K56, notes per item, K54);
+`components/nameLines.render.test.jsx` (18: K53 header, three lines →
+"3 items", "= 3 pcs added to the stock", the price filled per quantity, ×,
+K94 and the empty name lock Confirm, the durable warning, K71 with two lines
+and two cards, the Shared box with name lines, J.1, K93, before 032, 36-px
+targets and wrapping, the K53 tile in List, Shop mode and its cart, MONEY
+link + search + note + "Not this item" + save with add_name, the Arrived
+field under a name); `hooks/nameArrival.test.js` (8: K90 saved on the name,
+a name with a size, the other phone first, no usual size on the item; K95
+Undo, "Back on the way", changed by hand kept twice); `hooks/nameLinesToasts
+.test.js` (5: "Purchase confirmed · 3 items · €3.87", "Purchase saved · 1
+item · €4.50", the Reopen question for 1 and 2 cards, "Undo this purchase?"
+3 items); `supabase/migrations.test.js` block "032" → "stage 3: the app's own
+payloads" (9, PGlite: €3.87 stock 1 → 4, three expenses, the card bought
+once, Reopen → 1 and back once, the new name gone; coupon; Shared; K94 never
+sent and refused when forced; name_pack +4 and Reopen; J.1 22 pcs; K71;
+MONEY K54 + Reopen; the K90/K95 writes). Existing tests changed:
+`lib/itemNamesRead.test.js` (the stage-2 "never saved on the item from
+another name" now also expects `name_pack`, K60), `hooks/reopenNotes.test.js`
+("The 1 item … goes back", K96), `hooks/arrivalDb.fixture.js` (+
+`save_item_names` as 032 writes a name's pack).
+
+**Kata ragu (07/11 stage 3, tanya Zidane).** Built the safe way until
+answered.
+
+1. Line 1's name is not saved on the SHOP card (it is sent on the line;
+   K52 saves only quantity, unit, price, payer). Card "Chips & Snacks", line 1
+   changed to "Corn Snack", Confirm → expense "Corn Snack"; Reopen → the card
+   is back as "Chips & Snacks". Options: (a) as built; (b) also rename the
+   card. Suggestion: (a).
+2. Line 1 keeps the card's price when its name is changed (K55 fills lines
+   2…N only). Card €1.20, chip "Nuvole di drago" tapped on line 1 → stays
+   €1.20 (last Nuvole price €0.99 not filled). Options: (a) as built; (b) fill
+   it (it then becomes the card's price). Suggestion: (a).
+3. A name without a size, bought in the item's usual unit at the item's
+   usual size, saves nothing on the name. Cat Wet Food box 48, "Gourmet 1
+   box" kept at 48 → Gourmet stays without a size; typed 40 → Gourmet box 40.
+   Options: (a) as built; (b) save 48 on the name too. Suggestion: (a).
+4. Lines 2…N of a NEW item start with an empty "pcs per pack", also when
+   line 1 said 10. Options: (a) as built (report J.1: "required; with 12");
+   (b) start with line 1's 10. Suggestion: (a).
+5. A line name equal to ANOTHER card of the same cart that will make a new
+   item is not checked (K94 checks HOME only). Cart: new card "Patatine
+   Paprika" + card "Chips & Snacks" line 2 "Patatine Paprika": Chips first →
+   the name is added and the new card's stock also goes to Chips & Snacks;
+   the new card first → 032 refuses the whole purchase ("… is already a name
+   of … in HOME — check the line and save again."), nothing saved. Options:
+   (a) as built; (b) refuse under the line with a new text; (c) take the card
+   out of the cart. Suggestion: (b).
+6. A card under a word that is no name of its item (an old card linked
+   to an item renamed since) sends that word without add_name. Card "Snack
+   mix" linked to Chips & Snacks, 2 lines → expense "Snack mix", not
+   remembered. Options: (a) as built; (b) add it as a new name. Suggestion: (a).
+
 **Notes for later stages.**
 
-- **Stage 3:** K53: the SHOP card shows the item name with the entry's own name
-  under it. `discard_expired` is sent only on an item's first line.
-  `reopen_shopping_trip` counts lines, not cards, so a toast must not say the
-  wrong number of cards. A first line that keeps the item's own name has no name
-  element, so its pack follows the item's 9H rule. The usual size saved under
-  another name goes on the name (`name_pack`, K60): stage 2 only stops it going
-  on the item.
+- **Stage 3:** built (above).
 - **Stage 4:** merge `was` must send the stored `current_stock`, never the group
   total from `withGroupTotals`. A group target always sends all its variants,
   ticked and locked. The app's Reopen and Undo toasts must treat lines with
   `merged_from` as stock only, never as "stays in HOME" of a created item. The
   restore guard K64 is built here, before real data is merged. Deleting an item
   that has merged names also loses the way back, so the delete question must
-  say so.
+  say so. `reopenNotes` already treats a line with `merged_from` as stock only
+  (stage 3). The name lines of Confirm never show for a group or a variant
+  (K93): once stage 5 removes groups, the merged item is a normal item and
+  gets them by itself.
+- **Stage 5:** `LinkedArrivedDialog` with a group still has no name pack
+  (K90 is for normal items only); "It arrived!" stays without one.
 
 ---
 

@@ -15,7 +15,8 @@ const { normalizeName } = await import('../src/lib/categoryGuess.js')
 const { budgetCategoryFor, pastPurchaseChanges, purchasedItemsByExpense } = await import('../src/lib/budgetMap.js')
 const { LIVE_MONEY_CATEGORIES } = await import('../src/data/moneyCategories.fixture.js')
 // For 026: Confirm purchase again after Reopen, with the app's own code.
-const { confirmationPayload, purchaseLine, purchasePricing } = await import('../src/lib/purchase.js')
+const { confirmationPayload, emptyNameLine, expiryOncePerItem, laterNameLine, purchaseLine, purchasePricing } = await import('../src/lib/purchase.js')
+const { cardCount } = await import('../src/lib/trips.js')
 const { DURABLE_MONEY_CATEGORY_IDS, WORK_CATEGORY_ID } = await import('../src/data/constants.js')
 const { MONEY_CATEGORY_IDS_026 } = await import('../src/data/budgetKeywords.js')
 // For 028: order groups, with the requests the app builds (lib/orderGroups.js).
@@ -6619,6 +6620,178 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       await saveNames(fx, parent, { edit: [{ name: 'Salted Almonds', packaging_unit: 'pack', quantity_per_pack: 4 }] })
       expect((await namesOf(fx, parent))[0]).toMatchObject({ quantity_per_pack: 4, from_item_id: source })
       expect((await namesOf(fx, parent))[0].origin.id).toBe(source)
+    })
+  })
+
+  // Stage 3 (07/11): what the app itself builds for name lines in "Confirm
+  // purchase" and MONEY "Add expense" (lib/purchase.js, lib/moneyPurchase.js),
+  // sent to the real 032 functions. No SQL changed.
+  describe('stage 3: the app\'s own payloads', () => {
+    const appItem = (itemId) =>
+      row(`select id, name, unit, current_stock::float as current_stock, min_stock::float as min_stock, packaging_unit, quantity_per_pack::float as quantity_per_pack, expiry_date::text as expiry_date, category_id, is_group, group_id, names from pantry_items where id = $1`, [itemId])
+    const entryRow = (entryId, name, pantryId, extra = {}) => ({ id: entryId, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, price_qty: 1, price_unit: 'pcs', payer: 'shared', category_id: 'snacks', ...extra })
+    const nameDraft = (key, name, total, extra = {}) => ({ ...emptyNameLine(key, 'pcs'), name, totalText: total, ...extra })
+    const lineTotalOf = (i) => Math.round(((Number(i.price) || 0) * (Number(i.quantity) || 1) * 100) / (Number(i.price_qty) || 1)) / 100
+    const appPayload = (tripId, lines, more = {}) =>
+      confirmationPayload({ id: tripId, date: '2026-11-07', at: '2026-11-07T10:00:00Z', lines, answers: {}, totalOf: lineTotalOf, expenseCategoryFor: () => BUDGET, ...more })
+    // A card of "Snack Box S3" (stock 1) bought as Corn Snack S3 €1.39, Nuvole S3 €0.99 and a new Paprika S3 €1.49.
+    let card = 0
+    async function snackCard(payer = P1) {
+      const n = ++card
+      const tag = (name) => (n === 1 ? `${name} S3` : `${name} S3-${n}`)
+      const item = await addItem(fx, tag('Snack Box'), 'pcs', 1, { min: 2 })
+      await addNames(fx, item, [tag('Corn Snack'), tag('Nuvole')])
+      const entry = await addEntry(fx, tag('Corn Snack'), { pantry: item, price: 1.39 })
+      const home = [await appItem(item)]
+      const first = purchaseLine(entryRow(entry, tag('Corn Snack'), item, { price: 1.39, payer }), home, {}, { typedName: tag('Corn Snack') })
+      const lines = [first, laterNameLine(first, nameDraft(1, tag('Nuvole'), '0.99'), home), laterNameLine(first, nameDraft(2, tag('Paprika'), '1,49'), home)]
+      return { item, entry, lines, tag }
+    }
+
+    it('€1.39 + €0.99 + €1.49 = €3.87: stock 1 → 4, three expenses with the real names, the card bought once; "3 items"; Reopen → stock 1, the card back in the cart once, "1 item", the new name gone', async () => {
+      const { item, entry, lines } = await snackCard()
+      const trip = next()
+      const t = await confirm(fx, appPayload(trip, lines))
+      expect(Number(t.total)).toBe(3.87)
+      expect(await stockOf(fx, item)).toBe(4)
+      expect(await expensesOf(fx, trip)).toEqual([
+        { description: 'Paprika S3', amount: 1.49 },
+        { description: 'Corn Snack S3', amount: 1.39 },
+        { description: 'Nuvole S3', amount: 0.99 },
+      ])
+      expect(await rows(`select distinct paid_by from expenses where trip_id = $1`, [trip])).toEqual([{ paid_by: P1 }])
+      expect(await entryOf(fx, entry)).toMatchObject({ completed: true, in_cart: false, pantry_item_id: item, trip_id: trip })
+      expect((await namesOf(fx, item)).map((n) => [n.name, n.added_by_trip])).toEqual([['Corn Snack S3', null], ['Nuvole S3', null], ['Paprika S3', trip]])
+      // The toast counts lines, the Reopen question cards (K96).
+      const saved = await rows(`select id, grocery_item_id, grocery_snapshot from shopping_trip_items where trip_id = $1`, [trip])
+      expect(lines.length).toBe(3)
+      expect(cardCount(saved)).toBe(1)
+      expect(await reopen(fx, trip)).toBe(3)
+      expect(await stockOf(fx, item)).toBe(1)
+      expect(await count(fx, 'grocery_items', 'id = $1', [entry])).toBe(1)
+      expect(await entryOf(fx, entry)).toMatchObject({ completed: false, in_cart: true, trip_id: null })
+      expect((await namesOf(fx, item)).map((n) => n.name)).toEqual(['Corn Snack S3', 'Nuvole S3'])
+    })
+
+    it('a coupon of −€0.39 on that purchase: 0.14 + 0.10 + 0.15 → paid 1.25 + 0.89 + 1.34 = €3.48', async () => {
+      const { lines, tag } = await snackCard()
+      const trip = next()
+      const pricing = purchasePricing(lines.map((l) => l.item), lineTotalOf, {}, { kind: 'amount', text: '0,39' })
+      const t = await confirm(fx, appPayload(trip, lines, { pricing }))
+      expect(Number(t.total)).toBe(3.48)
+      expect(await rows(`select name, coupon_share::float as share, line_total::float as total, list_total::float as list from shopping_trip_items where trip_id = $1 order by position`, [trip])).toEqual([
+        { name: tag('Corn Snack'), share: 0.14, total: 1.25, list: 1.39 },
+        { name: tag('Nuvole'), share: 0.1, total: 0.89, list: 0.99 },
+        { name: tag('Paprika'), share: 0.15, total: 1.34, list: 1.49 },
+      ])
+    })
+
+    it('Shared, the first person paid €2.00 of €3.87: 0.72 + 0.51 + 0.77; the second 0.67 + 0.48 + 0.72 = €1.87', async () => {
+      const { lines, tag } = await snackCard('shared')
+      const trip = next()
+      const parts = spreadParts([1.39, 0.99, 1.49], { [P1]: 2, [P2]: 1.87 })
+      await confirm(fx, appPayload(trip, lines, { partsByItem: new Map(lines.map((l, i) => [l.item.id, parts[i]])) }))
+      const got = await rows(`select description, ${C1}::float as a, ${C2}::float as b from expenses where trip_id = $1 order by amount desc`, [trip])
+      expect(got).toEqual([
+        { description: tag('Paprika'), a: 0.77, b: 0.72 },
+        { description: tag('Corn Snack'), a: 0.72, b: 0.67 },
+        { description: tag('Nuvole'), a: 0.51, b: 0.48 },
+      ])
+      expect(Math.round(got.reduce((s, e) => s + e.b, 0) * 100) / 100).toBe(1.87)
+    })
+
+    it('K94: a word of another item is never sent (the line is not ready); forced with add_name, 032 refuses the whole purchase', async () => {
+      const other = await addItem(fx, 'Rice Cakes S3', 'pcs', 0)
+      await addNames(fx, other, ['Galletti S3'])
+      const { item, lines } = await snackCard()
+      const home = [await appItem(item), await appItem(other)]
+      const taken = laterNameLine(lines[0], nameDraft(9, 'galletti s3', '1'), home)
+      expect(taken).toMatchObject({ ready: false, naming: { kind: 'taken', problem: '"galletti s3" is already a name of "Rice Cakes S3" in HOME.' } })
+      const forced = appPayload(next(), [lines[0], taken])
+      forced.items[1].add_name = true
+      expect(await fails(() => confirm(fx, forced))).toBe('"galletti s3" is already a name of "Rice Cakes S3" in HOME — check the line and save again.')
+      expect(await stockOf(fx, item)).toBe(1)
+    })
+
+    it('a first pack size under a name: a pcs item, "Chew Mini S3" bought "1 pack" typed 4 → +4, on the name; the item\'s usual box 12 unchanged; Reopen empties it', async () => {
+      const item = await addItem(fx, 'Dog Chews S3', 'pcs', 2, { packaging_unit: 'box', quantity_per_pack: 12 })
+      await addNames(fx, item, ['Chew Mini S3'])
+      const entry = await addEntry(fx, 'Dog Chews S3', { pantry: item, price: 6 })
+      const home = [await appItem(item)]
+      const first = purchaseLine(entryRow(entry, 'Dog Chews S3', item, { price: 6 }), home, {}, { typedName: 'Dog Chews S3' })
+      const line = laterNameLine(first, nameDraft(1, 'Chew Mini S3', '2.5', { unit: 'pack' }), home, { pack: { text: '4', unit: 'pack' } })
+      const trip = next()
+      await confirm(fx, appPayload(trip, [first, line]))
+      expect(await stockOf(fx, item)).toBe(2 + 1 + 4)
+      expect(await fieldsOf(fx, item)).toMatchObject({ packaging_unit: 'box', per: 12 })
+      expect((await namesOf(fx, item))[0]).toMatchObject({ name: 'Chew Mini S3', packaging_unit: 'pack', quantity_per_pack: 4, pack_by_trip: trip })
+      await reopen(fx, trip)
+      expect(await stockOf(fx, item)).toBe(2)
+      expect((await namesOf(fx, item))[0]).toMatchObject({ packaging_unit: null, quantity_per_pack: null })
+    })
+
+    it('J.1: a new "Biscotti S3", line 1 "1 pack" counted in pcs (10 per pack), line 2 "Gocciole S3" "1 pack" with 12 → 10 + 12 = 22 pcs, one item', async () => {
+      const entry = await addEntry(fx, 'Biscotti S3', { unit: 'pack', price: 2.2 })
+      const first = purchaseLine(entryRow(entry, 'Biscotti S3', null, { unit: 'pack', price: 2.2, price_unit: 'pack' }), [], { newUnit: { unit: 'pack', stockUnit: 'pcs', text: '10' } }, { unitsReady: true, typedName: 'Biscotti S3' })
+      const line = laterNameLine(first, nameDraft(1, 'Gocciole S3', '2.9', { unit: 'pack' }), [], { pack: { text: '12', unit: 'pack' } })
+      const trip = next()
+      await confirm(fx, appPayload(trip, [first, line]))
+      expect(await count(fx, 'pantry_items', `name in ('Biscotti S3', 'Gocciole S3')`)).toBe(1)
+      const item = (await row(`select id from pantry_items where name = 'Biscotti S3'`)).id
+      expect(await fieldsOf(fx, item)).toMatchObject({ stock: 22, unit: 'pcs', packaging_unit: 'pack', per: 10 })
+      expect((await namesOf(fx, item)).map((n) => [n.name, n.packaging_unit, n.quantity_per_pack])).toEqual([['Gocciole S3', 'pack', 12]])
+      expect(await reopen(fx, trip)).toBe(2)
+      expect(await stockOf(fx, item)).toBeNull()
+    })
+
+    it('K71: expired stock is thrown away once, on the item\'s first line: two lines and a second card of the item; Reopen gives it back', async () => {
+      const item = await addItem(fx, 'Kefir S3', 'pcs', 3, { expiry: '2020-01-01', category: 'dairy' })
+      const one = await addEntry(fx, 'Kefir S3', { pantry: item, price: 1 })
+      const two = await addEntry(fx, 'Kefir S3', { pantry: item, price: 1.2 })
+      const home = [await appItem(item)]
+      const answers = { [one]: { discard: true, expiryDate: '2026-12-01' } }
+      const first = purchaseLine(entryRow(one, 'Kefir S3', item, { price: 1, category_id: 'dairy' }), home, answers[one], { typedName: 'Kefir S3' })
+      const lines = expiryOncePerItem([first, laterNameLine(first, nameDraft(1, 'Kefir Greco S3', '0.9'), home), purchaseLine(entryRow(two, 'Kefir S3', item, { price: 1.2, category_id: 'dairy' }), home, {}, { typedName: 'Kefir S3' })])
+      expect(lines.every((l) => l.ready)).toBe(true)
+      const trip = next()
+      await confirm(fx, confirmationPayload({ id: trip, date: '2026-11-07', at: '2026-11-07T10:00:00Z', lines, answers, totalOf: lineTotalOf, expenseCategoryFor: () => BUDGET }))
+      expect(await stockOf(fx, item)).toBe(3)
+      expect((await logsOf(fx, item)).map((l) => [l.reason, l.change])).toEqual([['discarded', -3], ['purchased', 1], ['purchased', 1], ['purchased', 1]])
+      expect(await fieldsOf(fx, item)).toMatchObject({ expiry: '2026-12-01' })
+      await reopen(fx, trip)
+      expect(await stockOf(fx, item)).toBe(3)
+      expect(await fieldsOf(fx, item)).toMatchObject({ expiry: '2020-01-01' })
+    })
+
+    it('MONEY K54: a row attached to an item keeps its name, adds to the item and becomes its name; Undo (Reopen) takes the name away', async () => {
+      const item = await addItem(fx, 'Tea Caddy S3', 'pcs', 1, { category: 'beverages' })
+      const home = [await appItem(item)]
+      const line = rowLine({ ...emptyRow(1), name: 'Assam Leaf S3', priceText: '4,50', categoryId: 'beverages', attachedTo: item }, home, undefined, { namesReady: true })
+      const { lines } = pricedLines([line])
+      const trip = next()
+      await confirm(fx, moneyPurchasePayload({ id: trip, date: '2026-11-07', at: '2026-11-07T10:00:00Z', paidBy: P1, lines, budgetFor: () => BUDGET }))
+      expect(await stockOf(fx, item)).toBe(2)
+      expect(await count(fx, 'pantry_items', `name = 'Assam Leaf S3'`)).toBe(0)
+      expect(await expensesOf(fx, trip)).toEqual([{ description: 'Assam Leaf S3', amount: 4.5 }])
+      expect((await namesOf(fx, item)).map((n) => [n.name, n.added_by_trip])).toEqual([['Assam Leaf S3', trip]])
+      await reopen(fx, trip)
+      expect(await stockOf(fx, item)).toBe(1)
+      expect(await namesOf(fx, item)).toEqual([])
+    })
+
+    it('K90 + K95: the writes an arrival under a name makes (save_item_names edit with `was`): the size on the name, back to empty, never over a size changed by hand', async () => {
+      const item = await addItem(fx, 'Cat Pouches S3', 'pcs', 2, { packaging_unit: 'box', quantity_per_pack: 48 })
+      await addNames(fx, item, ['Felix S3'])
+      const edit = async (fields) => saveNames(fx, item, { edit: [{ name: 'Felix S3', ...fields }] })
+      await edit({ packaging_unit: 'pack', quantity_per_pack: 4 })
+      expect((await namesOf(fx, item))[0]).toMatchObject({ packaging_unit: 'pack', quantity_per_pack: 4, pack_by_trip: null })
+      expect(await fieldsOf(fx, item)).toMatchObject({ packaging_unit: 'box', per: 48 })
+      // Sent again (a lost answer): nothing new is written.
+      await edit({ packaging_unit: 'pack', quantity_per_pack: 4 })
+      await edit({ packaging_unit: null, quantity_per_pack: null })
+      expect((await namesOf(fx, item))[0]).toMatchObject({ packaging_unit: null, quantity_per_pack: null })
+      // `was` is not the list of now: refused, nothing changed.
+      expect(await fails(() => saveNames(fx, item, { edit: [{ name: 'Felix S3', packaging_unit: 'pack', quantity_per_pack: 4 }] }, []))).toBe('"Cat Pouches S3" changed meanwhile (on the other phone?) — open it again. Nothing was changed.')
     })
   })
 })

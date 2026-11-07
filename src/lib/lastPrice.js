@@ -91,3 +91,16 @@ export async function fetchTripLines(name) {
     return []
   }
 }
+
+// The names an item was last bought under (its purchase lines, newest
+// first), for the name chips of Confirm purchase (plan 9N, K56). [] when
+// offline or on any error: the chips then keep the order of the list.
+export async function fetchItemLineNames(itemId) {
+  if (!itemId) return []
+  try {
+    const { data, error } = await supabase.from('shopping_trip_items').select('name, created_at').eq('pantry_item_id', itemId).order('created_at', { ascending: false }).limit(50)
+    return error ? [] : (data ?? []).map((line) => line.name).filter(Boolean)
+  } catch {
+    return []
+  }
+}

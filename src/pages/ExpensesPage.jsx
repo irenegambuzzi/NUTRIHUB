@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ExpenseForm } from '../components/expenses/ExpenseForm'
+import { cardCount } from '../lib/trips'
+import { useItemNamesReady } from '../hooks/useItemNamesReady'
 import { PurchaseForm } from '../components/expenses/PurchaseForm'
 import { SelectExpenses } from '../components/expenses/MergeDialog'
 import { MoneyExplorer } from '../components/expenses/MoneyExplorer'
@@ -74,6 +76,8 @@ export function ExpensesPage() {
   // 30 pcs each · 60 pcs" (plan 9H).
   const { rows: pantryRows } = pantryStore.useRows()
   const pantryById = useMemo(() => new Map(pantryRows.map((p) => [p.id, p])), [pantryRows])
+  // supabase/032 (plan 9N): "Add expense" may attach a row to an item as a new name (K54).
+  const namesReady = useItemNamesReady(pantryRows) === true
   const orderByExpense = useMemo(() => ordersByExpense(orders), [orders])
   const discountNote = (expense) => expenseDiscountNote(expense, (id) => orderByExpense.get(id))
   const orderExpenseIds = useMemo(() => new Set(orders.map((o) => o.expense_id).filter(Boolean)), [orders])
@@ -142,7 +146,9 @@ export function ExpensesPage() {
   // Reopen / Undo purchase / Split for a whole purchase, from its row.
   const undoPurchase = (trip) => {
     const all = tripExpenses(trip.id)
-    return askUndoPurchase(trip, { count: all.length, total: purchasePart(all, all).fullTotal })
+    // Reopen counts the SHOP cards that go back to the cart (K96).
+    const own = tripLines.filter((l) => l.trip_id === trip.id)
+    return askUndoPurchase(trip, { count: all.length, ...(own.length ? { cards: cardCount(own) + all.filter((e) => e.merged_at).length } : {}), total: purchasePart(all, all).fullTotal })
   }
 
   const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} noteOf={discountNote} onEdit={editExpense} onDelete={removeExpense} />
@@ -344,6 +350,7 @@ export function ExpensesPage() {
             styleFor={styleFor}
             onClose={() => setAddingExpense(false)}
             partsReady={partsReady}
+            namesReady={namesReady}
           />
         )}
 

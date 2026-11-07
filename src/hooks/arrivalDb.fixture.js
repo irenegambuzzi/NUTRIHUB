@@ -8,6 +8,7 @@
 // `{ units: true }`: unarrive_order as supabase/031 replaces it — the
 // arrival's stock converted from the unit of its own history row to the
 // item's unit now, or not taken out at all when it can't be (plan 9M).
+// save_item_names as supabase/032 writes a name's pack size (plan 9N).
 
 const DEFAULTS = {
   orders: { status: 'on_the_way', stock_added: 0, arrived_item_id: null, arrived_log_id: null, arrived_date: null, pantry_item_id: null, grocery_item_id: null, pack_size: null, arrival_pack_before: null, group_id: null, group_share: 0 },
@@ -162,7 +163,31 @@ export function arrivalDb({ units = false } = {}) {
     return { ...pi }
   }
 
-  const functions = { arrive_order: arriveOrder, unarrive_order: unarriveOrder, increment_stock: incrementStock }
+  // supabase/032 save_item_names, the parts the app sends from an arrival
+  // (plan 9N, K90 + K95): `edit` of a name's pack size, guarded by `was`;
+  // already as asked → nothing written; a size changed by hand clears
+  // pack_by_trip. Names compared with capitals and outer spaces ignored.
+  function saveItemNames({ payload }) {
+    const pi = db.row('pantry_items', payload.item_id)
+    if (!pi) throw new Error('This item was deleted meanwhile — open it again. Nothing was changed.')
+    const key = (name) => String(name ?? '').trim().toLowerCase()
+    const names = pi.names ?? []
+    const asked = [...(payload.add ?? []), ...(payload.edit ?? [])]
+    const holds = (n, a) => Object.entries(a).every(([k, v]) => same(n[k], v))
+    if (!asked.some((a) => !names.some((n) => holds(n, a))) && !(payload.remove ?? []).some((r) => names.some((n) => key(n.name) === key(r)))) return { ...pi }
+    if (JSON.stringify(names) !== JSON.stringify(payload.was?.names ?? null)) throw new Error(`"${pi.name}" changed meanwhile (on the other phone?) — open it again. Nothing was changed.`)
+    let next = names.filter((n) => !(payload.remove ?? []).some((r) => key(r) === key(n.name)))
+    for (const e of payload.edit ?? []) {
+      const fields = Object.fromEntries(Object.entries(e).filter(([k]) => ['packaging_unit', 'quantity_per_pack', 'price', 'price_qty', 'price_unit'].includes(k)))
+      if ('packaging_unit' in fields || 'quantity_per_pack' in fields) fields.pack_by_trip = null
+      next = next.map((n) => (key(n.name) === key(e.name) ? { ...n, ...fields } : n))
+    }
+    for (const a of payload.add ?? []) next = [...next, { ...a, from_item_id: null, origin: null, added_at: db.now(), added_by_trip: null, pack_by_trip: null }]
+    pi.names = next
+    return { ...pi }
+  }
+
+  const functions = { arrive_order: arriveOrder, unarrive_order: unarriveOrder, increment_stock: incrementStock, save_item_names: saveItemNames }
 
   db.supabase = {
     from,

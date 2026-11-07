@@ -87,8 +87,9 @@ export function packField({ item, unit, quantity = 1, text = '', required = true
 }
 
 // The usual size a first-time save writes on the item ({} for none). Sent
-// with a purchase line as its packaging_unit / quantity_per_pack.
-export const firstTimePatch = (pack) => (pack?.firstTime ? { packaging_unit: pack.unit, quantity_per_pack: pack.value } : {})
+// with a purchase line as its packaging_unit / quantity_per_pack. A size for
+// another name goes on that name, never here (lib/itemNames.js namedPack).
+export const firstTimePatch = (pack) => (pack?.firstTime && !pack.onName ? { packaging_unit: pack.unit, quantity_per_pack: pack.value } : {})
 
 // The texts, exactly as the screens show them.
 export const packLabel = (pack) => `${pack.stockUnit} per ${pack.unit}`

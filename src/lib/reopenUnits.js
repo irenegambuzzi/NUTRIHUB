@@ -52,9 +52,11 @@ export const arrivalNotTakenOutText = (name) => `"${name}": this arrival's stock
 // item. `lines`: the purchase's lines read before the call; `before` /
 // `after`: their HOME items before and after it; `logs`: the purchase's
 // own history rows (read before). A created item still there afterwards
-// was kept (031). An item whose stock couldn't be converted is named only
+// was kept (031): what came out is every line of it added up (name lines of
+// one item, plan 9N K96). An item whose stock couldn't be converted is named only
 // when its stock is what 031 leaves and not what the database before 031
-// would have made of it.
+// would have made of it. A line a merge moved (`merged_from`, 032) never
+// created the item it is on now: stock only.
 export function reopenNotes({ lines, before, after, logs = [] }) {
   const units = boughtUnits(lines, logs)
   const notes = []
@@ -64,12 +66,12 @@ export function reopenNotes({ lines, before, after, logs = [] }) {
     const now = after.find((i) => i.id === item.id)
     if (!now) continue
     const factors = own.map((l) => lineFactor(l, item, units.get(l.id)))
-    const created = own.findIndex((l) => l.pantry_created)
+    const created = own.findIndex((l) => l.pantry_created && !l.merged_from)
     if (created >= 0) {
-      const line = own[created]
-      const f = factors[created]
-      const added = Number(line.stock_added) || 0
-      notes.push(f == null ? (added > 0 ? keptNotTakenOutText(item.name) : keptText(item.name, '')) : keptText(item.name, added > 0 ? quantity(added * f, item.unit) : ''))
+      const added = own.map((l) => Number(l.stock_added) || 0)
+      const stuck = own.some((_, k) => factors[k] == null && added[k] > 0)
+      const taken = own.reduce((sum, _, k) => sum + (factors[k] == null ? 0 : added[k] * factors[k]), 0)
+      notes.push(stuck ? keptNotTakenOutText(item.name) : keptText(item.name, taken > 0 ? quantity(taken, item.unit) : ''))
       continue
     }
     const stuck = own.some((l, k) => factors[k] == null && (Number(l.stock_added) > 0 || Number(l.stock_discarded) > 0))

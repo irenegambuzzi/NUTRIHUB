@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Check, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, Plus, Trash2, X } from 'lucide-react'
 import { DateField } from '../ui/DateField'
 import { Input, Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
@@ -13,13 +13,17 @@ import { FixCategory } from './FixCategory'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
+import { NameField, NameLine } from './NameLines'
 import { ShopPicker } from '../expenses/ShopPicker'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { editPatch, editedItem, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
+import { cardStock, editPatch, editedItem, emptyNameLine, expiryOncePerItem, laterNameLine, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
+import { cardTitle, nameChips, otherNames } from '../../lib/itemNames'
+import { durableLookalike, durableLookalikeText } from '../../lib/durable'
+import { useLastBoughtNames } from '../../hooks/useLastBoughtNames'
 import { variantOrder } from '../../lib/groups'
 import { shopUnits } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
@@ -68,7 +72,15 @@ import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../l
 // A line that has a price but whose total can't be worked out from it
 // (K9, "?") blocks Confirm until its total is typed; a line without any
 // price doesn't.
-export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits }) {
+// One item, many names (plan 9N, with supabase/032: `namesReady`, from
+// useItemNamesReady; false shows and sends exactly what it always did): a
+// card of a normal HOME item, or of a new one, has a name on its own line
+// and "+ Add another name" for more lines of that item, each with its own
+// name, quantity, price and discount (lib/purchase.js laterNameLine). Lines
+// 2…N exist only on this screen (K52) and are paid like line 1 (K92).
+// Expired stock is asked about once per item (K71). `homeCategories` ({
+// parents, subsByParent }) lets a new name that looks durable be pointed out.
+export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits, namesReady = false, homeCategories = null }) {
   const { confirmPurchase } = usePurchase()
   const partsFound = useExpensePartsReady()
   const unitsFound = useNewItemUnitsReady()
@@ -117,6 +129,11 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       return next
     })
   const [answers, setAnswers] = useState({})
+  // The name typed on each card's own line, and the drafts of its lines
+  // 2…N (card id → [draft]), with a key per line for this screen.
+  const [typedNames, setTypedNames] = useState({})
+  const [nameLines, setNameLines] = useState({})
+  const nextKey = useRef(1)
   // Discounts typed on the screen: by item id { kind, text }, and the
   // coupon of the whole purchase.
   const [discounts, setDiscounts] = useState({})
@@ -142,12 +159,21 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
-  const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item), unitsReady: unitsKnown })
+  const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item), unitsReady: unitsKnown, typedName: namesReady ? typedNames[item.id] ?? item.name : undefined })
+  // The lines of this trip: each card's own line, then its name lines.
+  const tripLinesOf = (cards) => {
+    const flat = cards
+      .filter((l) => inTrip(l.item))
+      .flatMap((first) => [first, ...(first.takesNames ? (nameLines[first.item.id] ?? []).map((draft) => laterNameLine(first, draft, pantryItems, answers[`${first.item.id}:${draft.key}`])) : [])])
+    return namesReady ? expiryOncePerItem(flat) : flat
+  }
   const allLines = itemsFor(edits).map(lineFor)
   // A group's lines together in one card, one line per variant (each its
   // own stock and its own expense), variants at 0 first.
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
-  const lineOf = new Map(allLines.map((l) => [l.item.id, l]))
+  const lines = tripLinesOf(allLines)
+  const shown = new Map(lines.map((l) => [l.item.id, l]))
+  const lineOf = new Map(allLines.map((l) => [l.item.id, shown.get(l.item.id) ?? l]))
   const groupOfItem = (item) => {
     const entry = pantryItemFor(item, pantryItems)
     if (!entry) return null
@@ -158,7 +184,6 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     groupOfItem,
     (item) => pantryItemFor(item, pantryItems)
   )
-  const lines = allLines.filter((l) => inTrip(l.item))
   const items = lines.map((l) => l.item)
   const pricing = purchasePricing(items, totalOf, discounts, coupon)
   const total = pricing.priced.paidTotal
@@ -167,7 +192,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const twice = new Map(lines.map((l, i) => [l.item.id, twiceTexts[i]]))
   const open = lines.filter((l) => !l.ready || twice.get(l.item.id)).length
   const unknown = items.filter((i) => totalOf(i) === null).length
-  const leftInCart = allLines.length - lines.length
+  // Cards (not lines) left for another trip.
+  const leftInCart = allLines.filter((l) => !inTrip(l.item)).length
   // Who paid for the whole trip; null when it was shared out differently.
   const payers = new Set(items.map((i) => i.payer || 'shared'))
   const tripPayer = payers.size === 1 ? [...payers][0] : null
@@ -192,6 +218,19 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 
   const answer = (itemId, patch) => setAnswers((a) => ({ ...a, [itemId]: { ...a[itemId], ...patch } }))
 
+  // A new name line starts at 1, in the card's unit of now, with no name
+  // (K51); it never changes another line.
+  const addNameLine = (card) => {
+    const key = nextKey.current++
+    setNameLines((all) => ({ ...all, [card.id]: [...(all[card.id] ?? []), emptyNameLine(key, card.unit)] }))
+  }
+  const changeNameLine = (cardId, key, patch) => setNameLines((all) => ({ ...all, [cardId]: (all[cardId] ?? []).map((d) => (d.key === key ? { ...d, ...patch } : d)) }))
+  const removeNameLine = (cardId, key) => setNameLines((all) => ({ ...all, [cardId]: (all[cardId] ?? []).filter((d) => d.key !== key) }))
+  const durableTextOf = (name) => {
+    const path = homeCategories ? durableLookalike(name, homeCategories) : ''
+    return path ? durableLookalikeText(name, path) : ''
+  }
+
   const attach = async (file) => {
     setBusy(true)
     const { data } = await addPhoto(file, date)
@@ -201,8 +240,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 
   const confirm = async () => {
     const latest = editsRef.current
-    const confirmed = itemsFor(latest).filter(inTrip)
-    const confirmedLines = confirmed.map(lineFor)
+    const confirmedLines = tripLinesOf(itemsFor(latest).map(lineFor))
+    const confirmed = confirmedLines.map((l) => l.item)
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready) || twiceProblems(confirmedLines).some(Boolean)) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
@@ -254,6 +293,24 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     <PurchaseLine
       key={line.item.id}
       line={line}
+      namesReady={namesReady}
+      names={
+        line.takesNames && inTrip(line.item)
+          ? {
+              typed: typedNames[line.item.id] ?? line.item.name,
+              onType: (name) => setTypedNames((all) => ({ ...all, [line.item.id]: name })),
+              later: lines.filter((l) => l.item.cardId === line.item.id).map((l) => ({ line: l, draft: (nameLines[line.item.id] ?? []).find((d) => l.item.id === `${line.item.id}:${d.key}`) })),
+              onAdd: () => addNameLine(line.item),
+              onDraft: (key, patch) => changeNameLine(line.item.id, key, patch),
+              onRemove: (key) => removeNameLine(line.item.id, key),
+              discountOf: (id) => discounts[id] ?? { kind: 'percent', text: '' },
+              pricedOf: (id) => pricing.byItem.get(id) ?? null,
+              onDiscount: (id, next) => setDiscounts((all) => ({ ...all, [id]: next })),
+              onPack: (id, unit, text) => answer(id, { pack: { text, unit } }),
+              durableTextOf,
+            }
+          : null
+      }
       twice={twice.get(line.item.id) ?? ''}
       ordered={openOrderOf(line.item)}
       onCancelOrder={onCancelOrder}
@@ -351,7 +408,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
-        {lines.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={pricing.priced} names={items.map((i) => i.name)} />}
+        {lines.length > 1 && <PurchaseDiscountBox coupon={coupon} onChange={setCoupon} priced={pricing.priced} names={lines.map((l) => l.naming?.name || l.item.name)} />}
 
         <section className="space-y-2">
           <p className="text-xs font-bold text-[var(--color-primary)] uppercase">Receipt (optional)</p>
@@ -440,8 +497,19 @@ const NO_TOTAL_TEXT = "The total can't be worked out from the price's unit — t
 // is left, so the other phone sees it.
 // `ordered`: the order on the way for this entry (it can't be bought
 // here); `inTrip` / `onToggleTrip`: whether it is part of this trip.
-function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {} }) {
+// `names` (plan 9N, null when the card can't have name lines): the name
+// typed on this line and the card's other lines (`later`: { line, draft }),
+// with what changes them.
+function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {}, namesReady = false, names = null }) {
   const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock, stockUnit } = line
+  // K53: the HOME item's name, with the card's own name under it.
+  const { title, subtitle } = namesReady ? cardTitle(item, line.takesNames ? pantry : null) : { title: item.name, subtitle: '' }
+  const home = line.target ?? { name: item.name }
+  const recent = useLastBoughtNames(line.target?.id ?? null, Boolean(names) && otherNames(line.target).length > 0)
+  const typedOn = names ? [names.typed, ...names.later.map((l) => l.draft.name)] : []
+  const chipsFor = (index) => nameChips(home, recent, typedOn.filter((_, i) => i !== index))
+  const several = Boolean(names?.later.length)
+  const stock = several ? cardStock([line, ...names.later.map((l) => l.line)]) : null
   const [quantityText, setQuantityText] = useState(null)
   const [totalText, setTotalText] = useState(null)
   const [fixing, setFixing] = useState(false)
@@ -482,7 +550,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
   }
 
   const unitPrice = formatUnitPrice(item)
-  const needsAnswer = needsPackSize || needsVariant || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean')
+  const needsAnswer = needsPackSize || needsVariant || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean') || Boolean(line.naming?.problem) || Boolean(names?.later.some((l) => !l.line.ready))
 
   if (ordered) {
     return (
@@ -517,7 +585,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
         <CategoryIcon category={item.category_id} size={16} className="mt-0.5 text-[var(--color-text-muted)]" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
-            <span className="truncate">{item.name}</span>
+            <span className="truncate">{title}</span>
             {entryIsOneTime(item, pantry) && <OneTimeBadge className="shrink-0" />}
             {!item.category_id && !pantry && (onUpdateCategory ? (
               <button type="button" onClick={() => setFixing((v) => !v)} aria-label={`Choose a category for ${item.name}`} aria-expanded={fixing}>
@@ -527,6 +595,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
               <NoCategoryLabel className="shrink-0" />
             ))}
           </p>
+          {subtitle && <p className="text-[10px] text-[var(--color-text-muted)] break-words">{subtitle}</p>}
           <p className="text-[10px] text-[var(--color-text-muted)]">
             {[item.category_id && categoryName(item.category_id), unitPrice, pantry ? `restocks "${pantry.name}"` : line.durable ? 'expense only' : 'new in the pantry'].filter(Boolean).join(' · ')}
           </p>
@@ -538,6 +607,19 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
 
       {!item.category_id && !pantry && !line.durable && <p className="text-[11px] text-[var(--color-text-muted)]">Is this a consumable? Durable items don't go into HOME stock.</p>}
       {fixing && !item.category_id && <FixCategory item={item} onUpdateCategory={onUpdateCategory} onDone={() => setFixing(false)} />}
+
+      {names && (
+        <NameField
+          value={names.typed}
+          placeholder={item.name}
+          onChange={names.onType}
+          label={`Name of ${item.name}`}
+          chipsLabel={`Names for ${item.name}`}
+          naming={line.naming}
+          chips={chipsFor(0)}
+          durableText={line.naming?.kind === 'new' ? names.durableTextOf(line.naming.name) : ''}
+        />
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1">
@@ -658,6 +740,36 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
             <DateField label="New expiry date" value={answer.expiryDate ?? ''} onChange={(iso) => onAnswer({ expiryDate: iso || null })} onValidity={onDateValidity} />
           </div>
         </div>
+      )}
+
+      {names &&
+        names.later.map(({ line: later, draft }, i) => (
+          <NameLine
+            key={later.item.id}
+            line={later}
+            draft={draft}
+            number={i + 2}
+            cardName={item.name}
+            chips={chipsFor(i + 1)}
+            durableText={later.naming?.kind === 'new' ? names.durableTextOf(later.naming.name) : ''}
+            priced={names.pricedOf(later.item.id)}
+            discount={names.discountOf(later.item.id)}
+            onDiscount={(next) => names.onDiscount(later.item.id, next)}
+            onDraft={(patch) => names.onDraft(draft.key, patch)}
+            onRemove={() => names.onRemove(draft.key)}
+            onPack={(text) => names.onPack(later.item.id, later.pack.unit, text)}
+            onNumberValidity={onNumberValidity}
+          />
+        ))}
+      {names && (
+        <button type="button" onClick={names.onAdd} className="min-h-9 inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-accent)]">
+          <Plus size={14} /> Add another name
+        </button>
+      )}
+      {stock && (
+        <p className="text-[11px] font-bold text-[var(--color-text-soft)]">
+          = {stock.total} {stock.unit} added to the stock
+        </p>
       )}
     </div>
   )

@@ -64,6 +64,8 @@ export function durableLookalike(name, available) {
   return [main?.name, sub?.name].filter(Boolean).join(' › ')
 }
 
+export const durableLookalikeText = (name, path) => `“${String(name ?? '').trim()}” looks like a durable item (${path}). Durable items don't go into HOME stock — record it in MONEY instead.`
+
 // Why an order never goes into HOME, or null: 'durable' (its budget
 // category is durable, or the SHOP entry it was ordered from is in the
 // Durables tree) or 'service' (its budget category is a service).

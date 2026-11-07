@@ -91,8 +91,10 @@ async function notesAfterReopen(seen) {
 // Asks, then undoes a purchase the way its source needs (lib/trips.js
 // purchaseUndo): Reopen (SHOP), Undo purchase (MONEY) or Split (merged
 // expenses, never deleted). `count` / `total`: what it holds now; `gone`:
-// the parts already deleted by hand (goneSummary).
-export async function askUndoPurchase(trip, { count, total, gone = null }) {
+// the parts already deleted by hand (goneSummary). `cards`: how many SHOP
+// cards go back to the cart (plan 9N, K96: name lines of one card are one
+// card; `count` when not known).
+export async function askUndoPurchase(trip, { count, total, gone = null, cards = count }) {
   const { kind } = purchaseUndo(trip.source)
   const things = `${count} item${count === 1 ? '' : 's'} (${money(total)})`
   if (kind === 'split') {
@@ -113,7 +115,7 @@ export async function askUndoPurchase(trip, { count, total, gone = null }) {
   }
   const ok = await confirmDialog({
     title: 'Reopen this purchase?',
-    message: `The ${things} go back to the cart, and the stock, history and expenses from this purchase are undone.${gone ? ` ${gone}` : ''}`,
+    message: `The ${cards} item${cards === 1 ? ' ' : 's '}(${money(total)}) go${cards === 1 ? 'es' : ''} back to the cart, and the stock, history and expenses from this purchase are undone.${gone ? ` ${gone}` : ''}`,
     confirmLabel: 'Reopen',
   })
   return ok ? reopenTrip(trip.id, gone) : null

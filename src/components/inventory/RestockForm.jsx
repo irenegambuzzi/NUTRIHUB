@@ -6,6 +6,7 @@ import { toBaseQuantity } from '../../lib/inventory'
 import { normalizeUnit } from '../../lib/units'
 import { hasPackField, packField, packStartText, packTextFor } from '../../lib/packSize'
 import { PackSizeField } from '../ui/PackSizeField'
+import { namedPack } from '../../lib/itemNames'
 
 // Adding bought stock by hand: a quantity in the stock unit or, when the
 // item has a purchase unit, in that ("2 pack" = 24 pcs). `variants`, for a
@@ -21,7 +22,10 @@ import { PackSizeField } from '../ui/PackSizeField'
 // this arrival may save a first-time usual size (onSubmit then gets
 // `pack.firstTime`). Restocking in HOME has no pack field (unchanged).
 // `initial.variantId`: the variant chosen at the start (a group).
-export function RestockForm({ item, variants = null, onSubmit, onClose, initial = null, submitLabel = 'Add to stock', packs = false, canSaveUsual = false }) {
+// `boughtAs` (plan 9N, K90): another name of the item it arrives under: the
+// field starts with that name's size, and a first-time size is the name's
+// (`pack.onName`), never the item's.
+export function RestockForm({ item, variants = null, onSubmit, onClose, initial = null, submitLabel = 'Add to stock', packs = false, canSaveUsual = false, boughtAs = null }) {
   const purchaseUnit = item.packaging_unit && Number(item.quantity_per_pack) > 0 ? item.packaging_unit : null
   const orderedUnit = initial?.unit ? normalizeUnit(initial.unit) : null
   const packUnit = packs && orderedUnit && orderedUnit !== purchaseUnit && hasPackField(item, orderedUnit) ? orderedUnit : null
@@ -38,7 +42,8 @@ export function RestockForm({ item, variants = null, onSubmit, onClose, initial 
   const [busy, setBusy] = useState(false)
 
   const quantity = parseDecimal(text)
-  const pack = packs ? packField({ item, unit, quantity: quantity > 0 ? quantity : 1, text: packTextFor(packTyped, unit, packStartText(item, unit)), canSave: canSaveUsual }) : null
+  const count = quantity > 0 ? quantity : 1
+  const pack = !packs ? null : boughtAs ? namedPack(item, boughtAs, unit, { quantity: count, typed: packTyped, canSave: canSaveUsual }) : packField({ item, unit, quantity: count, text: packTextFor(packTyped, unit, packStartText(item, unit)), canSave: canSaveUsual })
   const delta = !(quantity > 0) ? null : pack ? (pack.value ? quantity * pack.value : null) : toBaseQuantity(item, quantity, unit)
   const base = delta === null ? null : Math.round(delta * 100) / 100
   const needsName = variants && target === 'new' && !newName.trim()
@@ -48,7 +53,7 @@ export function RestockForm({ item, variants = null, onSubmit, onClose, initial 
     e.preventDefault()
     if (!valid || busy) return
     setBusy(true)
-    const packed = pack ? { pack: { unit: pack.unit, value: pack.value, firstTime: pack.firstTime } } : {}
+    const packed = pack ? { pack: { unit: pack.unit, value: pack.value, firstTime: pack.firstTime, ...(pack.onName ? { onName: true } : {}) } } : {}
     const { error } = (await onSubmit(variants ? { delta: base, variantId: target === 'new' ? null : target, newName: newName.trim(), ...packed } : { delta: base, ...packed })) ?? {}
     setBusy(false)
     if (!error) onClose()

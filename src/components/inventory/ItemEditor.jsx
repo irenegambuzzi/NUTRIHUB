@@ -19,7 +19,7 @@ import { CategoryFields } from './CategoryFields'
 import { OneTimeToggle } from './OneTimeToggle'
 import { OtherNamesFields } from './OtherNamesFields'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
-import { durableLookalike } from '../../lib/durable'
+import { durableLookalike, durableLookalikeText } from '../../lib/durable'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
 import { exactKey, goToLabel, matchHomeItems, sameItemName } from '../../lib/similarItems'
@@ -401,7 +401,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           {createNewKey && !question && <CreateNewHint className="mt-1" />}
           {durablePath && (
             <p className="text-[11px] text-yellow-300 flex items-start gap-1.5 mt-1">
-              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> “{form.name.trim()}” looks like a durable item ({durablePath}). Durable items don't go into HOME stock — record it in MONEY instead.
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {durableLookalikeText(form.name, durablePath)}
             </p>
           )}
         </div>

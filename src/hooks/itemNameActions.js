@@ -3,7 +3,7 @@ import { attempt, must } from '../lib/db'
 import { showToast, toastSaveError } from '../lib/feedback'
 import { isOffline } from '../lib/connection'
 import { normalizeItem } from '../lib/inventory'
-import { canHaveNames, hasName, itemForName, nameTakenBy, namesColumnReady } from '../lib/itemNames'
+import { canHaveNames, hasName, itemForName, nameElement, nameTakenBy, namesColumnReady } from '../lib/itemNames'
 import { pantryStore } from '../lib/stores'
 import { checkItemNames } from './useItemNamesReady'
 
@@ -58,4 +58,17 @@ export async function keepFirstWord(word, itemName) {
   await pantryStore.refresh()
   const found = itemForName(itemName, pantryStore.getSnapshot().rows, { groups: false })
   if (found) await keepTypedName(word, found.item.id)
+}
+
+// K90 + K95: the pack size of one name of an item, written only while the
+// name, as read now, still passes `allowed(element)` (a first size: it has
+// none; putting one back: it still has what an arrival saved). The list is
+// read first, so `was` is fresh. → whether it was written. Throws on a
+// failure (the caller's follow-up offers Retry).
+export async function setNamePack(itemId, name, fields, allowed) {
+  const row = must(await supabase.from('pantry_items').select('id, name, names').eq('id', itemId).maybeSingle())
+  const element = row ? nameElement(row, name) : null
+  if (!element || !allowed(element)) return false
+  await writeNames({ item_id: itemId, edit: [{ name: element.name, packaging_unit: fields.packaging_unit ?? null, quantity_per_pack: fields.quantity_per_pack ?? null }], was: { names: row.names ?? [] } })
+  return true
 }

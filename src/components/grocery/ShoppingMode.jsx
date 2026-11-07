@@ -8,6 +8,7 @@ import { isDurable, shopReason } from '../../lib/inventory'
 import { byCartOrder } from '../../lib/grocery'
 import { shopUnits, unitItem } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
+import { cardTitle } from '../../lib/itemNames'
 import { RESTOCK_LABELS, SMALL_LABEL } from '../../lib/inventoryStyles'
 import { money } from '../../lib/pricing'
 import { GROCERY_LIST_LABELS, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
@@ -42,7 +43,9 @@ function rememberSort(sort) {
 // (`groupOf(entry)`, see lib/groupShop.js).
 // `spotId`: the entry whose card "Go to card" shows (outlined for a
 // moment; arranging stops, so the cards are on screen).
-export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm, spotId = null }) {
+// `namesReady` (supabase/032, plan 9N K53): a tile shows its HOME item's
+// name, with the card's own name under it when that differs.
+export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm, spotId = null, namesReady = false }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   if (spotId && arranging) setArranging(false)
@@ -70,7 +73,7 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
     unit.kind === 'group' ? (
       <ShopGroupCard key={unit.key} card={unit} pantryFor={pantryFor} totalOf={totalOf} onCheck={onCheck} showList={extra.showList} highlighted={spotted(unit)} />
     ) : (
-      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} highlighted={spotted(unit)} />
+      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} namesReady={namesReady} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} highlighted={spotted(unit)} />
     )
 
   const setSort = (next) => {
@@ -262,7 +265,8 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
 // One big tile: tap to put it in the cart (or take it out again) — only
 // the cart changes; the purchase is confirmed separately. A one-time
 // purchase shows the grey "1× purchase".
-function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null, highlighted = false }) {
+function ShopTile({ item, pack = null, total, onCheck, showCategory = false, showList = false, hint = null, highlighted = false, namesReady = false }) {
+  const { title, subtitle } = namesReady ? cardTitle(item, pack) : { title: item.name, subtitle: '' }
   return (
     <button
       onClick={() => onCheck(item)}
@@ -276,9 +280,10 @@ function ShopTile({ item, pack = null, total, onCheck, showCategory = false, sho
       <CheckCircle checked={item.in_cart} />
       <span className="flex-1 min-w-0">
         <span className={cn('flex items-center gap-1.5 text-base font-bold min-w-0', item.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
-          <span className="truncate">{item.name}</span>
+          <span className="truncate">{title}</span>
           {entryIsOneTime(item, pack) && <OneTimeBadge className="shrink-0 no-underline" />}
         </span>
+        {subtitle && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{subtitle}</span>}
         <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           {showCategory && <CategoryIcon category={item.category_id} size={12} />}
           {formatPurchaseQuantity(item.quantity, item.unit, pack)}

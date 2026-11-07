@@ -11,6 +11,9 @@ import { isOffline } from '../lib/connection'
 import { ENTRY_GRACE_MS } from '../lib/newItems'
 import { arrivalFactor, takenOutQuantity, unarriveNote } from '../lib/reopenUnits'
 import { groupOf, saveOrderGroup, sayKept } from './useOrderGroups'
+import { setNamePack } from './itemNameActions'
+import { nameElement } from '../lib/itemNames'
+import { savesUsualSize } from '../lib/packSize'
 
 const refreshOrdersAndExpenses = () => Promise.all([orderStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
 const showExpenses = (rows) => rows.length && allExpenseStores().forEach((s) => s.upsertLocal(rows))
@@ -422,8 +425,14 @@ export async function undoArrival({ order, arrived, madeId = null }) {
 // Before supabase/027 nothing is written here: the stock is right already,
 // and with nothing saved the undo stays exact. A failure here leaves the
 // arrival as it is (toast with Retry).
+// Under another name of the item (plan 9N, K90 + K95) the first-time size
+// is that name's (`pack.onName`): the order keeps what the name had and
+// what was saved, with the name (`arrival_pack_before.name`), and the name
+// gets it through save_item_names — only while it still has none.
 async function rememberArrivalPack(order, item, pack) {
   if (!(pack?.value > 0) || !packColumnsReady(order)) return true
+  const element = pack.onName && item ? nameElement(item, order.item_name) : null
+  if (pack.onName) return rememberNamePack(order, item, pack, element)
   const first = Boolean(pack.firstTime && item && !item.is_group)
   const before = first ? { packaging_unit: item.packaging_unit ?? null, quantity_per_pack: item.quantity_per_pack ?? null } : null
   const saved = { packaging_unit: pack.unit, quantity_per_pack: pack.value }
@@ -437,6 +446,20 @@ async function rememberArrivalPack(order, item, pack) {
     // try already saved this one, and only its answer was lost.)
     const now = must(await supabase.from('pantry_items').select('packaging_unit, quantity_per_pack').eq('id', item.id).maybeSingle())
     if (now && now.packaging_unit === saved.packaging_unit && Number(now.quantity_per_pack) === saved.quantity_per_pack) return
+    orderStore.upsertLocal(must(await supabase.from('orders').update({ arrival_pack_before: null }).eq('id', order.id).select()))
+  })
+}
+
+async function rememberNamePack(order, item, pack, element) {
+  const first = Boolean(pack.firstTime && element && !item.is_group)
+  const saved = { packaging_unit: pack.unit, quantity_per_pack: pack.value }
+  const before = first ? { packaging_unit: element.packaging_unit ?? null, quantity_per_pack: element.quantity_per_pack ?? null, name: element.name } : null
+  return followUp('the pack size', async () => {
+    orderStore.upsertLocal(must(await supabase.from('orders').update({ pack_size: pack.value, ...(first ? { arrival_pack_before: { ...before, saved } } : {}) }).eq('id', order.id).select()))
+    if (!first) return
+    const sameAsSaved = (e) => e.packaging_unit === saved.packaging_unit && Number(e.quantity_per_pack) === saved.quantity_per_pack
+    // Written, or already so (only the answer of a first try was lost).
+    if (await setNamePack(item.id, element.name, saved, (e) => savesUsualSize(e, saved.packaging_unit) || sameAsSaved(e))) return
     orderStore.upsertLocal(must(await supabase.from('orders').update({ arrival_pack_before: null }).eq('id', order.id).select()))
   })
 }
@@ -521,12 +544,17 @@ async function arrivalUndone(order, seen) {
 // arrival saved; changed meanwhile (e.g. in the HOME editor), it is left as
 // it is. Either way the order forgets it, so a later Arrived follows the
 // first-time rule again. `order` is the order as it was arrived (its item).
+// A size the arrival saved on a name (`before.name`, plan 9N K95) goes back
+// on that name, by the same rule.
 async function restoreArrivalPack(order) {
   const before = order.arrival_pack_before
   if (!before) return true
   return followUp('the usual pack size', async () => {
     const saved = before.saved
-    if (order.arrived_item_id && saved?.packaging_unit && Number(saved.quantity_per_pack) > 0) {
+    if (order.arrived_item_id && saved?.packaging_unit && Number(saved.quantity_per_pack) > 0 && before.name) {
+      const still = (e) => e.packaging_unit === saved.packaging_unit && Number(e.quantity_per_pack) === Number(saved.quantity_per_pack)
+      await setNamePack(order.arrived_item_id, before.name, before, still)
+    } else if (order.arrived_item_id && saved?.packaging_unit && Number(saved.quantity_per_pack) > 0) {
       must(
         await supabase
           .from('pantry_items')

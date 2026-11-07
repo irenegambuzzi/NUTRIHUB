@@ -135,11 +135,14 @@ describe('the pack size of a line bought under another name (K60)', () => {
     const wipes = item('w', 'Wipes', ['Nivea Wipes'])
     const row = { ...emptyRow(1), name: 'Nivea Wipes', priceText: '3', unit: 'pack', unitTouched: true, packSizeText: '20', packUnit: 'pack', categoryId: 'personal-care' }
     const line = rowLine(row, [wipes])
-    expect(line.pack.firstTime).toBe(false)
+    // Stage 3 (K60): it is a first size of the NAME, never of the item.
+    expect(line.pack).toMatchObject({ firstTime: true, onName: true })
     const { lines } = pricedLines([line])
     const [sent] = moneyPurchasePayload({ id: 't', date: '2026-11-06', at: 'now', paidBy: 'shared', lines, budgetFor: () => null }).items
     expect(sent.add).toBe(20)
     expect(sent.quantity_per_pack).toBeUndefined()
+    expect(sent.packaging_unit).toBeUndefined()
+    expect(sent.name_pack).toEqual({ packaging_unit: 'pack', quantity_per_pack: 20 })
   })
 
   it("under the item's own name it is saved as always, in SHOP and in MONEY", () => {

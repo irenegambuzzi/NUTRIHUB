@@ -12,7 +12,7 @@ import { couponFields, lineDiscountFields, priceLines, round2 as roundCents } fr
 import { exactKey, matchHomeItems, sameItemName, shopEntryFor } from './similarItems'
 import { partFields } from './sharedParts'
 import { asksStockUnit, newItemKeys, newStockUnit, sameNameProblems, stockUnitQuestion } from './newItemUnit'
-import { boughtAsOtherName, itemForName, packItemFor } from './itemNames'
+import { boughtAsOtherName, canHaveNames, itemForName, namedPack, namePackKeys, packItemFor } from './itemNames'
 
 // A purchase typed in MONEY ("Add expense"): the store, date and payer once
 // for the whole receipt, then one row per item. Every row becomes one
@@ -39,6 +39,8 @@ const round2 = (n) => Math.round(n * 100) / 100
 //               saved as another name of that item once the row is saved
 //   firstWord   the word first typed when "Create new" was pressed (K58):
 //               a real name of the new item, when the name was changed
+//   attachedTo  the HOME item chosen with "It's another name of…" (K54): the
+//               row keeps its name and that name becomes one of the item's
 export function emptyRow(key) {
   return {
     key,
@@ -68,6 +70,7 @@ export function emptyRow(key) {
     similarAnswer: '',
     usedWord: null,
     firstWord: '',
+    attachedTo: null,
   }
 }
 
@@ -176,12 +179,17 @@ export const budgetOf = (row, ctx) => {
 //               null otherwise. `asksStockUnit`: it would be asked (to check
 //               first while 030 isn't known yet)
 //   minUnit     the unit the minimum is typed in: the new item's stock unit
-export function rowLine(row, pantryItems, ctx, { unitsReady = null } = {}) {
+//   attached    the item chosen with "It's another name of…" (K54), once
+//               supabase/032 is known (`namesReady`) and while no HOME item
+//               has the name itself; `canAttach`: the row offers that choice
+export function rowLine(row, pantryItems, ctx, { unitsReady = null, namesReady = false } = {}) {
   const quantity = parseDecimal(row.quantityText)
   const total = parseDecimal(row.priceText)
   const lock = lockOf(row, ctx)
   const home = !lock && wantsHome(row)
-  const known = homeItemFor(row.name, pantryItems)
+  const named = homeItemFor(row.name, pantryItems)
+  const attached = namesReady && home && !named && row.attachedTo ? pantryItems.find((p) => p.id === row.attachedTo && canHaveNames(p)) ?? null : null
+  const known = named ?? attached
   const match = home ? known : null
   const group = match?.is_group ? match : null
   const variants = group ? variantOrder(group.variants ?? pantryItems.filter((p) => p.group_id === group.id)) : []
@@ -189,7 +197,9 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null } = {}) {
   const target = group ? variants.find((v) => v.id === variantId) ?? null : match
   const count = quantity > 0 ? quantity : 1
   const packItem = target && packItemFor(target, row.name, row.unit)
-  const pack = home && target ? packField({ item: packItem, unit: row.unit, quantity: count, text: packTextFor({ text: row.packSizeText, unit: row.packUnit }, row.unit, packStartText(packItem, row.unit)), canSave: !boughtAsOtherName(target, row.name) }) : null
+  const typedPack = { text: row.packSizeText, unit: row.packUnit }
+  const underName = attached || (target && boughtAsOtherName(target, row.name))
+  const pack = !home || !target ? null : underName ? namedPack(target, row.name.trim(), row.unit, { quantity: count, typed: typedPack }) : packField({ item: packItem, unit: row.unit, quantity: count, text: packTextFor(typedPack, row.unit, packStartText(packItem, row.unit)) })
   const add = !home ? 0 : target ? purchasedQuantity(target, { quantity: count, unit: row.unit }, pack?.value) : count
   const minStock = parseDecimal(row.minText)
   const isNew = home && !match
@@ -211,6 +221,8 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null } = {}) {
     stockUnit,
     asksStockUnit: isNew && asksStockUnit(row.unit),
     minUnit: newStockUnit(stockUnit, row.unit),
+    attached,
+    canAttach: namesReady && home && !named && !attached && Boolean(row.name.trim()),
     revives: Boolean(target) && isFinished(target),
     // MONEY doesn't ask what to do with expired stock (SHOP's Confirm
     // does): the stock is added and the row says to check it in HOME.
@@ -367,7 +379,8 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
         Object.assign(item, newItemKeys(line.stockUnit))
       }
       // The item's usual size only the first time (it has none yet).
-      if (line.target) Object.assign(item, firstTimePatch(line.pack))
+      if (line.target) Object.assign(item, firstTimePatch(line.pack), namePackKeys(line.pack))
+      if (line.attached) item.add_name = true
       const listEntry = entryOf(line)
       if (closesEntry(line, listEntry)) item.list_entry_id = listEntry.entry.id
       return item
@@ -381,7 +394,8 @@ export function homeNote(line) {
   if (line.group && !line.target) return `"${line.group.name}" is a group — choose the variant that gets the stock.`
   if (line.target) {
     const amount = line.add === null ? '' : ` (+${line.add} ${line.target.unit})`
-    const note = line.revives ? `"${line.target.name}" comes back from Finished one-time items${amount}.` : `Adds to "${line.target.name}" in HOME${amount}.`
+    const end = line.attached ? ' — new name, it will be remembered.' : '.'
+    const note = line.revives ? `"${line.target.name}" comes back from Finished one-time items${amount}${end}` : `Adds to "${line.target.name}" in HOME${amount}${end}`
     return line.expired ? `${note} Its stock in HOME has expired — check it there after saving.` : note
   }
   return 'New in HOME (shown as New Item).'
