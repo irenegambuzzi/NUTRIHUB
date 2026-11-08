@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-// The SHOP list kept in step with stock (syncShoppingForItem) for groups,
-// variants and one-time items, against a small in-memory database.
+// The SHOP list kept in step with stock (syncShoppingForItem) for normal
+// items, group rows from an older app version and one-time items, against
+// a small in-memory database.
 const client = vi.hoisted(() => ({ supabase: {} }))
 vi.mock('./supabaseClient', () => client)
-const { syncShoppingForItem, toBuyEntriesOf } = await import('./inventory')
+const { spareEntryIds, syncShoppingForItem, toBuyEntriesOf } = await import('./inventory')
+const { PAID_BY_OPTIONS } = await import('../data/constants')
+const PERSON = PAID_BY_OPTIONS.find((o) => o.value !== 'shared').value
 
 // Tables are arrays of rows; queries filter them like PostgREST would for
 // what these functions use (eq, in, is, not … is true).
@@ -59,107 +62,42 @@ const variant = (id, current_stock, extra = {}) => ({ id, name: id, unit: 'pcs',
 const open = (id, pantry_item_id, extra = {}) => ({ id, pantry_item_id, name: pantry_item_id, auto_generated: true, completed: false, in_cart: false, created_at: '2026-10-19T10:00:00Z', ...extra })
 const listed = (tables) => tables.grocery_items.filter((g) => !g.completed).map((g) => g.pantry_item_id).sort()
 
-describe('a group on the SHOP list: one entry per variant at 0', () => {
-  it('each variant at 0 gets its own entry (1 of its unit, its last price); the group gets none', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Pringles', 0, { price: 2.49, price_qty: 1, price_unit: 'pcs', payer: 'irene' }), variant('Tuc', 0)], grocery_items: [], orders: [] }
+describe('a group row from an older app version and its variants on the SHOP list (round 6D stage 5, K138)', () => {
+  it('the group row never gets an entry (own stock 0, minimum 4); the variant at 0 gets its own (Out), the one at 5 none', async () => {
+    const zero = variant('Pringles', 0, { min_stock: 0, price: 2.49, price_qty: 1, price_unit: 'pcs', payer: PERSON })
+    const five = variant('Lays', 5, { min_stock: 1 })
+    const tables = { pantry_items: [group, zero, five], grocery_items: [], orders: [] }
     fakeDb(tables)
-    await syncShoppingForItem(group)
+    for (const item of tables.pantry_items) await syncShoppingForItem(item)
+    expect(listed(tables)).toEqual(['Pringles'])
+    expect(tables.grocery_items[0]).toMatchObject({ name: 'Pringles', auto_generated: true, quantity: 1, unit: 'pcs', price: 2.49, payer: PERSON, category_id: 'snacks' })
+  })
+
+  it('a group row judged alone writes nothing, whatever its stock and minimum', async () => {
+    for (const stock of [0, 2, 9]) {
+      const tables = { pantry_items: [{ ...group, current_stock: stock }], grocery_items: [], orders: [] }
+      const writes = fakeDb(tables)
+      await syncShoppingForItem(tables.pantry_items[0])
+      expect(writes).toEqual([])
+    }
+  })
+
+  it('a variant is judged on its own minimum, never on the group: 3 of minimum 4 is low, 0 of minimum 0 is out, 2 of minimum 1 is fine', async () => {
+    const low = variant('Tuc', 3, { min_stock: 4 })
+    const out = variant('Pringles', 0)
+    const fine = variant('Lays', 2, { min_stock: 1 })
+    const tables = { pantry_items: [group, low, out, fine], grocery_items: [], orders: [] }
+    fakeDb(tables)
+    for (const item of [low, out, fine]) await syncShoppingForItem(item)
     expect(listed(tables)).toEqual(['Pringles', 'Tuc'])
-    expect(tables.grocery_items.find((g) => g.pantry_item_id === 'Pringles')).toMatchObject({ name: 'Pringles', auto_generated: true, quantity: 1, unit: 'pcs', price: 2.49, price_qty: 1, price_unit: 'pcs', payer: 'irene', category_id: 'snacks' })
   })
 
-  it("asks for 1 of the variant's purchase unit (its pack) when it has one", async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Pringles', 0, { packaging_unit: 'pack', quantity_per_pack: 6 })], grocery_items: [], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(tables.grocery_items[0]).toMatchObject({ quantity: 1, unit: 'pack' })
-  })
-
-  it('a variant changing judges its whole group', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Pringles', 0), variant('Tuc', 0)], grocery_items: [], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(tables.pantry_items[2])
-    expect(listed(tables)).toEqual(['Pringles', 'Tuc'])
-  })
-
-  it('never adds a second entry, however often it runs', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Pringles', 0)], grocery_items: [], orders: [] }
-    const writes = fakeDb(tables)
-    await syncShoppingForItem(group)
-    await syncShoppingForItem(tables.pantry_items[2])
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual(['Pringles'])
-    expect(writes.filter((w) => w.op === 'insert')).toHaveLength(1)
-  })
-
-  it('a variant restocked leaves the list; one added by hand ("+ Add another variant") stays', async () => {
+  it("an old group-level automatic entry still \"to buy\" goes; in the cart, ordered online, bought or typed by hand it stays; nothing is added for the group", async () => {
     const tables = {
-      pantry_items: [group, variant('Lays', 5), variant('Pringles', 2)],
-      grocery_items: [open('auto', 'Pringles'), open('byHand', 'Lays', { auto_generated: false })],
-      orders: [],
-    }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(tables.grocery_items.map((g) => g.id)).toEqual(['byHand'])
-  })
-
-  it('a one-time variant at 0 is never listed', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Party', 0, { one_time: true })], grocery_items: [], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(tables.grocery_items).toEqual([])
-  })
-
-  it('a variant at 0 stays listed: nothing takes it away while it is at 0 (shop_dismissed_at is ignored)', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Tuc', 0, { shop_dismissed_at: '2026-10-20T10:00:00Z' })], grocery_items: [], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual(['Tuc'])
-  })
-
-  it('a variant ordered online gets no second entry; a variant in the cart neither', async () => {
-    const tables = {
-      pantry_items: [group, variant('Lays', 0), variant('Pringles', 0)],
-      grocery_items: [open('ordered', 'Lays'), open('cart', 'Pringles', { in_cart: true })],
-      orders: [{ grocery_item_id: 'ordered', status: 'on_the_way' }],
-    }
-    const writes = fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(writes).toEqual([])
-  })
-
-  it('a group at or below its minimum with no variant at 0 lists the variant with the least, and keeps it', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 3), variant('Pringles', 1)], grocery_items: [], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual(['Pringles'])
-    // Lays drops below Pringles: the row doesn't jump to Lays.
-    tables.pantry_items[1].current_stock = 0.5
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual(['Pringles'])
-    // Back above the minimum: it goes.
-    tables.pantry_items[1].current_stock = 10
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual([])
-  })
-})
-
-describe('tidying old group entries and duplicates', () => {
-  it('group-level entries still "to buy" (the two "Chips & Snacks") are replaced by one entry per variant at 0', async () => {
-    const tables = {
-      pantry_items: [group, variant('Lays', 5), variant('Peperoncino', 0), variant('Teriyaki', 0)],
-      grocery_items: [open('old1', 'g'), open('old2', 'g')],
-      orders: [],
-    }
-    fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(listed(tables)).toEqual(['Peperoncino', 'Teriyaki'])
-  })
-
-  it('never touches a group-level entry in the cart, ordered online or bought', async () => {
-    const tables = {
-      pantry_items: [group, variant('Lays', 5), variant('Teriyaki', 0)],
+      pantry_items: [group, variant('Lays', 5, { min_stock: 1 })],
       grocery_items: [
+        open('old1', 'g'),
+        open('old2', 'g'),
         open('cart', 'g', { in_cart: true }),
         open('ordered', 'g'),
         open('bought', 'g', { completed: true }),
@@ -167,55 +105,72 @@ describe('tidying old group entries and duplicates', () => {
       ],
       orders: [{ grocery_item_id: 'ordered', status: 'on_the_way' }],
     }
-    fakeDb(tables)
+    const writes = fakeDb(tables)
     await syncShoppingForItem(group)
-    expect(tables.grocery_items.map((g) => g.id).sort()).toEqual(['bought', 'byHand', 'cart', 'new4', 'ordered'])
-    expect(tables.grocery_items.find((g) => g.id === 'new4').pantry_item_id).toBe('Teriyaki')
+    expect(tables.grocery_items.map((g) => g.id).sort()).toEqual(['bought', 'byHand', 'cart', 'ordered'])
+    expect(writes.filter((w) => w.op === 'insert')).toEqual([])
   })
 
-  it('two entries for the same variant: the oldest stays', async () => {
-    const tables = {
-      pantry_items: [group, variant('Lays', 5), variant('Teriyaki', 0)],
-      grocery_items: [open('newer', 'Teriyaki', { created_at: '2026-10-20T10:00:00Z' }), open('older', 'Teriyaki', { created_at: '2026-10-19T10:00:00Z' })],
-      orders: [],
-    }
+  it('a one-time variant at 0 is never listed', async () => {
+    const party = variant('Party', 0, { one_time: true })
+    const tables = { pantry_items: [group, party], grocery_items: [], orders: [] }
     fakeDb(tables)
-    await syncShoppingForItem(group)
-    expect(tables.grocery_items.map((g) => g.id)).toEqual(['older'])
+    await syncShoppingForItem(party)
+    expect(tables.grocery_items).toEqual([])
+  })
+})
+
+describe('never a second automatic entry for one item', () => {
+  const milk = { id: 'm', name: 'Milk', unit: 'btl', current_stock: 0, min_stock: 2, category_id: 'dairy' }
+
+  it('never adds a second entry, however often it runs', async () => {
+    const tables = { pantry_items: [milk], grocery_items: [], orders: [] }
+    const writes = fakeDb(tables)
+    for (let i = 0; i < 3; i++) await syncShoppingForItem(milk)
+    expect(listed(tables)).toEqual(['m'])
+    expect(writes.filter((w) => w.op === 'insert')).toHaveLength(1)
+  })
+
+  it('two automatic entries: the oldest stays', async () => {
+    const tables = { pantry_items: [milk], grocery_items: [open('a', 'm'), open('b', 'm', { created_at: '2026-10-20T10:00:00Z' })], orders: [] }
+    fakeDb(tables)
+    await syncShoppingForItem(milk)
+    expect(tables.grocery_items.map((g) => g.id)).toEqual(['a'])
   })
 
   it('an entry in the cart (or on the way) wins over a second one still "to buy"', async () => {
+    const eggs = { id: 'e', name: 'Eggs', unit: 'pcs', current_stock: 0, min_stock: 6, category_id: 'dairy' }
     const tables = {
-      pantry_items: [group, variant('Lays', 0), variant('Teriyaki', 0)],
-      grocery_items: [open('cart', 'Teriyaki', { in_cart: true, created_at: '2026-10-20T10:00:00Z' }), open('toBuy', 'Teriyaki'), open('ordered', 'Lays'), open('lays2', 'Lays')],
+      pantry_items: [milk, eggs],
+      grocery_items: [open('cart', 'm', { in_cart: true, created_at: '2026-10-20T10:00:00Z' }), open('toBuy', 'm'), open('ordered', 'e'), open('eggs2', 'e')],
       orders: [{ grocery_item_id: 'ordered', status: 'on_the_way' }],
     }
     fakeDb(tables)
-    await syncShoppingForItem(group)
+    await syncShoppingForItem(milk)
+    await syncShoppingForItem(eggs)
     expect(tables.grocery_items.map((g) => g.id).sort()).toEqual(['cart', 'ordered'])
   })
 
   it('both phones adding the same entry at the same moment: one stays', async () => {
-    const tables = { pantry_items: [group, variant('Lays', 5), variant('Teriyaki', 0)], grocery_items: [], orders: [] }
+    const tables = { pantry_items: [milk], grocery_items: [], orders: [] }
     let once = true
     fakeDb(tables, {
       // The other phone's insert lands right after ours, a moment earlier.
       onInsert: (table) => {
         if (table !== 'grocery_items' || !once) return
         once = false
-        tables.grocery_items.push(open('otherPhone', 'Teriyaki', { created_at: '2026-10-20T11:59:59Z' }))
+        tables.grocery_items.push(open('otherPhone', 'm', { created_at: '2026-10-20T11:59:59Z' }))
       },
     })
-    await syncShoppingForItem(group)
+    await syncShoppingForItem(milk)
     expect(tables.grocery_items.map((g) => g.id)).toEqual(['otherPhone'])
   })
 
-  it('a normal item with two automatic entries keeps one', async () => {
-    const milk = { id: 'm', name: 'Milk', unit: 'btl', current_stock: 0, min_stock: 2, category_id: 'dairy' }
-    const tables = { pantry_items: [milk], grocery_items: [open('a', 'm'), open('b', 'm', { created_at: '2026-10-20T10:00:00Z' })], orders: [] }
-    fakeDb(tables)
-    await syncShoppingForItem(milk)
-    expect(tables.grocery_items.map((g) => g.id)).toEqual(['a'])
+  it('spareEntryIds keeps the oldest automatic entry, or none of them next to another entry', () => {
+    expect(spareEntryIds([open('b', 'x', { created_at: '2' }), open('a', 'x', { created_at: '1' })])).toEqual(['b'])
+    expect(spareEntryIds([open('a', 'x'), open('cart', 'x', { in_cart: true })])).toEqual(['a'])
+    expect(spareEntryIds([open('a', 'x'), open('ordered', 'x')], new Set(['ordered']))).toEqual(['a'])
+    expect(spareEntryIds([open('a', 'x')])).toEqual([])
   })
 })
 

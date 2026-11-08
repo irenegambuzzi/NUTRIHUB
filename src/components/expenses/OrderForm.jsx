@@ -32,7 +32,7 @@ import { packField, packStartText, packTextFor } from '../../lib/packSize'
 // unit }); `units`: the units the quantity can be given in (a simple list
 // when not given; for an order linked to a HOME item its purchase unit
 // comes first); `linkNote` says what it is linked to.
-// `packItem`: the HOME item (or group) the order is for. Bought in a
+// `packItem`: the HOME item the order is for. Bought in a
 // package that isn't its stock unit, the order asks how many of its stock
 // units are in 1 package (plan 9H): started with the item's usual size, or
 // the order's own when editing; it may stay empty until Arrived. It never

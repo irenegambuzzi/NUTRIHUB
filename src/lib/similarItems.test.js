@@ -139,20 +139,22 @@ describe('matchHomeItems', () => {
     expect(moreMatchesText(asked.more)).toBe('2 more — type more of the name')
   })
 
-  it('a finished 1× item counts as Out; groups and variants are searched; durables never', () => {
+  it('a finished 1× item counts as Out; a variant of a group row is searched, the group row never (K138); durables never', () => {
     const balloons = item('Party Balloons', { one_time: true, current_stock: 0, category_id: 'misc' })
     const plenty = item('Balloons Red', { current_stock: 10 })
     const chips = item('Chips & Snacks', { is_group: true, current_stock: 3 })
     const variant = item('Lays Chips', { group_id: chips.id })
     const lamp = item('Balloon Lamp', { category_id: 'appliances' })
     expect(names(matchHomeItems('Balloons', [plenty, balloons, lamp]))).toEqual(['Party Balloons', 'Balloons Red'])
-    expect(names(matchHomeItems('Chips', [chips, variant]))).toEqual(['Lays Chips', 'Chips & Snacks'])
+    expect(names(matchHomeItems('Chips', [chips, variant]))).toEqual(['Lays Chips'])
+    expect(matchHomeItems('Chips & Snacks', [chips, variant]).exact).toBeNull()
   })
 
-  it('an exact normal item wins over a group with the same name; the edited item is never compared with itself', () => {
+  it('a group row with the same name is never the exact item; the edited item is never compared with itself', () => {
     const group = item('Pasta', { is_group: true })
     const pasta = item('pasta')
     expect(matchHomeItems('Pasta', [group, pasta]).exact).toBe(pasta)
+    expect(matchHomeItems('Pasta', [group])).toEqual({ exact: null, similar: [], more: 0 })
     expect(matchHomeItems('Pasta', [pasta], { exceptId: pasta.id })).toEqual({ exact: null, similar: [], more: 0 })
   })
 

@@ -155,7 +155,7 @@ describe('Arrived: the stock, the pack size, and a first-time usual size', () =>
     expect(feedback.toasts).toEqual([])
   })
 
-  it('a group: the stock goes to the variant, no usual size is saved', async () => {
+  it('an arrival without the item it counts for (no packItem): only the order keeps the size, no usual size is saved', async () => {
     await arriveLinkedOrder(order(), { itemId: 'lays', delta: 6, date: '2026-10-28', pack: { unit: 'box', value: 6, firstTime: true }, packItem: null })
     expect(writesTo('orders').map((w) => w.patch)).toEqual([{ pack_size: 6 }])
     expect(writesTo('pantry_items')).toEqual([])

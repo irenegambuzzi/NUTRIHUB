@@ -59,7 +59,8 @@ export const hasName = (item, name) => isOwnName(item, name) || Boolean(nameElem
 
 // The item a typed name belongs to: { item, own }, or null. An item's own
 // name goes before another item's other name, and a normal item before a
-// group (`groups: false`: never a group, like the purchase's name match).
+// group row from an older version of the app (`groups: false`: never one,
+// like the purchase's name match).
 // `exceptId`: never this item.
 export function itemForName(name, items, { exceptId = null, groups = true } = {}) {
   const list = (items ?? []).filter((item) => item.id !== exceptId && (groups || !item.is_group))
@@ -70,8 +71,8 @@ export function itemForName(name, items, { exceptId = null, groups = true } = {}
   return other ? { item: other, own: false } : null
 }
 
-// Only a normal item has other names of its own: a group, a variant or a
-// durable never (a merge decides for groups later, stage 4).
+// Only a normal item has other names of its own: a group row or a variant of
+// one (made by an older version of the app, K138) or a durable never.
 export const canHaveNames = (item) => Boolean(item) && !item.is_group && !item.group_id && !isDurable(item)
 
 // A Map of names (normName → item) with every item's other names added: an
@@ -130,8 +131,8 @@ export const namePackKeys = (pack) => (pack?.firstTime && pack.onName ? { name_p
 export const nameTakenBy = (name, items, exceptIds = []) => (items ?? []).find((item) => !exceptIds.includes(item.id) && hasName(item, name)) ?? null
 
 // The title of a SHOP card (K53): the HOME item's name, with the card's own
-// name under it when that differs. A card without a HOME item, and a group
-// or a variant, keeps its own name.
+// name under it when that differs. A card without a HOME item, and one of a
+// group row or a variant of one (K138), keeps its own name.
 export function cardTitle(entry, item) {
   const own = entry?.name ?? ''
   if (!item || item.is_group || item.group_id || exactKey(own) === exactKey(item.name)) return { title: own, subtitle: '' }
@@ -328,8 +329,8 @@ export const mergedNames = (item) => nameElements(item).filter(isMergedName)
 
 const byName = (a, b) => a.name.trim().localeCompare(b.name.trim(), undefined, { sensitivity: 'base' })
 
-// The merge button (K108): an item or a group being edited, never a
-// variant or a durable.
+// The merge button (K108): an item (or a group row from an older version of
+// the app, K138) being edited, never a variant of one or a durable.
 export const canMergeInto = (item) => Boolean(item?.id) && !item.group_id && !isDurable(item)
 
 // One row of the picker (K109, K110): `factor` as 032 converts (K44, null:

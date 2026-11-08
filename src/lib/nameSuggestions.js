@@ -28,15 +28,17 @@ const suggestionFromName = (item, element) => ({
 
 // One suggestion per name. The pantry item wins (it has the last price,
 // unit and payer), then another name of an item, then the newest grocery
-// entry.
+// entry. Never a group row from an older version of the app (K138: it is
+// never on the SHOP list).
 export function buildSuggestions(pantryItems, groceryItems) {
   const byName = new Map()
   const add = (s) => {
     const key = normName(s.name)
     if (key && !byName.has(key)) byName.set(key, s)
   }
-  pantryItems.forEach((p) => add(suggestionFrom(p, 'pantry')))
-  pantryItems.forEach((p) => otherNames(p).forEach((element) => add(suggestionFromName(p, element))))
+  const items = pantryItems.filter((p) => !p.is_group)
+  items.forEach((p) => add(suggestionFrom(p, 'pantry')))
+  items.forEach((p) => otherNames(p).forEach((element) => add(suggestionFromName(p, element))))
   ;[...groceryItems].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).forEach((g) => add(suggestionFrom(g, 'list')))
   return [...byName.values()]
 }

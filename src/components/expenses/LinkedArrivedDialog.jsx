@@ -1,10 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { PackageCheck, X } from 'lucide-react'
 import { RestockForm } from '../inventory/RestockForm'
-import { usePantryItems } from '../../hooks/usePantryItems'
-import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast, discardUnusedItem } from '../../hooks/useOrders'
-import { newVariantFields } from '../../lib/groups'
+import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast } from '../../hooks/useOrders'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { packColumnsReady } from '../../lib/orders'
 import { boughtAsOtherName } from '../../lib/itemNames'
@@ -12,12 +10,10 @@ import { localDateString } from '../../lib/week'
 
 // "Arrived" on an order linked to a HOME item (ordered from the SHOP
 // list): a simple check of the quantity that arrived — in the item's
-// purchase unit or stock unit, started with what was ordered — and, for a
-// group, which variant gets it (or a new one). Bought in a package, it asks
-// how many stock units are in 1 package of this arrival (plan 9H: started
-// with the order's own size, else the item's usual one); a first-time size
-// becomes the item's usual size only for an item (not a group) and only
-// once the database can remember the size it had before (supabase/027),
+// purchase unit or stock unit, started with what was ordered. Bought in a
+// package, it asks how many stock units are in 1 package of this arrival
+// (plan 9H: started with the order's own size, else the item's usual one);
+// a first-time size becomes the item's usual size only once the database can remember the size it had before (supabase/027),
 // so "Put back on the way" undoes it exactly. Confirming marks the order
 // arrived and adds the stock in one step; only the first confirmation
 // adds anything, on whichever phone. Never an expense: that was made when
@@ -25,35 +21,21 @@ import { localDateString } from '../../lib/week'
 // name of the item (plan 9N, K90) counts its pack with that name's size, and
 // a first-time size is saved on the name. Closed
 // with × or a tap outside, nothing happens: the order stays on the way.
+// An order linked to a group row from an older version of the app never
+// opens here (linkedItemOf, K138): it asks "It arrived!" instead.
 export function LinkedArrivedDialog({ order, item, onClose }) {
-  const { items } = usePantryItems()
-  const variants = useMemo(() => (item?.is_group ? items.filter((i) => i.group_id === item.id).sort((a, b) => a.name.localeCompare(b.name)) : null), [items, item])
-  const variantId = useRef(crypto.randomUUID())
-  // A new variant made by a try whose second step failed: deleted again if
-  // the dialog is closed without arriving.
-  const tried = useRef(false)
   const [busy, setBusy] = useState(false)
-
-  const close = () => {
-    if (tried.current) discardUnusedItem(variantId.current)
-    onClose()
-  }
 
   const finish = (result, message) => {
     if (result.error) return result
-    tried.current = false
     arrivedToast(result.added ? message : alreadyArrivedMessage(order), result.arrival)
     onClose()
     return result
   }
 
-  const submit = async ({ delta, variantId: chosen, newName, pack = null }) => {
-    const newVariant = item.is_group && !chosen ? { id: variantId.current, fields: newVariantFields(item, newName, { packaging_unit: item.packaging_unit ?? null, quantity_per_pack: item.quantity_per_pack ?? null }) } : null
-    const target = item.is_group ? chosen : item.id
-    const result = await arriveLinkedOrder(order, { itemId: target, delta, newVariant, date: localDateString(), pack, packItem: item.is_group ? null : item })
-    if (result.error && newVariant && !result.error.offline) tried.current = true
-    const where = item.is_group ? (newVariant ? `a new variant of "${item.name}"` : `"${variants.find((v) => v.id === chosen)?.name}"`) : `"${item.name}"`
-    return finish(result, `Arrived — added ${formatPurchaseQuantity(delta, item.unit, item)} to ${where}`)
+  const submit = async ({ delta, pack = null }) => {
+    const result = await arriveLinkedOrder(order, { itemId: item.id, delta, date: localDateString(), pack, packItem: item })
+    return finish(result, `Arrived — added ${formatPurchaseQuantity(delta, item.unit, item)} to "${item.name}"`)
   }
 
   const withoutStock = async () => {
@@ -64,7 +46,7 @@ export function LinkedArrivedDialog({ order, item, onClose }) {
   }
 
   return createPortal(
-    <div data-unsaved className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={close}>
+    <div data-unsaved className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
       <div
         role="dialog"
         aria-label={`"${order.item_name}" arrived`}
@@ -80,20 +62,19 @@ export function LinkedArrivedDialog({ order, item, onClose }) {
               Check how much arrived: it is added to "{item.name}" in HOME and the item leaves the SHOP list. The expense stays as it is — nothing new is added to your expenses.
             </p>
           </div>
-          <button type="button" onClick={close} aria-label="Close" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
+          <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
             <X size={18} />
           </button>
         </div>
         <RestockForm
           item={item}
-          variants={variants}
           initial={{ quantity: Number(order.quantity) || 1, unit: order.unit || null, packSize: order.pack_size ?? null }}
           packs
-          canSaveUsual={!item.is_group && packColumnsReady(order)}
-          boughtAs={!item.is_group && boughtAsOtherName(item, order.item_name) ? order.item_name : null}
+          canSaveUsual={packColumnsReady(order)}
+          boughtAs={boughtAsOtherName(item, order.item_name) ? order.item_name : null}
           submitLabel="Arrived — add to HOME"
           onSubmit={submit}
-          onClose={close}
+          onClose={onClose}
         />
         <button
           type="button"

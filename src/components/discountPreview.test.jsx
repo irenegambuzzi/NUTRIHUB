@@ -55,17 +55,16 @@ describe('Confirm purchase: the coupon share is visible per item before confirmi
     expect(paragraph('€44.00 → €39.60 (coupon −€4.40)')).toBeTruthy()
   })
 
-  it('a group: each variant line (its own entry, variants in the order of the group) shows its own share', () => {
+  it('variants of a group row (older app version) are normal lines in no group box, each with its own share', () => {
     const pantry = [
       { id: 'grp', name: 'Patatine', is_group: true, unit: 'pcs', category_id: 'misc', min_stock: 0, current_stock: 0 },
       { id: 'v1', name: 'Teriyaki', group_id: 'grp', unit: 'pcs', category_id: 'misc', min_stock: 1, current_stock: 0 },
       { id: 'v2', name: 'Peperoncino', group_id: 'grp', unit: 'pcs', category_id: 'misc', min_stock: 1, current_stock: 0 },
     ]
     setup([cartItem('c1', 'Teriyaki', 2.49, { pantry_item_id: 'v1' }), cartItem('c2', 'Peperoncino', 1.99, { pantry_item_id: 'v2' })], pantry)
-    expect(screen.getByRole('group', { name: 'Patatine (group)' })).toBeTruthy()
+    expect(screen.queryByRole('group', { name: 'Patatine (group)' })).toBeNull()
     type('Purchase discount', '1')
-    const group = within(screen.getByRole('group', { name: 'Patatine (group)' }))
-    const notes = group.getAllByText(/coupon −/).filter((el) => el.tagName === 'P')
-    expect(notes.map((n) => n.textContent)).toEqual(['€1.99 → €1.55 (coupon −€0.44)', '€2.49 → €1.93 (coupon −€0.56)'])
+    const notes = screen.getAllByText(/coupon −/).filter((el) => el.tagName === 'P')
+    expect(notes.map((n) => n.textContent)).toEqual(['€2.49 → €1.93 (coupon −€0.56)', '€1.99 → €1.55 (coupon −€0.44)'])
   })
 })

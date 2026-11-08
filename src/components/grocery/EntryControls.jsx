@@ -6,8 +6,8 @@ import { formatPurchaseQuantity, roundQuantity, stepQuantity } from '../../lib/i
 import { STATUS_STYLES } from '../../lib/inventoryStyles'
 import { formatStockUnitPrice, formatUnitPrice, money, priceUnitOptions } from '../../lib/pricing'
 
-// The quantity and price of one SHOP entry, shared by a single item's tile
-// and the rows of a group's card (state: hooks/useEntryEditing.js).
+// The quantity and price of one SHOP entry, on its tile (state:
+// hooks/useEntryEditing.js).
 
 export function QuantityStepper({ item, pack, edit, className }) {
   return (

@@ -137,10 +137,11 @@ describe('the merge button (K108)', () => {
     expect(mergeButton()).toBeNull()
   })
 
-  it('in "Edit group" too, in the same place (before Notes)', async () => {
+  it('a group row from an older app version (K138): "Edit item" has it too, in the same place (before Notes), without "Other names"', async () => {
     const group = add('TEST Crisps', { is_group: true })
     const { container } = await openHome(group.id)
-    expect(screen.getByText('Edit group')).toBeTruthy()
+    expect(screen.getByText('Edit item')).toBeTruthy()
+    expect(screen.queryByText('Edit group')).toBeNull()
     expect(container.textContent).not.toContain('Other names')
     expect(container.textContent.indexOf('Merge other items into this one…')).toBeLessThan(container.textContent.indexOf('Notes'))
   })
@@ -248,6 +249,29 @@ describe('the picker (K109–K112)', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Merge' })))
     await waitFor(() => expect(screen.getByText('Merged 6 items into "Chips & Snacks" · 4 pcs')).toBeTruthy())
     expect(rowOf(group.id).is_group).toBe(false)
+  })
+
+  it('K138: "Edit item" of a group row (own stock 0, minimum 4) with variants at 0 and 5 — both start ticked and locked, "(variant)"; merged it holds 5 pcs', async () => {
+    const group = add('TEST Old Group', { is_group: true, current_stock: 0, min_stock: 4 })
+    add('TEST Zero', { group_id: group.id, current_stock: 0, min_stock: 0 })
+    add('TEST Five', { group_id: group.id, current_stock: 5, min_stock: 1 })
+    await openHome(group.id)
+    expect(screen.getByText('Edit item')).toBeTruthy()
+    fireEvent.click(mergeButton())
+    const sheet = picker()
+    expect(sheet.textContent).toContain('All 2 variants of "TEST Old Group" are always merged together.')
+    const chosen = within(sheet).getByRole('group', { name: 'Chosen' })
+    expect(chosen.textContent).toContain('TEST Zero · 0 pcs (variant)')
+    expect(chosen.textContent).toContain('TEST Five · 5 pcs (variant)')
+    expect(within(chosen).getAllByRole('checkbox').map((c) => [c.checked, c.disabled])).toEqual([
+      [true, true],
+      [true, true],
+    ])
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Merge 2 items…' }))
+    await waitFor(() => expect(screen.getByText('Merge 2 items into "TEST Old Group"?')).toBeTruthy())
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Merge' })))
+    await waitFor(() => expect(screen.getByText('Merged 2 items into "TEST Old Group" · 5 pcs')).toBeTruthy())
+    expect(rowOf(group.id)).toMatchObject({ is_group: false, current_stock: 5, min_stock: 4 })
   })
 })
 

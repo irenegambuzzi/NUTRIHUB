@@ -579,6 +579,8 @@ by name).
 **NOTE 1. Group variants in SHOP** (rewritten in round 3B, 20/10/2026,
 after the iPhone test: one card per group, one row per variant)
 
+Removed in round 6D stage 5 (section 9N); kept here as history.
+
 - **Entries.** Every variant at stock 0 that is not 1× has its OWN SHOP
   entry (`grocery_items.pantry_item_id` = the variant, `auto_generated`).
   The group itself never gets an entry. A variant's entry asks for 1 of its
@@ -4723,7 +4725,7 @@ iPhone test of 9M done 03/11/2026: all OK.
 
 K41: the old "one-time database update" notices are kept (03/11).
 
-### 9N. One item, many names (round 6D, decided 04–08/11, stages 1–4 and the two stage-4 follow-ups as built)
+### 9N. One item, many names (round 6D, decided 04–09/11, stages 1–5 and the two stage-4 follow-ups as built)
 
 Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
 household chose **option C** (`pantry_items.names jsonb`) and the decisions
@@ -5035,6 +5037,55 @@ update, also after stage 2.
 - **K129** (08/11) A CSV with a group writes the group total into the
   group's own stock (as built). Not fixed: the only group is merged into a
   normal item after the stage-4 test, and stage 5 removes groups.
+- **K130** (09/11, keep as built) An item deleted and made again with the
+  same name: a restore can give two items with that name; the household
+  fixes it by merging.
+- **K131** (09/11, keep as built) Two rows of one file with the same name are
+  both written.
+- **K132** (09/11, keep as built) Names in a file are compared with the names
+  of NOW.
+- **K133** (09/11) Restore backup / Import CSV are not tested on the iPhone
+  with real data; covered by automated tests (unit, render, PGlite with the
+  real 032 functions).
+- **K134** (09/11) Database columns stay: `pantry_items.is_group`,
+  `pantry_items.group_id`, the constraints `pantry_items_group_shape` and
+  `pantry_items_one_time_not_group` and the index stay (no SQL), so a device
+  still on the old app version doesn't break and old backups still restore.
+  `is_group` and `group_id` stay in `ITEM_FIELDS` for old backups; the
+  restore / import logic of K117–K129 is not changed. No new path in the app
+  ever writes `is_group = true` or a non-null `group_id`.
+- **K135** (09/11, option A) "Not urgent" is removed completely: the reason
+  `'not-urgent'`, its sky style, the "Not urgent" label in Shop → List and
+  Shop → Shop, and the rule that sinks such cards to the bottom (priority
+  sort, budget plan). Every other colour stays exactly as it was (red Out of
+  Stock, yellow Low Stock, purple expired, blue New Item, the category colour
+  of a card added by hand, the order of every other card). Every item is
+  judged only on its own stock and minimum.
+- **K136** (09/11) "It arrived!" (not linked to HOME) offers exactly "Add to
+  an existing item" (its "Which item?" also finds other names), "Create a new
+  item", "Don't add to HOME". "Add to a variant of an item group" and every
+  variant text, select and toast are gone; the K12 "Add it to …" on what used
+  to be a variant opens "Add to an existing item" with that item chosen. The
+  linked dialog has no variant select, no new variant and no `… to a new
+  variant of "{group}"` toast; `useOrders` has no `newVariant` and no group
+  branches. Everything else of 9J/9H/9M/K90/K95 is unchanged.
+- **K137** (09/11) The order's name is NOT remembered when "Add to an existing
+  item" is chosen (no tick box; report J.8's proposal is not built). A name
+  is added by hand in "Edit item" → "Other names" → "+ Add a name".
+- **K138** (09/11) A group made by an OLDER app version (a device not reloaded
+  yet): its row is a normal item tile (its own stored stock, no total) with
+  the grey note `Item group from an older app version — merge its variants
+  into it: Edit item → Merge other items into this one…` under the name
+  (after "also: …"); it never goes on the SHOP list and is never Low or Out.
+  Its variants are normal items (own stock, own minimum, own SHOP entry).
+  "Edit item" of the group row has "Merge other items into this one…" with
+  the K112 rule (all variants chosen and locked); the 1× toggle stays hidden.
+  Edge cases (a)–(d) built the safe way (see "Stage 5 as built", Kata ragu).
+
+iPhone test of stage 4 done 08/11/2026: all OK.
+
+Real data merged 08/11/2026: Chips & Snacks 11 pcs (10 names), Meat Snacks 0 pcs (2 names).
+
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5934,7 +5985,7 @@ tests 1, 2, 3, 4, 5, a row of no item now untouched, 6 (JSON and CSV), 7
 real merge, written as `importItems` sends it: K126 + K128 restore, K126 CSV).
 
 **Kata ragu (08/11 stage 4 second follow-up, tanya Zidane).** Built the safe
-way until answered.
+way until answered. (Answered 09/11: 1 → K130, 2 → K131, 3 → K132.)
 
 1. A row whose id is no item now, whose name is another item's name now. A
    backup of 1 Nov holds D "TEST Plum"; D deleted on 4 Nov; on 6 Nov a new
@@ -5951,6 +6002,196 @@ way until answered.
    names now). Options: (a) as built; (b) compare with the names the import
    leaves. Suggestion: (a), simpler, and nothing is ever on two items.
 
+### Stage 5 as built (09/11; code and tests only, no SQL)
+
+The item-group and variant mechanics are gone from the app. No SQL, no new
+column, no change to any 032 function, no new browser storage, no new
+offline queue. The database keeps `is_group`, `group_id`, their constraints
+and index (K134); `ITEM_FIELDS` keeps both for old backups; `lib/inventoryBackup.js`
+and `inventory/DataView.jsx` (K117–K129) are not touched. Nothing in the app
+writes `is_group = true` or a `group_id` any more. Every item is judged on its
+own stock and minimum (K135).
+
+**Removed, per screen.**
+
+- Home → Items: "Add group", the notice "Item groups need a one-time update
+  of the database", the `topLevel` filter (variants show as their own tiles),
+  `GroupTile` + `VariantRow` ("{n} variants", "Total: …", "Variants" /
+  "Hide", "Add a variant", "Edit variant", "Take out of the group (becomes a
+  normal item again)" and its toast), `restockGroup`, `takeOut`, the group
+  branch of "Add to grocery list" and its two toasts, the "in {group}" line on
+  a tile. "Add item" is the only add button.
+- "Edit item": the titles "Add a group" / "Edit group" / "Add a variant to
+  {group}", "Create group", "Group (optional)" with its hint, `changeGroup` +
+  `Move into "{group}"?` + "Convert and move", the unit lock and its two notes,
+  the variant hint about the group's minimum. "Usually bought at" now shows for
+  every item (variants too).
+- "Add bought stock" (`RestockForm`): "Which variant", "New variant…", "Name /
+  brand of the new variant".
+- "Finished one-time items": "in {group}".
+- Shop → List / Shop: `GroupShopCard`, `ShopGroupCard`, `shopUnits`,
+  `rowOrder`, `unitItem`, "Add another variant" (`addVariant`,
+  `addableVariants`), "You choose the variant when confirming", `useShopTidy`,
+  `syncGroup`, `planGroupEntries`, `groupsToTidy`, `variantPurchase`,
+  `groupOf`, the "(group)" aria labels, "Not urgent" (K135). One card per SHOP
+  entry, exactly as normal items were; `spareEntryIds` moved into
+  `lib/inventory.js` (its only user).
+- Confirm purchase: the group box, "Which variant of "{group}" gets this
+  stock?", "Choose a variant…", "New variant…", `variantIds`,
+  `usePurchase.makeVariants` / `removeEmptyVariants`. Name lines (stage 3)
+  unchanged.
+- Money → "Add expense": the variant select, "This group has no variants yet
+  …", `Choose which variant of "{group}" gets the stock.`, `"{group}" is a
+  group — choose the variant that gets the stock.`, the group fallback in
+  `homeItemFor`, `withGroupTotals`.
+- "It arrived!" and the linked dialog: K136.
+- Logic: `lib/groupShop.js` deleted; `lib/groups.js` keeps only `isGroup`,
+  `variantsOf` and the three K138 texts (`withGroupTotals`, `checkMoveIntoGroup`,
+  `newVariantFields`, `listedOutVariants`, `variantOrder`, `firstOutVariant`,
+  `groupsReady` deleted). `lib/inventory.js`: `shopReason` deleted (the list
+  uses `restockReason`), no group branch in `restockReason` / `displayReason`
+  / `syncShoppingForItem`. `useNewItemIds`: the group part.
+  `useGroceryList`: `groupOf`, the variant reason rule, `useShopTidy`.
+  `grocerySearch`: `variantHint` → `namesHint` ("In it: …" from other names),
+  `matchingVariants` → `matchingNames`. `pantryFilters`: `groupName` in
+  `searchRank`, `matchesExpiryDeep`. `similarItems`: no group-before/after
+  ordering. `purchase` / `moneyPurchase` / `packSize`: no variant line.
+
+**Kept, and why.** `merge_pantry_items` / `separate_item_name` /
+`save_item_names` calls and all of stages 2–4; the K112 / K70 group target in
+the merge (`mergeRows`, `groupMergeNote`, `MergePicker` locked variants, the
+`mergeCheck` texts, which are 032's own): they are the K138 way to turn an
+old group row into a normal item. Order groups of 9I. `canHaveNames` /
+`cardTitle` / the K93 rule still leave out a group row and a variant of one
+(Kata ragu 5).
+
+**K138 fallback (a group row made by an older app version).**
+
+- Tile (`ItemTile`): its own stored stock, the grey note under the name (after
+  "also: …"), no Low / Out badge, never red or yellow (purple when expired),
+  and none of −, +, "+1 {pack}", "Add bought stock", "Discard", "Add to grocery
+  list"; "Edit" and "Delete" stay. `increment_stock` does not refuse a group
+  row, so nothing on the tile may change its stock.
+- "Edit item": no 1×, no "Current stock", no expiry, no batch (so Save never
+  sends stock to it); no minimum hint; "Merge other items into this one…" as
+  K112. Delete refused while it has variants (`groupDeleteText`).
+- Never on the SHOP list: `restockReason` null; `syncShoppingForItem` deletes
+  its automatic entries still "to buy" (as `planGroupEntries` did), keeps those
+  in a cart, on the way or typed by hand. Not counted in the Low / Out tiles
+  or "need buying".
+- Its variants: normal items (own minimum; at 0 their own entry "Out of
+  Stock"); "Which item?" in "It arrived!" offers them.
+- Kept out of every picker that gives stock or a SHOP entry (K138 d):
+  `matchHomeItems` (SHOP "Use …", MONEY's question, "It arrived!" "Add it to
+  …", HOME "Go to …"), `homeItemFor` (MONEY: its name makes a new normal item,
+  as 022 does in SHOP), `pantryItemFor` / `pantryByName` (already), "It's
+  another name of…", "Which item?", the "+ Add to SHOP list" name
+  suggestions, `linkedItemOf` (an order linked to it opens "It arrived!";
+  `arrive_order` refuses a group row anyway).
+- A SHOP card linked to it by id (K138 b): **032 does not refuse it** — proved
+  in PGlite, a hand-sent line puts the stock on the group row (0 → 2). So the
+  app never sends it: the line has `oldGroup`, shows `"{group}" is an item
+  group from an older app version and can't get stock — merge its variants
+  into it first (Home → Edit item → Merge other items into this one…), or take
+  this card out of the cart.`, no `restocks "…"`, and "Confirm purchase · €…"
+  stays locked.
+
+**Files.** Deleted: `lib/groupShop.js`, `lib/groupShop.test.js`,
+`lib/groups.test.js`, `hooks/useShopTidy.js`, `inventory/GroupTile.jsx`,
+`grocery/GroupShopCard.jsx`. New: `lib/noItemGroups.test.js`. Changed:
+`lib/groups.js`, `inventory.js`, `inventoryStyles.js`, `grocery.js`,
+`grocerySearch.js`, `pantryFilters.js`, `similarItems.js`, `nameSuggestions.js`,
+`purchase.js`, `moneyPurchase.js`, `itemNames.js` (comments), `oneTime.js`,
+`newItems.js` (comments); `hooks/usePantryItems.js`, `useGroceryList.js`,
+`useGroceryItems.js`, `useNewItemIds.js`, `usePurchase.js`, `useOrders.js`,
+`orderActions.js`, `itemNameActions.js` (comments); `pages/PantryPage.jsx`,
+`GroceryPage.jsx`; `inventory/ItemEditor.jsx`, `ItemTile.jsx`,
+`RestockForm.jsx`, `FinishedItems.jsx`; `grocery/ConfirmPurchase.jsx`,
+`ShoppingMode.jsx`, `AddItemForm.jsx`, `GroceryItemTile.jsx`,
+`EntryControls.jsx`, `OrderOnlineDialog.jsx`; `expenses/ArrivedDialog.jsx`,
+`LinkedArrivedDialog.jsx`, `PurchaseForm.jsx`, `OrderCard.jsx`, `OrderForm.jsx`
+(comments); `ui/Feedback.jsx` (comment); tests (below); this plan.
+
+**Tests: 2487 → 2477 (134 → 133 files).** Deleted with their code:
+`lib/groups.test.js` (30), `lib/groupShop.test.js` (14; its `spareEntryIds`
+case moved to `lib/shopSync.test.js`). New: `lib/noItemGroups.test.js` (35:
+every removed text, reason and module is nowhere in the app's code).
+Rewritten: `lib/shopSync.test.js` (K138: the group row never listed, a variant
+at 0 Out and at 5 not, a variant on its own minimum, old group-level entries,
+duplicates of one item), `lib/oneTime.test.js` (K135: minimum 1 at 2 / 1 / 0
+for three items, minimum 3 at 3, no 'not-urgent' anywhere, the priority order
+with out / low / expired / hand-added / stocked cards; K138 rules and the
+locked Confirm line), `lib/moneyPurchase.test.js`, `lib/similarItems.test.js`,
+`lib/packSize.test.js`, `lib/itemNamesRead.test.js`, `lib/newItemUnit.test.js`,
+`lib/newItems.test.js`, `hooks/arrivalUndo.test.js`,
+`hooks/oneTimeActions.test.jsx`, `hooks/orderPackSave.test.js`,
+`components/oneTime.render.test.jsx` (K138 tile, note after "also:", "Edit
+item" of a group row and of a variant, variant card "Out of Stock", locked
+Confirm, Shop mode tiles), `components/inventory/inventory.render.test.jsx`,
+`components/arrivedUndo.render.test.jsx` (K136 three choices, "Corn Bites TEST"
+→ "Snack Box TEST" by another name with Undo, K137 names unchanged, the real
+data shape with 10 names), `components/expenses/purchaseForm.render.test.jsx`
+(no variant select, the real data shape), `components/mergeSeparate.render.test.jsx`
+(K138: "Edit item" of a group row at 0 / minimum 4 with variants at 0 and 5 →
+both ticked and locked, merged 5 pcs), `components/nameLines.render.test.jsx`
+(the real data shape in Confirm and on the SHOP list), `components/itemNames.render.test.jsx`,
+`components/newItemUnit.render.test.jsx`, `components/discountPreview.test.jsx`,
+`components/similarItems.render.test.jsx`, `pages/shopAdd.render.test.jsx`,
+`components/durableLock.render.test.jsx`, `pages/itemNamesPages.render.test.jsx`;
+`supabase/migrations.test.js`: the round-4 MONEY case (a group row's name makes
+a normal item, the group row and its variants untouched) and block "032" →
+"stage 5" (+3, PGlite: K138 b proof, a variant bought with the app's payload,
+the real data shape bought under an other name and a new name, Reopen).
+Blocks 018, 022, 023…032 otherwise unchanged.
+
+**Report rows "replace" not built (not decided).** A CSV / Excel column
+"names" (report J.13) and the arrival toast "(Corn Snack)" (report J.8): see
+Kata ragu 7.
+
+**Kata ragu (09/11 stage 5, tanya Zidane).** Built the safe way until
+answered.
+
+1. K138 (a) A group row with 0 variants. An older phone makes "Pasta TEST" with
+   "Add group" and adds nothing: the tile still says "merge its variants into
+   it". Merge works with any items (none locked); Delete works (no variants).
+   Options: (a) as built; (b) another text for 0 variants, e.g. "Item group
+   from an older app version — merge items into it or delete it." Suggestion:
+   (a), it is rare and both ways work.
+2. K138 (b) A SHOP card linked to a group row (from the older version). 032
+   puts the stock on the group row (proved), so the line is locked with the
+   text above; the card can be taken out of the cart (or "Not in this trip").
+   Its automatic "to buy" entries are deleted by the next judging; in the cart,
+   on the way or typed by hand they stay. "Order online" of such a card says
+   "For "{group}" in HOME … "Arrived" adds the stock", but Arrived then asks
+   "It arrived!". Options: (a) as built; (b) let Confirm pick another item for
+   the stock; (c) send it as "expense only". Suggestion: (a).
+3. K138 (c) Deleting a group row that still has variants is refused with
+   `"{group}" still has variants — merge them into it first (Edit item → Merge
+   other items into this one…), then delete it if you want.` Options: (a) as
+   built; (b) allow the delete: the database sets the variants' `group_id` to
+   null (on delete set null) and they simply stay as items. Suggestion: (a)
+   (nothing is lost either way; (a) keeps the K138 merge as the one way).
+4. K138 (d) Pickers: a group row is left out of every place listed above. One
+   consequence: HOME "Add item" with exactly a group row's name gets no "Go to
+   …" question, and MONEY / SHOP with that name make a normal item, so two
+   rows can share the name (fixed by the merge). Options: (a) as built; (b)
+   keep "Go to …" for HOME only. Suggestion: (a).
+5. Variants of a group row are normal for stock, minimum and the SHOP list,
+   but still get no "Other names", no name lines at Confirm, no "It's another
+   name of…", no K58 word and no merge button (032 refuses a variant as
+   target). Example: "Lays TEST" (variant) → "Edit item" without "Other
+   names". Options: (a) as built until the group is merged; (b) names for
+   variants too. Suggestion: (a).
+6. The group row's tile shows no status badge and stays green, still shows
+   "min 4 pcs", is counted in "Total items" but not in Low / Out; "Edit item"
+   still shows its minimum field (no hint). Options: (a) as built; (b) also
+   hide the minimum. Suggestion: (a).
+7. Report "replace" rows not built: the CSV / Excel "names" column (J.13) and
+   the arrival toast with the other name ("Added 1 pcs to "Chips & Snacks"
+   (Corn Snack)", J.8). Today: the CSV has no names column (the JSON backup
+   has them); the toast says `Added 1 pcs to "Snack Box TEST"`. Options: (a)
+   leave; (b) build in a later round. Suggestion: (a) for now.
+
 **Notes for later stages.**
 
 - **Stage 3:** built (above).
@@ -5961,8 +6202,10 @@ way until answered.
   items first. The name lines of Confirm never show for a group or a variant
   (K93): once stage 5 removes groups, the merged item is a normal item and
   gets them by itself.
-- **Stage 5:** `LinkedArrivedDialog` with a group still has no name pack
-  (K90 is for normal items only); "It arrived!" stays without one.
+- **Stage 5:** built (above). The old note "`LinkedArrivedDialog` with a
+  group still has no name pack" is no longer relevant: there are no groups in
+  the app, and an order linked to a group row from an older app version opens
+  "It arrived!" instead of the linked dialog (K138).
 
 ---
 

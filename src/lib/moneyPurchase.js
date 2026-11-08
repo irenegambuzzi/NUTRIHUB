@@ -1,7 +1,6 @@
 import { DEFAULT_UNIT } from '../data/constants'
 import { decimalProblem, parseDecimal } from './decimal'
 import { normName } from './grocery'
-import { firstOutVariant, variantOrder } from './groups'
 import { expiryState, isDurable } from './inventory'
 import { isFinished } from './oneTime'
 import { budgetCategoryFor } from './budgetMap'
@@ -25,7 +24,6 @@ const round2 = (n) => Math.round(n * 100) / 100
 
 // A new, empty item row. `key` only tells rows apart on screen.
 //   addToHome   null = follow the default (see addsToHome), else the choice
-//   variantId   undefined = not chosen yet (the first variant at 0 is taken)
 //   similarAnswer  the name (its exactKey) "Create new" was pressed for in
 //               the similar-name question (plan 9G); another name asks again
 //   priceEdited / autoFilled   the price, quantity and unit were typed by hand
@@ -61,7 +59,6 @@ export function emptyRow(key) {
     addToHome: null,
     oneTime: false,
     minText: '0',
-    variantId: undefined,
     packSizeText: '',
     packUnit: null,
     newUnit: null,
@@ -74,17 +71,18 @@ export function emptyRow(key) {
   }
 }
 
-// The HOME item a typed name stands for: a normal item with that name (a
-// finished 1× item too: buying it again brings it back), else a group with
-// that name (its stock then goes to one of its variants, never the group).
-// The same name ignoring capitals and spaces first, then apart from
-// accents, punctuation and a plural too ("cucumbers" is "Cucumber", plan 9G);
-// an item's own name goes first, then another name of an item (plan 9N).
+// The HOME item a typed name stands for: an item with that name (a finished
+// 1× item too: buying it again brings it back). The same name ignoring
+// capitals and spaces first, then apart from accents, punctuation and a
+// plural too ("cucumbers" is "Cucumber", plan 9G); an item's own name goes
+// first, then another name of an item (plan 9N). Never a group row from an
+// older version of the app (K138): that name makes a normal item, as in
+// SHOP (confirm_shopping_trip, 022).
 export function homeItemFor(name, pantryItems) {
   const key = normName(name)
   if (!key) return null
-  const by = (same) => pantryItems.find((p) => !p.is_group && same(p.name)) ?? pantryItems.find((p) => p.is_group && same(p.name))
-  return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? itemForName(name, pantryItems)?.item ?? null
+  const by = (same) => pantryItems.find((p) => !p.is_group && same(p.name))
+  return by((n) => normName(n) === key) ?? by((n) => sameItemName(n, name)) ?? itemForName(name, pantryItems, { groups: false })?.item ?? null
 }
 
 // The similar-name question of a row (plan 9G): { similar, more } — the
@@ -165,8 +163,6 @@ export const budgetOf = (row, ctx) => {
 //   lock        why it can't (lockOf), or null
 //   known       the HOME item with that name (also with Add to HOME off,
 //               to say what happens to its SHOP entry)
-//   group       that item is a group: `variants` to pick from, `target`
-//               the chosen one (the first at 0 until the user picks)
 //   target      the HOME item whose stock goes up (null = a new item)
 //   pack        the pack field (lib/packSize.js), or null: how many of the
 //               target's stock units are in 1 package for this purchase
@@ -191,10 +187,7 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null, namesReady =
   const attached = namesReady && home && !named && row.attachedTo ? pantryItems.find((p) => p.id === row.attachedTo && canHaveNames(p)) ?? null : null
   const known = named ?? attached
   const match = home ? known : null
-  const group = match?.is_group ? match : null
-  const variants = group ? variantOrder(group.variants ?? pantryItems.filter((p) => p.group_id === group.id)) : []
-  const variantId = group ? (row.variantId === undefined ? (firstOutVariant(variants) ?? variants[0])?.id ?? null : row.variantId) : null
-  const target = group ? variants.find((v) => v.id === variantId) ?? null : match
+  const target = match
   const count = quantity > 0 ? quantity : 1
   const packItem = target && packItemFor(target, row.name, row.unit)
   const typedPack = { text: row.packSizeText, unit: row.packUnit }
@@ -212,8 +205,6 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null, namesReady =
     home,
     lock,
     known,
-    group,
-    variants,
     target,
     add,
     pack,
@@ -228,7 +219,6 @@ export function rowLine(row, pantryItems, ctx, { unitsReady = null, namesReady =
     // does): the stock is added and the row says to check it in HOME.
     expired: Boolean(target) && expiryState(target) === 'expired',
     minStock: row.oneTime ? 0 : Number.isFinite(minStock) && minStock > 0 ? minStock : 0,
-    needsVariant: Boolean(group) && !target,
     needsPackSize: Boolean(target) && add === null,
   }
 }
@@ -304,7 +294,6 @@ export function rowProblem(line, { plain = false } = {}) {
   const paid = line.paid ?? line.total
   if (!(paid > 0) && !(line.home && paid === 0)) return 'Nothing is paid after the discounts — lower the discount, or turn Add to HOME on.'
   if (!(parseDecimal(row.quantityText) > 0)) return 'Enter a quantity above 0.'
-  if (line.needsVariant) return `Choose which variant of "${line.group.name}" gets the stock.`
   if (line.needsPackSize) return packMissingText(line.pack)
   if (line.stockUnit?.problem) return line.stockUnit.problem
   if (line.isNew && !row.categoryId) return 'Pick a HOME item category, or turn Add to HOME off.'
@@ -330,7 +319,7 @@ const paidOf = (line) => {
 // The payload for confirm_shopping_trip (source 'money'). `budgetFor(line)`
 // → the expense category id; `entryOf(line)` → its listEntryFor result.
 // Add to HOME off → `durable: true` (an expense only, like an appliance in
-// SHOP). On → the HOME item (or chosen variant) and the stock in its own
+// SHOP). On → the HOME item and the stock in its own
 // unit; a new item gets its category, 1× and minimum (in its stock unit),
 // and, counted in another unit than the one bought (plan 9L),
 // new_stock_unit / new_pack_size — `add` stays in the unit bought. The typed price is
@@ -391,7 +380,6 @@ export function moneyPurchasePayload({ id, date, at, shopId = null, paidBy, line
 // What the row says it will do in HOME.
 export function homeNote(line) {
   if (!line.home) return line.lock ? lockNote(line.lock) : 'Expense only — nothing changes in HOME.'
-  if (line.group && !line.target) return `"${line.group.name}" is a group — choose the variant that gets the stock.`
   if (line.target) {
     const amount = line.add === null ? '' : ` (+${line.add} ${line.target.unit})`
     const end = line.attached ? ' — new name, it will be remembered.' : '.'

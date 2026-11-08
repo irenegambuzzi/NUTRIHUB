@@ -8,7 +8,7 @@ const { pantryItemFor, purchaseLine } = await import('./purchase')
 const { buildSuggestions, matchSuggestions } = await import('./nameSuggestions')
 const { lastPriceFor } = await import('./lastPrice')
 const { searchRank } = await import('./pantryFilters')
-const { matchesGrocerySearch, variantHint } = await import('./grocerySearch')
+const { matchesGrocerySearch, namesHint } = await import('./grocerySearch')
 
 // Stage 2 of round 6D (plan 9N): every place that reads a name also reads
 // the item's other names. Pure, so it works offline exactly like online.
@@ -102,11 +102,12 @@ describe('homeItemFor and pantryItemFor: an other name finds its item', () => {
     expect(pantryItemFor({ name: 'Nothing', pantry_item_id: null }, home)).toBeNull()
   })
 
-  it('a name never matches a group, as before', () => {
+  it('a name never matches a group row (K138), in SHOP and in MONEY', () => {
     const group = item('g', 'Crisps', ['Lays'], { is_group: true })
     expect(pantryItemFor({ name: 'Lays', pantry_item_id: null }, [group])).toBeNull()
     expect(pantryItemFor({ name: 'Crisps', pantry_item_id: null }, [group])).toBeNull()
-    expect(homeItemFor('Crisps', [group])).toBe(group)
+    expect(homeItemFor('Crisps', [group])).toBeNull()
+    expect(homeItemFor('Lays', [group])).toBeNull()
   })
 
   it('the payload of a MONEY row keeps the name typed and sends the item', () => {
@@ -232,8 +233,8 @@ describe('searching', () => {
   it('SHOP: found by another name, with "In it: …"', () => {
     const entry = { name: 'Dish soap', category_id: null }
     expect(matchesGrocerySearch(entry, 'svelt', noCategory, ['Svelto'])).toBe(true)
-    expect(variantHint(entry, 'svelt', ['Svelto'])).toBe('In it: Svelto')
-    expect(variantHint(entry, 'dish', ['Svelto'])).toBeNull()
+    expect(namesHint(entry, 'svelt', ['Svelto'])).toBe('In it: Svelto')
+    expect(namesHint(entry, 'dish', ['Svelto'])).toBeNull()
   })
 })
 

@@ -14,7 +14,7 @@ import { isDurableBudget, isServiceBudget } from '../../lib/durable'
 import { isDurable } from '../../lib/inventory'
 
 // "Order online" for a SHOP list entry: the order form, filled in from the
-// entry and its HOME item (or group) — store (its usual one), quantity,
+// entry and its HOME item — store (its usual one), quantity,
 // price if known, budget category (from the item category's mapping) and
 // who pays. Saving makes the order and its one expense, exactly like Orders
 // in MONEY, linked to the HOME item and to this list entry; the entry then
@@ -57,7 +57,7 @@ export function OrderOnlineDialog({ entry, pantry, total, onClose }) {
     : service
     ? 'Service — saving adds the expense; it never goes into HOME.'
     : pantry
-    ? `For "${pantry.name}" in HOME${pantry.is_group ? ' (group: you pick the variant when it arrives)' : ''}. Saving adds the expense now; "Arrived" adds the stock. Until then it waits under "On the way" and isn't bought twice.`
+    ? `For "${pantry.name}" in HOME. Saving adds the expense now; "Arrived" adds the stock. Until then it waits under "On the way" and isn't bought twice.`
     : 'Not in HOME yet. Saving adds the expense now; when it arrives you can add it to HOME.'
 
   return createPortal(

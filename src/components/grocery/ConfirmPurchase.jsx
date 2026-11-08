@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Plus, Trash2, X } from 'lucide-react'
 import { DateField } from '../ui/DateField'
-import { Input, Label, Select } from '../ui/Field'
+import { Label, Select } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { DiscountField, LineDiscountNotes, PurchaseDiscountBox } from '../ui/DiscountField'
 import { PackSizeField } from '../ui/PackSizeField'
@@ -20,14 +20,12 @@ import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
-import { cardStock, editPatch, editedItem, emptyNameLine, expiryOncePerItem, laterNameLine, namePriceTotal, newNameOnce, pantryItemFor, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
+import { cardStock, editPatch, editedItem, emptyNameLine, expiryOncePerItem, laterNameLine, namePriceTotal, newNameOnce, purchaseLine, purchasePricing, twiceProblems } from '../../lib/purchase'
 import { cardTitle, nameChips, otherNames } from '../../lib/itemNames'
 import { exactKey } from '../../lib/similarItems'
 import { useLastPrice } from '../../hooks/useLastPrice'
 import { durableLookalike, durableLookalikeText } from '../../lib/durable'
 import { useLastBoughtNames } from '../../hooks/useLastBoughtNames'
-import { variantOrder } from '../../lib/groups'
-import { shopUnits } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
 import { findMismatches, suggestionChange } from '../../lib/receiptMatch'
 import { localDateString, parseLocalDate } from '../../lib/week'
@@ -144,8 +142,6 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const [discounts, setDiscounts] = useState({})
   const [coupon, setCoupon] = useState({ kind: 'amount', text: '' })
   const [split, setSplit] = useState(emptySplit)
-  // Ids of the new variants made for group lines, fixed for this screen.
-  const variantIds = useRef(new Map())
   const [photoIds, setPhotoIds] = useState([])
   const [busy, setBusy] = useState(false)
   // What the check at Confirm found while it wasn't known.
@@ -201,22 +197,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     return namesReady ? newNameOnce(expiryOncePerItem(flat)) : flat
   }
   const allLines = itemsFor(edits).map(lineFor)
-  // A group's lines together in one card, one line per variant (each its
-  // own stock and its own expense), variants at 0 first.
-  const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
   const lines = tripLinesOf(allLines)
   const shown = new Map(lines.map((l) => [l.item.id, l]))
   const lineOf = new Map(allLines.map((l) => [l.item.id, shown.get(l.item.id) ?? l]))
-  const groupOfItem = (item) => {
-    const entry = pantryItemFor(item, pantryItems)
-    if (!entry) return null
-    return entry.is_group ? entry : entry.group_id ? pantryById.get(entry.group_id) ?? null : null
-  }
-  const lineUnits = shopUnits(
-    allLines.map((l) => l.item),
-    groupOfItem,
-    (item) => pantryItemFor(item, pantryItems)
-  )
   const items = lines.map((l) => l.item)
   const pricing = purchasePricing(items, totalOf, discounts, coupon)
   const total = pricing.priced.paidTotal
@@ -310,7 +293,6 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       totalOf,
       photoIds,
       patches,
-      variantIds: variantIds.current,
       shopId: shopId || null,
       paidBy: confirmedPayers.size === 1 ? [...confirmedPayers][0] : null,
       pricing: confirmedPricing,
@@ -430,18 +412,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
         )}
 
         <section className="space-y-2">
-          {lineUnits.map((unit) =>
-            unit.kind === 'group' ? (
-              <div key={unit.key} role="group" aria-label={`${unit.group.name} (group)`} className="rounded-3xl border border-[var(--color-border)] p-2 space-y-2">
-                <p className="px-1 text-xs font-extrabold text-[var(--color-text-soft)] flex items-center gap-1.5">
-                  <CategoryIcon category={unit.group.category_id} size={13} /> {unit.group.name}
-                </p>
-                {unit.entries.map((item) => purchaseLineFor(lineOf.get(item.id)))}
-              </div>
-            ) : (
-              purchaseLineFor(lineOf.get(unit.entry.id))
-            )
-          )}
+          {allLines.map((line) => purchaseLineFor(lineOf.get(line.item.id)))}
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
@@ -538,7 +509,7 @@ const NO_TOTAL_TEXT = "The total can't be worked out from the price's unit — t
 // typed on this line and the card's other lines (`later`: { line, draft }),
 // with what changes them.
 function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {}, namesReady = false, names = null }) {
-  const { item, pantry, group, needsVariant, add, needsPackSize, expired, expiredStock, stockUnit } = line
+  const { item, pantry, add, needsPackSize, expired, expiredStock, stockUnit } = line
   // K53: the HOME item's name, with the card's own name under it.
   const { title, subtitle } = namesReady ? cardTitle(item, line.takesNames ? pantry : null) : { title: item.name, subtitle: '' }
   const home = line.target ?? { name: item.name }
@@ -588,7 +559,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
   }
 
   const unitPrice = formatUnitPrice(item)
-  const needsAnswer = needsPackSize || needsVariant || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean') || Boolean(line.naming?.problem) || Boolean(names?.later.some((l) => !l.line.ready))
+  const needsAnswer = needsPackSize || Boolean(line.oldGroup) || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean') || Boolean(line.naming?.problem) || Boolean(names?.later.some((l) => !l.line.ready))
 
   if (ordered) {
     return (
@@ -635,7 +606,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
           </p>
           {subtitle && <p className="text-[10px] text-[var(--color-text-muted)] break-words">{subtitle}</p>}
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            {[item.category_id && categoryName(item.category_id), unitPrice, pantry ? `restocks "${pantry.name}"` : line.durable ? 'expense only' : 'new in the pantry'].filter(Boolean).join(' · ')}
+            {[item.category_id && categoryName(item.category_id), unitPrice, line.oldGroup ? '' : pantry ? `restocks "${pantry.name}"` : line.durable ? 'expense only' : 'new in the pantry'].filter(Boolean).join(' · ')}
           </p>
         </div>
         <button type="button" onClick={onRemove} aria-label={`Take ${item.name} out of the cart`} className="p-1 text-[var(--color-icon-muted)] hover:text-rose-400">
@@ -707,34 +678,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
       )}
       {total === null && <p className="text-[10px] text-amber-300">{NO_TOTAL_TEXT}</p>}
 
-      {group && (
-        <div className={cn('rounded-xl border p-2 space-y-1.5', needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>
-          <p className="text-[11px] text-[var(--color-text-soft)]">Which variant of "{group.name}" gets this stock?</p>
-          <Select
-            value={answer.newVariantName !== undefined && !answer.variantId ? 'new' : line.target?.id ?? ''}
-            onChange={(e) => (e.target.value === 'new' ? onAnswer({ variantId: null, newVariantName: answer.newVariantName ?? '' }) : onAnswer({ variantId: e.target.value || null, newVariantName: undefined }))}
-            aria-label={`Variant for ${item.name}`}
-            className="text-xs p-2"
-          >
-            <option value="">Choose a variant…</option>
-            {variantOrder(group.variants).map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.current_stock} {v.unit})
-              </option>
-            ))}
-            <option value="new">New variant…</option>
-          </Select>
-          {answer.newVariantName !== undefined && !answer.variantId && (
-            <Input
-              value={answer.newVariantName}
-              onChange={(e) => onAnswer({ newVariantName: e.target.value })}
-              placeholder="Name / brand of the new variant"
-              aria-label={`New variant of ${group.name}`}
-              className="text-xs p-2"
-            />
-          )}
-        </div>
-      )}
+      {line.groupProblem && <p className="text-[11px] text-amber-300">{line.groupProblem}</p>}
 
       {stockUnit && <StockUnitQuestion question={stockUnit} onChange={(newUnit) => onAnswer({ newUnit })} name={item.name} />}
       {twice && <p className="text-[11px] text-amber-300">{twice}</p>}

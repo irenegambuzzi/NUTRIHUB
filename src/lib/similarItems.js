@@ -121,14 +121,14 @@ export function matchKind(a, b) {
 const KIND_ORDER = ['exact', 'typo', 'words']
 
 // Out or Low first: a finished 1× item counts as Out, any other 1× item
-// is never Low or Out (lib/inventory.js stockStatus for the rest; a group
-// with its total).
+// is never Low or Out (lib/inventory.js stockStatus for the rest).
 export const needsStock = (item) => isFinished(item) || (!isOneTime(item) && stockStatus(item) !== 'ok')
 
-// The HOME items searched: every pantry item — finished 1× items, groups
-// and their variants too — but never a durable (not HOME stock).
+// The HOME items searched: every pantry item — finished 1× items too — but
+// never a durable (not HOME stock) and never a group row from an older
+// version of the app (K138: it never receives stock or a SHOP entry).
 // `exceptId`: the item being edited, never compared with itself.
-const searchable = (items, exceptId) => items.filter((p) => p.id !== exceptId && !isDurable(p) && String(p.name ?? '').trim())
+const searchable = (items, exceptId) => items.filter((p) => p.id !== exceptId && !isDurable(p) && !p.is_group && String(p.name ?? '').trim())
 
 // How `name` matches an item: its own name, or else the best of its other
 // names (plan 9N, then `via` is that name). → { item, kind, via? } or null.
@@ -146,8 +146,8 @@ function matchItem(name, item) {
 // exact, then typo, then words; an item's own name before another item's
 // other name; within those Out / Low first, then fewer words, then the
 // shorter name, then A–Z. → { exact, exactVia, similar, more }: `exact` is
-// the item to use without a question (a normal item before a group of the
-// same name), or null, `exactVia` the other name it was found by; `similar`
+// the item to use without a question, or null, `exactVia` the other name it
+// was found by; `similar`
 // up to `limit` { item, kind, via } to ask about (empty when there is an
 // exact one: that never needs a question); `more` how many more matched than
 // are shown ("4 more — type more of the name").
@@ -160,7 +160,6 @@ export function matchHomeItems(name, items, { exceptId = null, limit = 3 } = {})
       (a, b) =>
         KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
         Number(a.kind === 'exact' && Boolean(a.via)) - Number(b.kind === 'exact' && Boolean(b.via)) ||
-        Number(a.kind === 'exact' && Boolean(a.item.is_group)) - Number(b.kind === 'exact' && Boolean(b.item.is_group)) ||
         Number(!needsStock(a.item)) - Number(!needsStock(b.item)) ||
         prepare(a.item.name).words.length - prepare(b.item.name).words.length ||
         a.item.name.trim().length - b.item.name.trim().length ||

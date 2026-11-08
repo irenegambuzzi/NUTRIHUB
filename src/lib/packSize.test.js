@@ -188,12 +188,13 @@ describe('Confirm purchase (lib/purchase.js)', () => {
     expect(purchaseLine(entry({ category_id: 'appliances' }), [cat])).toMatchObject({ durable: true, pack: null })
   })
 
-  it("an old group-level entry counts with the group's size, but never saves one on the variant", () => {
-    const group = { id: 'g', name: 'Chips', unit: 'pcs', is_group: true, packaging_unit: null, quantity_per_pack: null, variants: [{ id: 'v', name: 'Lays', unit: 'pcs', current_stock: 0, group_id: 'g' }] }
-    const variant = group.variants[0]
-    const line = purchaseLine(entry({ name: 'Chips', pantry_item_id: 'g' }), [group, variant], { pack: { text: '6', unit: 'box' } })
-    expect(line).toMatchObject({ add: 6, target: { id: 'v' }, pack: { firstTime: false } })
-    expect(payload(line).items[0]).not.toHaveProperty('packaging_unit')
+  it('an entry linked to a group row (older app version) asks no pack size and is never ready (K138); a variant counts and saves its own size', () => {
+    const group = { id: 'g', name: 'Chips', unit: 'pcs', is_group: true, packaging_unit: null, quantity_per_pack: null }
+    const variant = { id: 'v', name: 'Lays', unit: 'pcs', current_stock: 0, group_id: 'g', packaging_unit: null, quantity_per_pack: null }
+    expect(purchaseLine(entry({ name: 'Chips', pantry_item_id: 'g' }), [group, variant], { pack: { text: '6', unit: 'box' } })).toMatchObject({ pack: null, add: 0, target: null, ready: false })
+    const line = purchaseLine(entry({ name: 'Lays', pantry_item_id: 'v' }), [group, variant], { pack: { text: '6', unit: 'box' } })
+    expect(line).toMatchObject({ add: 6, target: { id: 'v' }, pack: { firstTime: true } })
+    expect(payload(line).items[0]).toMatchObject({ pantry_item_id: 'v', packaging_unit: 'box', quantity_per_pack: 6 })
   })
 })
 

@@ -1,90 +1,27 @@
-import { unitFactor } from './units'
-import { isOneTime } from './oneTime'
-
-// Item groups: a group is a pantry row with is_group = true ("Chips &
-// Snacks"); its variants are pantry rows with group_id = the group's id.
-// A group has no stock of its own: what it shows is the sum of its
-// variants, counted in the group's unit. supabase/018_item_groups.sql adds
-// the two columns; until it has been run, no row has them and every item
-// is an ordinary item.
-
-const round = (n) => Math.round(n * 100) / 100
+// Item groups are gone (plan 9N, round 6D stage 5): every item is a normal
+// item with its own names. The columns pantry_items.is_group and group_id
+// stay in the database (supabase/018), so an older version of the app still
+// open on another phone keeps working and old backups still restore (K134).
+// Such a version can still make a group ("Add group") until it is reloaded.
+// This app then shows that row as an item tile with its own stored stock,
+// never puts it on the SHOP list and never sends stock to it (K138); its
+// variants (rows with its id as group_id) are normal items. "Merge other
+// items into this one…" on the group row takes all its variants at once
+// (K112, lib/itemNames.js mergeRows).
 
 export const isGroup = (item) => Boolean(item?.is_group)
-export const isVariant = (item) => Boolean(item?.group_id)
-
-// Whether the database has the group columns (any row shows them). With
-// no items yet nothing can be told, and groups are allowed.
-export const groupsReady = (rows) => rows.length === 0 || rows.some((r) => 'is_group' in r)
 
 export function variantsOf(rows, groupId) {
   return rows.filter((r) => r.group_id === groupId)
 }
 
-// The rows as the app shows them: each group's current_stock is the total
-// of its variants (and `variants` lists them). Every other row is returned
-// untouched, and without groups the same array comes back.
-export function withGroupTotals(rows) {
-  if (!rows.some(isGroup)) return rows
-  const byGroup = new Map()
-  for (const r of rows) {
-    if (!r.group_id) continue
-    byGroup.set(r.group_id, [...(byGroup.get(r.group_id) ?? []), r])
-  }
-  return rows.map((r) => {
-    if (!isGroup(r)) return r
-    const variants = byGroup.get(r.id) ?? []
-    return { ...r, current_stock: round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0)), variants }
-  })
-}
+// The grey note on a group row's tile (K138).
+export const OLD_GROUP_NOTE = 'Item group from an older app version — merge its variants into it: Edit item → Merge other items into this one…'
 
-// Moving `item` into `group`: all variants count in the group's unit.
-//   { ok: true }                      same unit
-//   { convert: { factor, from, to } } a different unit that converts (kg → gr)
-//   { blocked: message }              can't be converted: nothing happens
-export function checkMoveIntoGroup(item, group) {
-  if (isGroup(item)) return { blocked: `"${item.name}" is a group itself — a group can't go inside another group.` }
-  if (item.unit === group.unit) return { ok: true }
-  const factor = unitFactor(item.unit, group.unit)
-  if (factor !== null) return { convert: { factor, from: item.unit, to: group.unit } }
-  return {
-    blocked: `"${item.name}" is counted in ${item.unit}, but "${group.name}" counts in ${group.unit}, and ${item.unit} can't be converted to ${group.unit}. Change the item's unit first, or pick another group.`,
-  }
-}
+// A group row still holding variants is never deleted: its variants would
+// lose their group without being merged (K138 c).
+export const groupDeleteText = (group) => `"${group.name}" still has variants — merge them into it first (Edit item → Merge other items into this one…), then delete it if you want.`
 
-// What a restock of a group's variant or a new variant needs to look like.
-export function newVariantFields(group, name, extra = {}) {
-  return {
-    name: name.trim(),
-    category_id: group.category_id,
-    subcategory_id: group.subcategory_id ?? null,
-    unit: group.unit,
-    min_stock: 0,
-    group_id: group.id,
-    ...extra,
-  }
-}
-
-// The variants of a group that are out and need buying: at 0 and not
-// one-time (a finished 1× variant is never bought by itself). Each has its
-// own SHOP entry (lib/groupShop.js). A–Z. (pantry_items.shop_dismissed_at
-// from supabase/023 is no longer used: a variant at 0 always stays on the
-// list until it is bought or restocked.)
-export function listedOutVariants(variants = []) {
-  return variants.filter((v) => (Number(v.current_stock) || 0) <= 0 && !isOneTime(v)).sort((a, b) => a.name.localeCompare(b.name))
-}
-
-// Variants in buying order (the SHOP row and Confirm purchase): those at 0
-// first, then from the lowest stock to the highest; A–Z between equals.
-// HOME's group card keeps its A–Z list.
-export function variantOrder(variants = []) {
-  return [...variants].sort((a, b) => (Number(a.current_stock) || 0) - (Number(b.current_stock) || 0) || a.name.localeCompare(b.name))
-}
-
-// The variant Confirm purchase picks for a group-level line (an entry from
-// before each variant had its own) until the user chooses: the first one
-// out, else none.
-export function firstOutVariant(variants = []) {
-  const listed = new Set(listedOutVariants(variants).map((v) => v.id))
-  return variantOrder(variants).find((v) => listed.has(v.id)) ?? null
-}
+// A SHOP card linked to a group row (made by an older version of the app)
+// can't be confirmed: the stock would go to the group row (K138 b).
+export const oldGroupLineText = (group) => `"${group.name}" is an item group from an older app version and can't get stock — merge its variants into it first (Home → Edit item → Merge other items into this one…), or take this card out of the cart.`

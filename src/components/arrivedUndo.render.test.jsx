@@ -158,6 +158,59 @@ describe('"It arrived!" (an order not linked to HOME)', () => {
   })
 })
 
+describe('"It arrived!" after round 6D stage 5 (K136, K137)', () => {
+  const VARIANT_TEXT = /variant|item group|Which group|Choose a group|Add group/i
+
+  it('offers exactly three choices and "Don\'t add to HOME"; no variant text anywhere', async () => {
+    const o = db.add('orders', { item_name: 'Corn Bites TEST', price: 2.5 })
+    await open(o)
+    const dialog = screen.getByRole('dialog', { name: '"Corn Bites TEST" arrived' })
+    expect(dialog.textContent).toContain('Add "Corn Bites TEST" to HOME? Choose below — that marks it as arrived. The expense stays as it is — nothing new is added to your expenses.')
+    const choices = within(dialog)
+      .getAllByRole('button')
+      .map((b) => b.textContent)
+      .filter((t) => t !== '')
+    expect(choices).toEqual(['Add to an existing itemRestock something you already have in HOME.', 'Create a new itemIt becomes a New Item in HOME.', "Don't add to HOME"])
+    expect(dialog.textContent).not.toMatch(VARIANT_TEXT)
+  })
+
+  it('"Add to an existing item" finds an item by another name; Undo takes the stock out; the order\'s name is not remembered (K137)', async () => {
+    // The real data shape: the old group row, a normal item now, 10 other names.
+    const others = ['Corn Bites TEST', 'Nuvole TEST', 'Teriyaki TEST', 'Peperoncino TEST', 'Olive TEST', 'Verdure TEST', 'Kiss Burn TEST', 'Miele TEST', 'Pepe TEST', 'Tortilla TEST']
+    const box = db.add('pantry_items', { name: 'Snack Box TEST', unit: 'pcs', current_stock: 11, min_stock: 1, category_id: 'pet', is_group: false, group_id: null, names: others.map((name) => ({ name })) })
+    db.add('pantry_items', { name: 'Dog Bones TEST', unit: 'pcs', current_stock: 2, min_stock: 1, category_id: 'pet', names: [] })
+    const before = structuredClone(item(box.id).names)
+    const o = db.add('orders', { item_name: 'Corn Bites TEST', price: 2.5 })
+    await open(o)
+    click(/^Add to an existing item/)
+    fireEvent.change(screen.getByPlaceholderText('Search your items…'), { target: { value: 'corn bites' } })
+    const options = within(screen.getByLabelText('Item')).getAllByRole('option').map((x) => x.textContent)
+    expect(options).toEqual(['Choose an item… (1)', 'Snack Box TEST (11 pcs)'])
+    fireEvent.change(screen.getByLabelText('Item'), { target: { value: box.id } })
+    fireEvent.change(screen.getByLabelText('Quantity bought'), { target: { value: '3' } })
+    click('Add to stock')
+    await waitFor(() => expect(item(box.id).current_stock).toBe(14))
+    expect(document.body.textContent).not.toMatch(VARIANT_TEXT)
+    await undoOn('Added 3 pcs to "Snack Box TEST"')
+    await waitFor(() => expect(item(box.id).current_stock).toBe(11))
+    expect(item(box.id).names).toEqual(before)
+    expect(db.calls.some((c) => c.op === 'rpc' && c.name === 'save_item_names')).toBe(false)
+  })
+
+  it('K137 with a name that is no name of the item: "Paprika Mix TEST" added to "Snack Box TEST" leaves its names as they were', async () => {
+    const box = db.add('pantry_items', { name: 'Snack Box TEST', unit: 'pcs', current_stock: 0, min_stock: 1, category_id: 'pet', names: [{ name: 'Corn Bites TEST' }] })
+    const o = db.add('orders', { item_name: 'Paprika Mix TEST', price: 1.8 })
+    await open(o)
+    click(/^Add to an existing item/)
+    fireEvent.change(screen.getByLabelText('Item'), { target: { value: box.id } })
+    fireEvent.change(screen.getByLabelText('Quantity bought'), { target: { value: '2' } })
+    click('Add to stock')
+    await toast('Added 2 pcs to "Snack Box TEST"')
+    expect(item(box.id)).toMatchObject({ current_stock: 2, names: [{ name: 'Corn Bites TEST' }] })
+    expect(db.calls.some((c) => c.op === 'rpc' && c.name === 'save_item_names')).toBe(false)
+  })
+})
+
 describe('"Create a new item" with the similar-name safety net (K12)', () => {
   it('the same name as a HOME item: "… is already in HOME" + "Add it to …", which adds the arrival to that item', async () => {
     const cat = db.add('pantry_items', { name: 'Cat Wet Food', unit: 'pcs', current_stock: 2, min_stock: 6, category_id: 'pet' })
@@ -192,7 +245,7 @@ describe('"Create a new item" with the similar-name safety net (K12)', () => {
     expect(db.tables.pantry_items.map((p) => p.name).sort()).toEqual(['Frozen Pumkin', 'Frozen Pumpkin'])
   })
 
-  it('a variant of a group: its button opens "Add to a variant of an item group" with that variant chosen', async () => {
+  it('a variant of a group row (older app version) is a normal item: its button opens "Add to an existing item" with it chosen; the group row is never offered (K136, K138)', async () => {
     const crisps = db.add('pantry_items', { name: 'Crisps', unit: 'pcs', is_group: true, min_stock: 2, category_id: 'pet' })
     db.add('pantry_items', { name: 'Paprika Crisps', unit: 'pcs', group_id: crisps.id, current_stock: 1, category_id: 'pet' })
     const salt = db.add('pantry_items', { name: 'Sea Salt Crisps', unit: 'pcs', group_id: crisps.id, current_stock: 0, category_id: 'pet' })
@@ -201,11 +254,15 @@ describe('"Create a new item" with the similar-name safety net (K12)', () => {
     click(/^Create a new item/)
     click('Add to inventory')
     fireEvent.click(await screen.findByRole('button', { name: 'Add it to Sea Salt Crisps · out of stock' }))
-    expect(screen.getByLabelText('Item group').value).toBe(crisps.id)
-    expect(screen.getByLabelText('Which variant').value).toBe(salt.id)
+    expect(screen.queryByRole('button', { name: /Add it to Crisps/ })).toBeNull()
+    expect(screen.getByText('Which item?')).toBeTruthy()
+    expect(screen.getByLabelText('Item').value).toBe(salt.id)
+    expect(within(screen.getByLabelText('Item')).queryByRole('option', { name: /^Crisps / })).toBeNull()
+    expect(screen.queryByLabelText(/Item group|Which variant/)).toBeNull()
     click('Add to stock')
     await toast('Added 1 pcs to "Sea Salt Crisps"')
     expect(item(salt.id).current_stock).toBe(1)
+    expect(item(crisps.id).current_stock ?? 0).toBe(0)
   })
 
   it('a durable HOME item is never offered', async () => {

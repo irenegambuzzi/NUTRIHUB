@@ -2,8 +2,6 @@ import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { DEFAULT_UNIT } from '../data/constants'
 import { insertRows, updateRows } from '../lib/inventory'
-import { variantPurchase } from '../lib/groupShop'
-import { priceFields } from '../lib/pricing'
 import { budgetResolver } from '../lib/budgetContext'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
 import { groceryStore } from '../lib/stores'
@@ -208,39 +206,5 @@ export function useGroceryItems() {
     [removeWithUndo]
   )
 
-  // "+ Add another variant" in a group's card: an entry for a variant that
-  // still has stock (e.g. on offer), 1 of its purchase unit at its last
-  // price. Added by hand, so it can be removed again (× on its row) and
-  // the list never takes it away by itself. Never a second entry for the
-  // same variant.
-  const addVariant = useCallback(
-    (variant) =>
-      attempt(
-        async () => {
-          const open = must(await supabase.from('grocery_items').select('id').eq('pantry_item_id', variant.id).eq('completed', false))
-          if (open.length) return groceryStore.refresh()
-          const { quantity, unit } = variantPurchase(variant)
-          const rows = must(
-            await insertRows('grocery_items', [
-              {
-                name: variant.name,
-                category_id: variant.category_id,
-                subcategory_id: variant.subcategory_id ?? null,
-                quantity,
-                unit,
-                ...priceFields(variant),
-                payer: variant.payer || 'shared',
-                completed: false,
-                pantry_item_id: variant.id,
-              },
-            ])
-          )
-          groceryStore.upsertLocal(rows)
-        },
-        { onFail: fetchItems }
-      ),
-    [fetchItems]
-  )
-
-  return { items, addItem, toggleCart, updatePricing, updatePayer, updateCategory, deleteItem, addVariant }
+  return { items, addItem, toggleCart, updatePricing, updatePayer, updateCategory, deleteItem }
 }

@@ -137,16 +137,16 @@ describe('"Edit item" → "Other names"', () => {
     expect(screen.queryByRole('button', { name: 'Remove Tortilla Chips' })).toBeNull()
   })
 
-  it('never in "Add an item", for a group, a variant or a durable', () => {
+  it('never in "Add an item", for a group row or a variant of one (older app version, K138) or a durable', () => {
     editor(undefined)
     expect(screen.getByText('Add an item')).toBeTruthy()
     expect(section()).toBeNull()
     cleanup()
     editor(data.crisps)
-    expect(screen.getByText('Edit group')).toBeTruthy()
+    expect(screen.getByText('Edit item')).toBeTruthy()
     expect(section()).toBeNull()
     cleanup()
-    editor(data.lays, { groups: [data.crisps] })
+    editor(data.lays)
     expect(section()).toBeNull()
     cleanup()
     editor({ ...data.pumpkin, category_id: 'appliances' })

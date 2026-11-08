@@ -49,7 +49,8 @@ const forgetName = (word, itemId) =>
 // …", or the word first typed before "Create new") becomes a real name of
 // it, after the normal action was saved; that action stays whatever happens
 // here. Nothing to do when the word already is a name of the item, for a
-// group, variant or durable, or when another item has it. Offline it is
+// group row or a variant of one (K138) or a durable, or when another item
+// has it. Offline it is
 // simply not saved: no toast, no queue.
 export async function keepTypedName(word, itemId) {
   const text = String(word ?? '').trim()

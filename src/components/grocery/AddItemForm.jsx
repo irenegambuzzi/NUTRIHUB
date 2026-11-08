@@ -51,8 +51,7 @@ function fieldsFromName(value, suggest, pantryByName, priceDraft = EMPTY_PRICE) 
 // `initialName` starts it filled in. The category is suggested from the name, or
 // left empty for the user to pick; a pick by hand is remembered for that
 // name on both phones.
-// While typing, the names of the HOME items (variants and groups too), their
-// other names and the open SHOP cards that match are listed under the name;
+// While typing, the names of the HOME items, their other names and the open SHOP cards that match are listed under the name;
 // tapping one fills the name as if it had been typed. One is never picked by
 // itself: Enter and the buttons use the name as typed.
 // "Save" and "Save & add another" run the similar-name safety net first
@@ -164,8 +163,8 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   }
 
   // `item`: the HOME item used (the same name, or "Use …"): the entry takes
-  // its name, and its category unless one was picked by hand. A group is
-  // never linked from here, exactly as when its name is typed by hand.
+  // its name, and its category unless one was picked by hand. A group row
+  // from an older version of the app is never linked from here (K138).
   // `pick`: { name } the entry's name when it isn't the item's own (one of
   // its other names), { word } what was typed before "Use …" (K58): saved as
   // another name of the item once the entry is.

@@ -2,25 +2,24 @@
 // item name and its category, both the items still to buy and those in
 // the cart.
 //
-// An entry for a group ("Chips & Snacks") is also found by the name or
-// brand of any of its variants, and an entry of an item by the item's other
-// names (`variantNames`).
-export function matchesGrocerySearch(item, query, categoryName, variantNames = []) {
+// An entry of an item is also found by the item's other names
+// (`otherNames`, plan 9N).
+export function matchesGrocerySearch(item, query, categoryName, otherNames = []) {
   if (!query) return true
   return (
     item.name.toLowerCase().includes(query) ||
     Boolean(item.category_id && categoryName(item.category_id)?.toLowerCase().includes(query)) ||
-    matchingVariants(variantNames, query).length > 0
+    matchingNames(otherNames, query).length > 0
   )
 }
 
-export const matchingVariants = (names, query) => (query ? names.filter((n) => n.toLowerCase().includes(query)) : [])
+export const matchingNames = (names, query) => (query ? names.filter((n) => n.toLowerCase().includes(query)) : [])
 
-// "Lays paprika" when a group entry was found through its variant, or an
-// entry through another name of its item.
-export function variantHint(item, query, variantNames) {
+// "In it: Corn Snack" when an entry was found through another name of its
+// item.
+export function namesHint(item, query, otherNames) {
   if (!query || item.name.toLowerCase().includes(query)) return null
-  const hit = matchingVariants(variantNames, query)
+  const hit = matchingNames(otherNames, query)
   return hit.length ? `In it: ${hit.join(', ')}` : null
 }
 

@@ -623,3 +623,58 @@ describe('K101: a new name only once in a purchase', () => {
     expect(confirmButton().disabled).toBe(true)
   })
 })
+
+describe('the real data after the merge of 08/11 (round 6D stage 5)', () => {
+  // "Snack Box TEST" stands for the row that was the only group row: a
+  // normal item now, with 10 other names, 11 pcs and minimum 1.
+  const NAMES = ['Corn Bites TEST', 'Nuvole TEST', 'Teriyaki TEST', 'Peperoncino TEST', 'Sale olive TEST', 'Verdure TEST', 'Kiss Burn TEST', 'Miele TEST', 'Sale Pepe TEST', 'Tortilla TEST']
+  const box = item('box', 'Snack Box TEST', NAMES, { current_stock: 11, min_stock: 1, is_group: false, group_id: null })
+  const withBox = (run) => {
+    const before = data.pantry
+    data.pantry = [...before, box]
+    try {
+      run()
+    } finally {
+      data.pantry = before
+    }
+  }
+
+  it('Confirm purchase: name lines like any item, no variant select; an other name on line 2 is a plain line; stock goes to the item itself', async () => {
+    withBox(() => confirmScreen([card('e9', 'Corn Bites TEST', 'box', { price: 1.2 })]))
+    expect(screen.getByLabelText('Name of Corn Bites TEST').value).toBe('Corn Bites TEST')
+    expect(screen.getByText(/restocks "Snack Box TEST"/)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: /Variant/ })).toBeNull()
+    expect(document.body.textContent).not.toMatch(/variant|Which group/i)
+    withBox(() => fireEvent.click(screen.getByRole('button', { name: 'Add another name' })))
+    typeIn('Name of line 2 of Corn Bites TEST', 'Tortilla TEST')
+    typeIn('Total for line 2 of Corn Bites TEST', '0,90')
+    expect(screen.queryByText(/New name of Snack Box TEST/)).toBeNull()
+    expect(confirmButton().disabled).toBe(false)
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalled())
+    const items = sent().items
+    expect(items.map((i) => [i.pantry_item_id, i.grocery_item_id, i.name, i.add_name ?? false])).toEqual([
+      ['box', 'e9', 'Corn Bites TEST', false],
+      ['box', 'e9', 'Tortilla TEST', false],
+    ])
+  })
+
+  it('SHOP list: judged on its own 11 pcs and minimum 1 — not listed; at 1 "Low Stock", at 0 "Out of Stock"; titled with the item, the card name under it', async () => {
+    const { restockReason } = await import('../lib/inventory')
+    const { RESTOCK_LABELS } = await import('../lib/inventoryStyles')
+    expect(restockReason(box)).toBeNull()
+    for (const [stock, reason, text] of [
+      [1, 'low', 'Low Stock'],
+      [0, 'out', 'Out of Stock'],
+    ]) {
+      const now = { ...box, current_stock: stock }
+      expect(restockReason(now)).toBe(reason)
+      expect(RESTOCK_LABELS[reason].label).toBe(text)
+      render(<GroceryItemTile item={card('e10', 'Nuvole TEST', 'box', { in_cart: false })} reason={reason} pack={now} total={0} categoryName={() => 'Snacks'} onToggle={() => {}} onDelete={() => {}} onUpdatePricing={() => {}} onUpdatePayer={() => {}} namesReady />)
+      expect(screen.getByText(text)).toBeTruthy()
+      expect(screen.getByText('Snack Box TEST')).toBeTruthy()
+      expect(screen.getByText('Nuvole TEST')).toBeTruthy()
+      cleanup()
+    }
+  })
+})

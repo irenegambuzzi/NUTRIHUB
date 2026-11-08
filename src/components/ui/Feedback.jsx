@@ -12,7 +12,7 @@ import { closeDialog, dialogErrors, dialogTexts, dismissToast, fieldShown, getDi
 // Layers, bottom to top: a page's own forms and editors (z-30 / z-40), the
 // sheets put on document.body with createPortal (z-50, e.g. "Order group"),
 // this dialog (z-[60]), toasts (z-[70]). The dialog is often asked from
-// inside one of those sheets ("Take out of the group"), so it goes on
+// inside one of those sheets ("Merge 2 items…"), so it goes on
 // document.body too, on a layer above all of them: it is always in front,
 // whichever was opened first and wherever <Feedback /> is in the page.
 export function Feedback() {

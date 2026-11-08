@@ -56,10 +56,10 @@ vi.mock('../hooks/useReceiptPhotos', () => ({ useReceiptPhotos: () => ({ photos:
 
 const data = vi.hoisted(() => {
   const soap = { id: 'soap', name: 'Dish soap', unit: 'pcs', current_stock: 1, min_stock: 0, category_id: 'cleaning' }
-  const chips = { id: 'chips', name: 'Chips & Snacks', is_group: true, unit: 'pcs', current_stock: 2, min_stock: 0, category_id: 'fresh' }
+  // A group row an older app version made (K138) and its variants.
+  const chips = { id: 'chips', name: 'Chips & Snacks', is_group: true, unit: 'pcs', current_stock: 0, min_stock: 0, category_id: 'fresh' }
   const lays = { id: 'lays', name: 'Lays chips', group_id: 'chips', unit: 'pcs', current_stock: 0, min_stock: 0, category_id: 'fresh' }
   const tuc = { id: 'tuc', name: 'Tuc crackers', group_id: 'chips', unit: 'pcs', current_stock: 2, min_stock: 0, category_id: 'fresh' }
-  chips.variants = [lays, tuc]
   const entry = (id, name, pantryId, extra = {}) => ({ id, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, completed: false, in_cart: false, created_at: '1', ...extra })
   const entries = [entry('g-soap', 'Dish soap', 'soap', { in_cart: true, category_id: 'cleaning' }), entry('g-lays', 'Lays chips', 'lays', { category_id: 'fresh' })]
   return { pantry: [soap, chips, lays, tuc], entries, addItem: null }
@@ -75,15 +75,10 @@ vi.mock('../hooks/useGroceryList', () => {
       updatePayer: vi.fn(),
       updateCategory: vi.fn(),
       deleteItem: vi.fn(),
-      addVariant: vi.fn(),
       cartItems: data.entries.filter((e) => e.in_cart),
       pantryItems: data.pantry,
       pantryByName: new Map(data.pantry.filter((p) => !p.is_group).map((p) => [p.name.toLowerCase(), p])),
       pantryFor,
-      groupOf: (g) => {
-        const p = pantryFor(g)
-        return p?.group_id ? byId.get(p.group_id) : null
-      },
       reasonOf: () => 'out',
       totalOf: () => 0,
       costOf: () => 0,
@@ -165,15 +160,15 @@ describe('SHOP list: "+ Add to SHOP list"', () => {
     expect(scrolled).toHaveBeenCalled()
   })
 
-  it('a group variant: "Go to card" outlines the group’s card', () => {
+  it('a variant of a group row (older app version): "Go to card" outlines its own card; there is no group card', () => {
     page()
     openForm()
     typeName('Lays chips')
     save()
     expect(screen.getByText('Already on your SHOP list: Lays chips — to buy')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
-    const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
-    expect(card.hasAttribute('data-spot')).toBe(true)
+    expect(screen.queryByRole('region', { name: /\(group\)/ })).toBeNull()
+    expect(spotOf('Lays chips')).toBeTruthy()
   })
 
   it('the search field (same text) sits right above "+ Add to SHOP list", after the category chips (plan 9K, K13)', () => {
@@ -296,7 +291,7 @@ describe('Shop mode: the same "+ Add to SHOP list"', () => {
     expect(screen.getByRole('group', { name: 'Order' })).toBeTruthy()
   })
 
-  it('a group variant: "Go to card" outlines the group’s Shop-mode card', () => {
+  it('a variant of a group row (older app version): "Go to card" outlines its own Shop-mode tile; there is no group card', () => {
     page()
     shopMode()
     openForm()
@@ -304,8 +299,8 @@ describe('Shop mode: the same "+ Add to SHOP list"', () => {
     save()
     expect(screen.getByText('Already on your SHOP list: Lays chips — to buy')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Go to card' }))
-    const card = screen.getByRole('region', { name: 'Chips & Snacks (group)' })
-    expect(card.hasAttribute('data-spot')).toBe(true)
+    expect(screen.queryByRole('region', { name: /\(group\)/ })).toBeNull()
+    expect(spotOf('Lays chips')).toBeTruthy()
   })
 
   it('the search field (same text) sits right above "+ Add to SHOP list" in Shop mode too (plan 9K, K13)', () => {

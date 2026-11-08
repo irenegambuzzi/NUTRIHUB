@@ -8,7 +8,6 @@ import { CategoryIcon } from '../components/ui/CategoryIcon'
 import { AddItemForm } from '../components/grocery/AddItemForm'
 import { BudgetCard } from '../components/grocery/BudgetCard'
 import { GroceryItemTile } from '../components/grocery/GroceryItemTile'
-import { GroupShopCard } from '../components/grocery/GroupShopCard'
 import { ReceiptsView } from '../components/grocery/ReceiptsView'
 import { ShoppingMode } from '../components/grocery/ShoppingMode'
 import { ConfirmPurchase } from '../components/grocery/ConfirmPurchase'
@@ -17,12 +16,11 @@ import { useGroceryList } from '../hooks/useGroceryList'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { inventoryCategoryColor } from '../lib/categoryColors'
-import { shopReason, syncShoppingForItem } from '../lib/inventory'
-import { addableVariants, shopUnits } from '../lib/groupShop'
+import { restockReason, syncShoppingForItem } from '../lib/inventory'
 import { entryIsOneTime } from '../lib/oneTime'
 import { attempt } from '../lib/db'
 import { money } from '../lib/pricing'
-import { matchesGrocerySearch, variantHint } from '../lib/grocerySearch'
+import { matchesGrocerySearch, namesHint } from '../lib/grocerySearch'
 import { otherNames } from '../lib/itemNames'
 import { useItemNamesReady } from '../hooks/useItemNamesReady'
 import { OnTheWay } from '../components/grocery/OnTheWay'
@@ -77,12 +75,10 @@ export function GroceryPage() {
     updatePayer,
     updateCategory,
     deleteItem,
-    addVariant,
     cartItems,
     pantryItems,
     pantryByName,
     pantryFor,
-    groupOf,
     reasonOf,
     totalOf,
     costOf,
@@ -164,10 +160,6 @@ export function GroceryPage() {
     return deleteItem(item)
   }
 
-  // The HOME items already on the list (to buy, in the cart or on the
-  // way): "+ Add another variant" offers only the others.
-  const listedIds = new Set([...items, ...onTheWay].map((e) => pantryFor(e)?.id).filter(Boolean))
-
   // A durable order (its budget category, or the SHOP entry it came from)
   // or a service one is only marked arrived: nothing goes into HOME,
   // nothing is asked. Any other opens its dialog on the order still on the
@@ -175,7 +167,9 @@ export function GroceryPage() {
   const arrive = (order, pantry) => {
     const lock = orderLock(order, { expenseCategories, groceryItems: onTheWay })
     if (lock) return markDurableArrived(order, today, lock)
-    setArriving(pantry ? { order, item: pantry } : { order })
+    // A group row from an older version of the app never receives stock
+    // (K138): its order asks "It arrived!" like one not linked to HOME.
+    setArriving(pantry && !pantry.is_group ? { order, item: pantry } : { order })
   }
 
   const shopOf = (item) => {
@@ -196,19 +190,16 @@ export function GroceryPage() {
     flow.ready ? { onOrderOnline: () => setOrdering(item), orderFirst: Boolean(shopOf(item)?.is_online), usualShop: shopOf(item) } : {}
 
   const query = search.trim().toLowerCase()
-  // The names of a group's variants, so searching "Lays" finds a
-  // group-level line; a variant's row is also found by its group's name.
   // An entry of an item is also found by the item's other names.
-  const variantNamesOf = (g) => [...(pantryFor(g)?.variants?.map((v) => v.name) ?? []), ...otherNames(pantryFor(g)).map((element) => element.name)]
-  const searchNamesOf = (g) => [...variantNamesOf(g), groupOf(g)?.name].filter(Boolean)
+  const otherNamesOf = (g) => otherNames(pantryFor(g)).map((element) => element.name)
   // Searching looks through every category, to buy and in the cart alike.
   const inCategory = query
-    ? (i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))
+    ? (i) => matchesGrocerySearch(i, query, categoryName, otherNamesOf(i))
     : (i) => selectedCategory === 'All' || i.category_id === selectedCategory
   // "Go to card" (the safety net's "Already on your SHOP list"): the form
   // closes without saving and the List view or Shop mode shows the card
-  // that is already there — to buy or in the cart, a group's card for a
-  // variant. A search or category filter that hides it is cleared first.
+  // that is already there — to buy or in the cart. A search or category
+  // filter that hides it is cleared first.
   const goToCard = (entry) => {
     setAdding(false)
     if (!inCategory(entry)) {
@@ -217,7 +208,7 @@ export function GroceryPage() {
     }
     setSpot({ id: entry.id })
   }
-  const spotted = (unit) => Boolean(spot) && (unit.kind === 'group' ? unit.entries.some((e) => e.id === spot.id) : unit.entry.id === spot.id)
+  const spotted = (item) => Boolean(spot) && item.id === spot.id
   const filteredItems = budgetPlan
     ? [...budgetPlan.order, ...sortItems(groceryItems.filter((i) => i.in_cart), 'recent')].filter(inCategory)
     : sortItems(groceryItems.filter(inCategory), sortMode)
@@ -225,8 +216,7 @@ export function GroceryPage() {
   const durableTotal = durableItems.filter((i) => !i.in_cart).reduce((sum, i) => sum + costOf(i), 0)
   // Only show chips for categories that actually have items on the list.
   const listCategories = parents.filter((p) => items.some((i) => i.category_id === p.id))
-  // Also a group with a variant at 0 ("Not urgent").
-  const needsBuying = pantryItems.filter((p) => shopReason(p))
+  const needsBuying = pantryItems.filter((p) => restockReason(p))
   const filteredTotal = [...filteredItems, ...filteredDurables].reduce((sum, item) => sum + costOf(item), 0)
   // The Durables tree's name as it is stored now (renamed by 026).
   const durablesName = categoryName(DURABLE_CATEGORY_IDS[0])
@@ -269,55 +259,29 @@ export function GroceryPage() {
     setSyncing(false)
   }
 
-  // One entry's tile, or a group's card with a row per variant.
-  const renderUnit = (unit, { budget = false } = {}) => {
-    const budgetMarkOf = (e) => (budget && overBudget ? budgetPlan?.marks.get(e.id) : undefined)
-    if (unit.kind === 'group') {
-      return (
-        <GroupShopCard
-          key={unit.key}
-          card={unit}
-          reason={reasonOf(unit.entries[0])}
-          pantryFor={pantryFor}
-          totalOf={totalOf}
-          budgetMarkOf={budgetMarkOf}
-          categoryName={categoryName}
-          onToggle={checkOff}
-          onRemove={removeItem}
-          onUpdatePricing={updatePricing}
-          onUpdatePayer={updatePayer}
-          orderPropsOf={orderProps}
-          addable={addableVariants(unit.group, listedIds)}
-          onAddVariant={addVariant}
-          showList={Boolean(query)}
-          highlighted={spotted(unit)}
-        />
-      )
-    }
-    const item = unit.entry
-    return (
-      <GroceryItemTile
-        key={item.id}
-        item={item}
-        showList={Boolean(query)}
-        hint={variantHint(item, query, variantNamesOf(item))}
-        reason={reasonOf(item)}
-        pack={pantryFor(item)}
-        total={totalOf(item)}
-        budgetMark={budgetMarkOf(item)}
-        categoryName={categoryName}
-        onToggle={checkOff}
-        onDelete={removeItem}
-        onUpdatePricing={updatePricing}
-        onUpdatePayer={updatePayer}
-        onUpdateCategory={updateCategory}
-        oneTime={entryIsOneTime(item, pantryFor(item))}
-        highlighted={spotted(unit)}
-        namesReady={namesReady}
-        {...orderProps(item)}
-      />
-    )
-  }
+  // One card per SHOP entry.
+  const renderItem = (item, { budget = false } = {}) => (
+    <GroceryItemTile
+      key={item.id}
+      item={item}
+      showList={Boolean(query)}
+      hint={namesHint(item, query, otherNamesOf(item))}
+      reason={reasonOf(item)}
+      pack={pantryFor(item)}
+      total={totalOf(item)}
+      budgetMark={budget && overBudget ? budgetPlan?.marks.get(item.id) : undefined}
+      categoryName={categoryName}
+      onToggle={checkOff}
+      onDelete={removeItem}
+      onUpdatePricing={updatePricing}
+      onUpdatePayer={updatePayer}
+      onUpdateCategory={updateCategory}
+      oneTime={entryIsOneTime(item, pantryFor(item))}
+      highlighted={spotted(item)}
+      namesReady={namesReady}
+      {...orderProps(item)}
+    />
+  )
 
   // The similar-name safety net (plan 9G) compares with every HOME item and
   // every open entry, those ordered online too.
@@ -517,7 +481,7 @@ export function GroceryPage() {
             </Card>
           ) : filteredItems.length === 0 ? null : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {shopUnits(filteredItems, groupOf, pantryFor).map((unit) => renderUnit(unit, { budget: true }))}
+              {filteredItems.map((item) => renderItem(item, { budget: true }))}
             </div>
           )}
 
@@ -534,7 +498,7 @@ export function GroceryPage() {
                 </p>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {shopUnits(filteredDurables, groupOf, pantryFor).map((unit) => renderUnit(unit))}
+                {filteredDurables.map((item) => renderItem(item))}
               </div>
             </div>
           )}
@@ -552,9 +516,7 @@ export function GroceryPage() {
             budget={groceryBudget}
             search={search}
             pantryFor={pantryFor}
-            groupOf={groupOf}
-            variantNamesOf={variantNamesOf}
-            searchNamesOf={searchNamesOf}
+            otherNamesOf={otherNamesOf}
             onCheck={checkOff}
             onConfirm={() => setConfirming(true)}
             spotId={spot?.id ?? null}

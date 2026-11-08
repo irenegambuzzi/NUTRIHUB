@@ -98,7 +98,7 @@ describe('SHOP Confirm purchase (lib/purchase.js)', () => {
   const pantry = [
     { id: 'cola', name: 'Cola', unit: 'pcs', current_stock: 2, min_stock: 4, packaging_unit: 'pack', quantity_per_pack: 4 },
     { id: 'balloons', name: 'Balloons', unit: 'pcs', current_stock: 0, one_time: true },
-    { id: 'chips', name: 'Chips', unit: 'pack', is_group: true, variants: [] },
+    { id: 'chips', name: 'Chips', unit: 'pack', is_group: true },
     { id: 'paprika', name: 'Chips paprika', unit: 'pack', current_stock: 0, group_id: 'chips' },
   ]
   const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'pack', price: 3, price_qty: 1, price_unit: 'pack', payer: 'shared', category_id: 'beverages', pantry_item_id: null, ...fields })
@@ -112,7 +112,7 @@ describe('SHOP Confirm purchase (lib/purchase.js)', () => {
     expect(line({ name: 'Soft drink' }, { newUnit: chose('pack', 'pcs', '4') })).toMatchObject({ ready: true, add: 1 })
   })
 
-  it('never for: water "1 btl", rice "500 gr", a durable, a restock (the 9H field as today), a group / its variant, a finished 1× item revived by name', () => {
+  it('never for: water "1 btl", rice "500 gr", a durable, a restock (the 9H field as today), a group row / its variant (K138), a finished 1× item revived by name', () => {
     expect(line({ name: 'Water', unit: 'btl' }).stockUnit).toBeNull()
     expect(line({ name: 'Rice', unit: 'gr', quantity: 500 }).stockUnit).toBeNull()
     expect(line({ name: 'Lamp', category_id: 'appliances' })).toMatchObject({ durable: true, stockUnit: null, asksStockUnit: false })
@@ -121,7 +121,7 @@ describe('SHOP Confirm purchase (lib/purchase.js)', () => {
     expect(cola).toMatchObject({ stockUnit: null, asksStockUnit: false, add: 8 })
     expect(cola.pack).toMatchObject({ text: '4', usual: 4 })
     expect(line({ name: 'cola ' }).stockUnit).toBeNull()
-    expect(line({ name: 'Chips', pantry_item_id: 'chips' }, { newVariantName: 'Salted' }).stockUnit).toBeNull()
+    expect(line({ name: 'Chips', pantry_item_id: 'chips' })).toMatchObject({ stockUnit: null, isNew: false, ready: false })
     expect(line({ name: 'Chips paprika', pantry_item_id: 'paprika' }).stockUnit).toBeNull()
     expect(line({ name: 'Balloons' })).toMatchObject({ pantry: { id: 'balloons' }, stockUnit: null })
   })

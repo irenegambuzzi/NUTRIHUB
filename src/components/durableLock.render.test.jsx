@@ -210,7 +210,6 @@ describe('SHOP list: the durable section', () => {
     updatePayer: vi.fn(),
     updateCategory: vi.fn(),
     deleteItem: vi.fn(),
-    addVariant: vi.fn(),
     cartItems: [],
     pantryItems: [],
     pantryByName: new Map(),

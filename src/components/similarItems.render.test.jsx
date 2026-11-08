@@ -194,7 +194,7 @@ describe('SHOP "Add to SHOP list" form', () => {
     expect(toast).toHaveBeenCalledWith({ message: 'Added “Napkins”' })
   })
 
-  it('suggestions while typing come from HOME items (variants and groups too) and open SHOP cards, never from this phone’s history', () => {
+  it('suggestions while typing come from HOME items (a variant of a group row too, never the group row, K138) and open SHOP cards, never from this phone’s history', () => {
     localStorage.setItem('nutrihub-quick-add-history', JSON.stringify([{ name: 'Pumpkin seeds', unit: 'pcs', price: 0, payer: 'shared' }]))
     const group = { id: 'chips', name: 'Chips & Snacks', is_group: true, unit: 'pcs', current_stock: 0, category_id: 'fresh' }
     const variant = { id: 'lays', name: 'Lays chips', group_id: 'chips', unit: 'pcs', current_stock: 0, category_id: 'fresh' }
@@ -206,7 +206,7 @@ describe('SHOP "Add to SHOP list" form', () => {
     expect(shown.some((t) => t.startsWith('Pumpkin seeds'))).toBe(false)
     typeName('chips')
     const chips = within(suggestions()).getAllByRole('option').map((o) => o.textContent)
-    expect(chips.some((t) => t.startsWith('Chips & Snacks'))).toBe(true)
+    expect(chips.some((t) => t.startsWith('Chips & Snacks'))).toBe(false)
     expect(chips.some((t) => t.startsWith('Lays chips'))).toBe(true)
   })
 

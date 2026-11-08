@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
 
-// The HOME and SHOP actions around one-time items, group variants and the
+// The HOME and SHOP actions around one-time items and the
 // cart time, with the database and the stock functions replaced.
 const db = vi.hoisted(() => ({ calls: [], toBuy: [], rows: [] }))
 const toasts = vi.hoisted(() => [])
@@ -225,22 +225,9 @@ describe('the cart time', () => {
   })
 })
 
-describe('"+ Add another variant"', () => {
-  const lays = { id: 'lays', name: 'Lays', unit: 'pcs', current_stock: 5, category_id: 'snacks', group_id: 'g', price: 1.5, price_qty: 1, price_unit: 'pcs', packaging_unit: 'pack', quantity_per_pack: 4 }
-
-  it('adds an entry typed by hand for the variant: 1 of its pack, its last price', async () => {
-    db.rows = []
+describe('no "+ Add another variant" any more (round 6D stage 5)', () => {
+  it('the SHOP list actions have no addVariant', () => {
     const { result } = renderHook(() => useGroceryItems())
-    await result.current.addVariant(lays)
-    const [row] = inventory.insertRows.mock.calls[0][1]
-    expect(row).toMatchObject({ name: 'Lays', pantry_item_id: 'lays', quantity: 1, unit: 'pack', price: 1.5, completed: false })
-    expect(row).not.toHaveProperty('auto_generated')
-  })
-
-  it('never a second entry for the same variant', async () => {
-    db.rows = [{ id: 'e1', pantry_item_id: 'lays' }]
-    const { result } = renderHook(() => useGroceryItems())
-    await result.current.addVariant(lays)
-    expect(inventory.insertRows).not.toHaveBeenCalled()
+    expect(result.current).not.toHaveProperty('addVariant')
   })
 })

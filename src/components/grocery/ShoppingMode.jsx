@@ -4,14 +4,13 @@ import { CategoryIcon } from '../ui/CategoryIcon'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { cn } from '../../lib/cn'
 import { inventoryCategoryColor } from '../../lib/categoryColors'
-import { isDurable, shopReason } from '../../lib/inventory'
+import { isDurable } from '../../lib/inventory'
 import { byCartOrder } from '../../lib/grocery'
-import { shopUnits, unitItem } from '../../lib/groupShop'
 import { entryIsOneTime } from '../../lib/oneTime'
 import { cardTitle } from '../../lib/itemNames'
-import { RESTOCK_LABELS, SMALL_LABEL } from '../../lib/inventoryStyles'
+import { SMALL_LABEL } from '../../lib/inventoryStyles'
 import { money } from '../../lib/pricing'
-import { GROCERY_LIST_LABELS, matchesGrocerySearch, variantHint } from '../../lib/grocerySearch'
+import { GROCERY_LIST_LABELS, matchesGrocerySearch, namesHint } from '../../lib/grocerySearch'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { groupByCategory, moveCategoryWrites, moveItemWrites, routeOrder } from '../../lib/shopMode'
 import { useShopOrder } from '../../hooks/useShopOrder'
@@ -38,14 +37,13 @@ function rememberSort(sort) {
 // left is shown in the order of the shop, shared by both phones: either
 // by category (categories in aisle order) or as "my route", where each
 // item can be put anywhere, whatever its category. Items not arranged
-// yet go where their category is. A group is one card ("Chips &
-// Snacks") with a row per variant, each tapped into the cart on its own
-// (`groupOf(entry)`, see lib/groupShop.js).
+// yet go where their category is. One tile per SHOP entry.
 // `spotId`: the entry whose card "Go to card" shows (outlined for a
 // moment; arranging stops, so the cards are on screen).
 // `namesReady` (supabase/032, plan 9N K53): a tile shows its HOME item's
 // name, with the card's own name under it when that differs.
-export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, groupOf = () => null, variantNamesOf = () => [], searchNamesOf = variantNamesOf, onCheck, onConfirm, spotId = null, namesReady = false }) {
+// `otherNamesOf(entry)`: the other names of its HOME item, for the search.
+export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, budget, search = '', pantryFor = () => null, otherNamesOf = () => [], onCheck, onConfirm, spotId = null, namesReady = false }) {
   const [sort, setSortState] = useState(readSort)
   const [arranging, setArranging] = useState(false)
   if (spotId && arranging) setArranging(false)
@@ -57,24 +55,17 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
   const open = items.filter((i) => !i.in_cart)
   // In the order they went into the cart, oldest first.
   const inCart = items.filter((i) => i.in_cart).sort(byCartOrder)
-  // What's left as tiles and group cards, placed in the shop by name and
-  // category (a card by its group's).
-  const units = (list) => shopUnits(list, groupOf, pantryFor)
-  const placed = units(open).map((unit) => ({ ...unitItem(unit), id: unit.key, unit }))
-  const groups = groupByCategory(placed, positions, defaultOrder)
-  const route = routeOrder(placed, positions, defaultOrder)
+  // What's left, placed in the shop by name and category.
+  const groups = groupByCategory(open, positions, defaultOrder)
+  const route = routeOrder(open, positions, defaultOrder)
   const shownIds = groups.map((g) => g.categoryId).filter(Boolean)
 
   const query = search.trim().toLowerCase()
-  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, searchNamesOf(i))) : []
+  const found = query ? items.filter((i) => matchesGrocerySearch(i, query, categoryName, otherNamesOf(i))) : []
 
-  const spotted = (unit) => Boolean(spotId) && (unit.kind === 'group' ? unit.entries.some((e) => e.id === spotId) : unit.entry.id === spotId)
-  const show = (unit, extra = {}) =>
-    unit.kind === 'group' ? (
-      <ShopGroupCard key={unit.key} card={unit} pantryFor={pantryFor} totalOf={totalOf} onCheck={onCheck} showList={extra.showList} highlighted={spotted(unit)} />
-    ) : (
-      <ShopTile key={unit.key} item={unit.entry} pack={pantryFor(unit.entry)} total={totalOf(unit.entry)} onCheck={onCheck} namesReady={namesReady} {...extra} hint={extra.showList ? variantHint(unit.entry, query, variantNamesOf(unit.entry)) : null} highlighted={spotted(unit)} />
-    )
+  const show = (item, extra = {}) => (
+    <ShopTile key={item.id} item={item} pack={pantryFor(item)} total={totalOf(item)} onCheck={onCheck} namesReady={namesReady} {...extra} hint={extra.showList ? namesHint(item, query, otherNamesOf(item)) : null} highlighted={Boolean(spotId) && item.id === spotId} />
+  )
 
   const setSort = (next) => {
     setSortState(next)
@@ -143,7 +134,7 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
                     <h3 className="text-xs font-extrabold uppercase text-[var(--color-text-muted)]">
                       {GROCERY_LIST_LABELS[cart ? 'inCart' : 'toBuy']} ({list.length})
                     </h3>
-                    {units(list).map((unit) => show(unit, { showCategory: true, showList: true }))}
+                    {list.map((item) => show(item, { showCategory: true, showList: true }))}
                   </section>
                 )
               )
@@ -176,7 +167,7 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
             )}
           />
         ) : (
-          <div className="space-y-2">{route.map((placedUnit) => show(placedUnit.unit, { showCategory: true }))}</div>
+          <div className="space-y-2">{route.map((item) => show(item, { showCategory: true }))}</div>
         )
       ) : (
         groups.map(({ categoryId, items: list }, index) => {
@@ -209,7 +200,7 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
                   </span>
                 )}
               </div>
-              {!arranging && list.map((placedUnit) => show(placedUnit.unit))}
+              {!arranging && list.map((item) => show(item))}
             </section>
           )
         })
@@ -226,7 +217,7 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
             </button>
           </div>
           <p className="text-[10px] text-[var(--color-text-muted)]">Tap an item to take it out again. Nothing is added to the pantry or expenses until you confirm.</p>
-          {units(inCart).map((unit) => show(unit))}
+          {inCart.map((item) => show(item))}
         </section>
       )}
 
@@ -293,49 +284,6 @@ function ShopTile({ item, pack = null, total, onCheck, showCategory = false, sho
       </span>
       <span className="text-sm font-mono font-bold text-[var(--color-accent)] shrink-0">{total === null ? '?' : total > 0 ? money(total) : ''}</span>
     </button>
-  )
-}
-
-// A group's card: its name ("Not urgent" when the total is still fine but
-// a variant is at 0) and a big row per variant, each tapped into the cart
-// on its own, variants at 0 first.
-function ShopGroupCard({ card, pantryFor, totalOf, onCheck, showList = false, highlighted = false }) {
-  const { group, entries, inCart } = card
-  const notUrgent = !inCart && shopReason(group) === 'not-urgent'
-  return (
-    <section
-      aria-label={`${group.name} (group)`}
-      data-spot={highlighted ? '' : undefined}
-      className={cn(
-        'rounded-2xl border px-3 py-2 space-y-1',
-        inCart ? 'bg-[var(--color-surface-soft)] border-[var(--color-border)] opacity-60' : 'bg-[var(--color-surface)] border-[var(--color-border)]',
-        highlighted && 'ring-2 ring-[var(--color-primary)] opacity-100'
-      )}
-    >
-      <p className="flex items-center gap-1.5 px-1 text-xs font-extrabold text-[var(--color-text-soft)] min-w-0">
-        <CategoryIcon category={group.category_id} size={12} />
-        <span className="truncate">{group.name}</span>
-        {notUrgent && <span className={cn(SMALL_LABEL, 'shrink-0', RESTOCK_LABELS['not-urgent'].className)}>{RESTOCK_LABELS['not-urgent'].label}</span>}
-        {showList && <ListLabel inCart={inCart} />}
-      </p>
-      {entries.map((entry) => {
-        const pack = pantryFor(entry)
-        const total = totalOf(entry)
-        return (
-          <button key={entry.id} onClick={() => onCheck(entry)} className="w-full flex items-center gap-3 rounded-xl px-1 py-2 text-left min-h-12 active:scale-[0.99] transition">
-            <CheckCircle checked={entry.in_cart} />
-            <span className="flex-1 min-w-0">
-              <span className={cn('flex items-center gap-1.5 text-base font-bold min-w-0', entry.in_cart ? 'line-through text-[var(--color-icon-muted)]' : 'text-[var(--color-text)]')}>
-                <span className="truncate">{entry.name}</span>
-                {entryIsOneTime(entry, pack) && <OneTimeBadge className="shrink-0 no-underline" />}
-              </span>
-              <span className="block text-xs text-[var(--color-text-muted)]">{formatPurchaseQuantity(entry.quantity, entry.unit, pack)}</span>
-            </span>
-            <span className="text-sm font-mono font-bold text-[var(--color-accent)] shrink-0">{total === null ? '?' : total > 0 ? money(total) : ''}</span>
-          </button>
-        )
-      })}
-    </section>
   )
 }
 

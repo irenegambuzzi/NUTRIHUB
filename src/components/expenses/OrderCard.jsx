@@ -24,7 +24,7 @@ const TONE = {
 // (arrived, cancelled or returned) it shows the status, the day of it and,
 // for cancelled and returned ones, whether the expense was kept or deleted,
 // and it can go back on the way.
-// `linkedItem`: the HOME item (or group) it was ordered for from the SHOP
+// `linkedItem`: the HOME item it was ordered for from the SHOP
 // list, shown as a tag; Arrived then adds its stock.
 // `groupTag` ({ label, onOpen }): the order is part of an order group
 // (plan 9I) — a small tag "Order: Amazon.it · 17/10 (7 items)" that opens

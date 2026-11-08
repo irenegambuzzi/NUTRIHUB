@@ -3,8 +3,8 @@
 // itself, never turns yellow or red, and when it is used up it is
 // "finished": hidden from the HOME grid and listed apart, never deleted, so
 // buying it again by the same name brings the same item back. Finished is
-// worked out, not stored. A group can never be 1× (supabase/023 refuses it);
-// a variant inside a group can.
+// worked out, not stored. A group row from an older version of the app can
+// never be 1× (supabase/023 refuses it).
 
 export const isOneTime = (item) => Boolean(item?.one_time) && !item?.is_group
 

@@ -8,13 +8,17 @@ import { inventoryCategoryColor } from '../../lib/categoryColors'
 import { STOCK_STATUS_LABELS, displayReason, expiryLabel, expiryState, formatStock, stockFill, stockStatus, tapStep } from '../../lib/inventory'
 import { isOneTime } from '../../lib/oneTime'
 import { alsoLine } from '../../lib/itemNames'
+import { OLD_GROUP_NOTE, isGroup } from '../../lib/groups'
 import { OneTimeBadge } from '../ui/OneTimeBadge'
 import { formatUnitPrice } from '../../lib/pricing'
 import { EXPIRY_STYLES, RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryStyles'
 
 // `namesReady`: supabase/032 is known to have run (plan 9N); only then the
 // grey line with the item's other names shows.
-export function ItemTile({ item, isNew = false, groupName = null, subcategoryName, namesReady = false, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
+// A group row made by an older version of the app (K138) shows its own
+// stored stock with a grey note under the name, and nothing that changes
+// stock or adds it to the SHOP list: it never receives either.
+export function ItemTile({ item, isNew = false, subcategoryName, namesReady = false, onAdjust, onDiscard, onEdit, onDelete, onSendToGrocery }) {
   const c = inventoryCategoryColor(item.category_id)
   const status = stockStatus(item)
   // A one-time purchase (1×) has no minimum and is never Low or Out.
@@ -28,6 +32,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
   const perPack = Number(item.quantity_per_pack)
   const hasPack = item.packaging_unit && perPack > 0
   const also = namesReady ? alsoLine(item) : null
+  const oldGroup = isGroup(item)
 
   return (
     <div className={cn('relative rounded-3xl border p-3.5 shadow-sm flex flex-col', STATUS_STYLES[tone].tile)}>
@@ -57,7 +62,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
           {also.more > 0 && <span className="shrink-0"> +{also.more}</span>}
         </p>
       )}
-      {groupName && <span className="self-start mt-1 text-[10px] font-semibold text-[var(--color-text-muted)]">in {groupName}</span>}
+      {oldGroup && <p className="mt-0.5 text-[10px] leading-snug text-[var(--color-text-muted)] break-words">{OLD_GROUP_NOTE}</p>}
       {subcategoryName && (
         <span className={cn('self-start mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border', c.bg, c.border, c.text)}>{subcategoryName}</span>
       )}
@@ -65,7 +70,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
       <div className="flex flex-wrap gap-1 mt-1.5">
         {oneTime ? (
           <OneTimeBadge className="self-center" />
-        ) : (
+        ) : oldGroup ? null : (
           <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', STATUS_STYLES[status].badge)}>{STOCK_STATUS_LABELS[status]}</span>
         )}
         {isNew && (
@@ -89,6 +94,7 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
         {unitPrice && <span className="font-mono text-[var(--color-accent)]"> · {unitPrice}</span>}
       </p>
 
+      {!oldGroup && (
       <div className="flex flex-wrap items-center gap-1 mt-auto pt-2">
         {expiry === 'expired' && (
           <button
@@ -131,17 +137,16 @@ export function ItemTile({ item, isNew = false, groupName = null, subcategoryNam
         >
           <PackagePlus size={14} />
         </button>
-        {!item.group_id && (
-          <button
-            onClick={() => onSendToGrocery(item)}
-            title="Add to grocery list"
-            className="ml-auto bg-[var(--color-surface-soft)] p-1.5 rounded-xl text-[var(--color-accent)]"
-          >
-            <ShoppingCart size={14} />
-          </button>
-        )}
+        <button
+          onClick={() => onSendToGrocery(item)}
+          title="Add to grocery list"
+          className="ml-auto bg-[var(--color-surface-soft)] p-1.5 rounded-xl text-[var(--color-accent)]"
+        >
+          <ShoppingCart size={14} />
+        </button>
         {restocking && <RestockForm item={item} onSubmit={({ delta }) => onAdjust(item, delta, 'restocked')} onClose={() => setRestocking(false)} />}
       </div>
+      )}
     </div>
   )
 }

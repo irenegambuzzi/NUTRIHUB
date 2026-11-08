@@ -6,8 +6,7 @@ import { normalizeUnit, unitFactor } from './units'
 import { parseLocalDate } from './week'
 import { parseDecimal } from './decimal'
 import { isOneTime } from './oneTime'
-import { listedOutVariants } from './groups'
-import { planGroupEntries, spareEntryIds, variantPurchase } from './groupShop'
+import { isGroup } from './groups'
 
 export { normalizeUnit, unitFactor }
 
@@ -96,11 +95,12 @@ export function normalizeItem(item) {
   return unit === item.unit && priceUnit === item.price_unit ? item : { ...item, unit, price_unit: priceUnit }
 }
 
-// Why an item needs buying: 'out' | 'expired' | 'low' | null. An item in
-// a group never needs buying on its own — the group, with its total and
-// its threshold, does. A one-time item (1×) never needs buying by itself.
+// Why an item needs buying: 'out' | 'expired' | 'low' | null, from its own
+// stock and minimum. A one-time item (1×) never needs buying by itself, and
+// a group row made by an older version of the app never does (K138: it is
+// never on the SHOP list; its variants are normal items).
 export function restockReason(item) {
-  if (item.group_id || isOneTime(item)) return null
+  if (isGroup(item) || isOneTime(item)) return null
   const status = stockStatus(item)
   if (status === 'out') return 'out'
   if (expiryState(item) === 'expired') return 'expired'
@@ -108,27 +108,17 @@ export function restockReason(item) {
   return null
 }
 
-// Why an entry is on the SHOP list: restockReason, or 'not-urgent' for a
-// group whose total is fine but with a variant at 0 (`item.variants`, see
-// listedOutVariants).
-export function shopReason(item) {
-  const reason = restockReason(item)
-  if (reason) return reason
-  return item.is_group && listedOutVariants(item.variants).length > 0 ? 'not-urgent' : null
-}
-
 // The status HOME shows: a one-time item is never Low or Out (it is
-// finished at 0, see oneTime.js).
-export const shownStatus = (item) => (isOneTime(item) ? 'ok' : stockStatus(item))
+// finished at 0, see oneTime.js), nor is a group row from an older version
+// of the app (K138).
+export const shownStatus = (item) => (isOneTime(item) || isGroup(item) ? 'ok' : stockStatus(item))
 
-// The colour state of an item card: why it needs buying, or — for a
-// variant, which has no threshold of its own — out or expired. A one-time
-// item never turns yellow or red (only purple when expired).
+// The colour state of an item card: why it needs buying. A one-time item
+// never turns yellow or red (only purple when expired); neither does a group
+// row from an older version of the app (K138).
 export function displayReason(item) {
-  if (isOneTime(item)) return expiryState(item) === 'expired' ? 'expired' : null
-  if (!item.group_id) return restockReason(item)
-  if (stockStatus(item) === 'out') return 'out'
-  return expiryState(item) === 'expired' ? 'expired' : null
+  if (isOneTime(item) || isGroup(item)) return expiryState(item) === 'expired' ? 'expired' : null
+  return restockReason(item)
 }
 
 export function formatStock(item) {
@@ -329,12 +319,11 @@ export async function updateRows(table, ids, patch) {
 // Keeps the grocery list in step with stock: a Low, Out or Expired item
 // gets one auto-generated entry, and that entry disappears once the item
 // is fine again. Manually added entries are never touched. A one-time item
-// never gets one, and its entry in the cart stays there. A group and its
-// variants are judged together (syncGroup): each variant at 0 gets its own
-// entry, the group none. Throws if the list couldn't be read or changed.
+// never gets one, and its entry in the cart stays there. A group row from
+// an older version of the app never gets one (K138): its automatic entries
+// still "to buy" go, those in a cart or on the way stay until bought,
+// arrived or cancelled. Throws if the list couldn't be read or changed.
 export async function syncShoppingForItem(item) {
-  if (item.group_id) return syncGroup(item.group_id)
-  if (item.is_group) return syncGroup(item.id, item)
   const open = must(
     await supabase.from('grocery_items').select('id, auto_generated, in_cart, created_at').eq('pantry_item_id', item.id).eq('completed', false)
   )
@@ -344,7 +333,7 @@ export async function syncShoppingForItem(item) {
     // when the order arrives (or goes back to "to buy" if cancelled). So
     // does a one-time item's entry already in the cart.
     const ordered = await orderedEntryIds(open.map((g) => g.id))
-    const keepInCart = isOneTime(item)
+    const keepInCart = isOneTime(item) || isGroup(item)
     const autoIds = open.filter((g) => g.auto_generated && !ordered.has(g.id) && !(keepInCart && g.in_cart)).map((g) => g.id)
     if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
@@ -375,6 +364,17 @@ function autoEntry(item, quantity, unit) {
   }
 }
 
+// Oldest first: the entry that stays when there are two.
+const oldestFirst = (a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) || String(a.id).localeCompare(String(b.id))
+
+// The automatic entries "to buy" that are one too many for one item: the
+// oldest stays, unless another entry (in the cart, on the way, typed by
+// hand) is already there.
+export function spareEntryIds(open, ordered = new Set()) {
+  const spare = open.filter((e) => e.auto_generated && !e.in_cart && !ordered.has(e.id)).sort(oldestFirst)
+  return (spare.length < open.length ? spare : spare.slice(1)).map((e) => e.id)
+}
+
 // Removes the automatic entries "to buy" that are one too many for an item
 // (see spareEntryIds), from `open` or as read now.
 async function removeSpareEntries(itemId, open = null) {
@@ -382,39 +382,6 @@ async function removeSpareEntries(itemId, open = null) {
   if (rows.length < 2) return
   const spare = spareEntryIds(rows, await orderedEntryIds(rows.map((g) => g.id)))
   if (spare.length) must(await supabase.from('grocery_items').delete().in('id', spare))
-}
-
-// A group and its variants on the SHOP list, judged together (see
-// planGroupEntries in groupShop.js): every variant at 0 (not one-time) has
-// its own entry, the group none; a group at or below its minimum with no
-// variant at 0 lists the variant with the least. `known`: the group row,
-// when the caller has it.
-async function syncGroup(groupId, known = null) {
-  const group = known ?? must(await supabase.from('pantry_items').select('*').eq('id', groupId).maybeSingle())
-  if (!group) return
-  const variants = must(await supabase.from('pantry_items').select('*').eq('group_id', groupId)).map(normalizeItem)
-  const ids = [groupId, ...variants.map((v) => v.id)]
-  const readOpen = async () => must(await supabase.from('grocery_items').select('id, pantry_item_id, auto_generated, in_cart, created_at').in('pantry_item_id', ids).eq('completed', false))
-  const total = round(variants.reduce((sum, v) => sum + (Number(v.current_stock) || 0), 0))
-  const groupNeeds = variants.length > 0 && Boolean(restockReason({ ...group, current_stock: total }))
-  const plan = async (open) => planGroupEntries({ group, variants, open, ordered: await orderedEntryIds(open.map((g) => g.id)), groupNeeds })
-
-  const { remove, add } = await plan(await readOpen())
-  if (remove.length) must(await supabase.from('grocery_items').delete().in('id', remove))
-  if (!add.length) return
-  must(
-    await insertRows(
-      'grocery_items',
-      add.map((v) => {
-        const { quantity, unit } = variantPurchase(v)
-        return autoEntry(v, quantity, unit)
-      })
-    )
-  )
-  // The other phone may have added the same entries at the same moment:
-  // judged again, one of each stays (the oldest).
-  const again = await plan(await readOpen())
-  if (again.remove.length) must(await supabase.from('grocery_items').delete().in('id', again.remove))
 }
 
 // The SHOP list entries among `ids` that have an order on the way

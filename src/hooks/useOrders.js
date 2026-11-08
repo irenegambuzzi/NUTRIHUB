@@ -214,8 +214,10 @@ export async function markDurableArrived(order, date, kind = 'durable') {
   return result
 }
 
-// The HOME item (or group) an order is linked to, if it is still there.
-export const linkedItemOf = (order, items) => (order.pantry_item_id ? items.find((i) => i.id === order.pantry_item_id) ?? null : null)
+// The HOME item an order is linked to, if it is still there. Never a group
+// row from an older version of the app (K138: it never receives stock), so
+// such an order asks "It arrived!" like an order not linked to HOME.
+export const linkedItemOf = (order, items) => (order.pantry_item_id ? items.find((i) => i.id === order.pantry_item_id && !i.is_group) ?? null : null)
 
 const refreshFlow = () => Promise.all([orderStore.refresh(), pantryStore.refresh(), groceryStore.refresh(), ...allExpenseStores().map((s) => s.refresh())])
 
@@ -236,21 +238,20 @@ export function syncListFor(order, itemId = null) {
 export const alreadyArrivedMessage = (order) => `"${order.item_name}" was already marked as arrived (on the other phone?) — nothing was added again.`
 
 // An order arrived — linked to a HOME item, or through "It arrived!" (plan
-// 9J): the stock (`delta`, in the item's own unit) goes to `itemId` — an
-// item, or a variant of a group — in one step with marking it arrived
-// (arrive_order, supabase/021), so "Back on the way" and Undo can take out
-// exactly that. Only the first Arrived adds anything, whichever phone
-// presses it. `newVariant` / `newItem` ({ id, fields }): a new variant of
-// a group, or a new HOME item ("Create a new item"), made first with stock
-// 0 and an id fixed by the dialog, so pressing again never makes a second
-// one; when the other phone was first it is deleted again (still at 0).
+// 9J): the stock (`delta`, in the item's own unit) goes to the item `itemId`
+// in one step with marking it arrived (arrive_order, supabase/021), so "Back
+// on the way" and Undo can take out exactly that. Only the first Arrived
+// adds anything, whichever phone presses it. `newItem` ({ id, fields }): a
+// new HOME item ("Create a new item"), made first with stock 0 and an id
+// fixed by the dialog, so pressing again never makes a second one; when the
+// other phone was first it is deleted again (still at 0).
 // Never an expense. `pack` ({ unit, value, firstTime }): the pack field of
 // the arrival and `packItem` the item it counts for (plan 9H,
 // rememberArrivalPack). `syncList` false: the SHOP list is not judged
 // again afterwards (a durable order, K24). Returns { error, added,
 // arrival }: `arrival` is what the Undo on the toast needs (undoArrival).
-export async function arriveLinkedOrder(order, { itemId, delta, newVariant = null, newItem = null, date, pack = null, packItem = null, syncList = true }) {
-  const made = newVariant ?? newItem
+export async function arriveLinkedOrder(order, { itemId, delta, newItem = null, date, pack = null, packItem = null, syncList = true }) {
+  const made = newItem
   let added = false
   let arrived = null
   const result = await attempt(
@@ -281,7 +282,7 @@ export async function arriveLinkedOrder(order, { itemId, delta, newVariant = nul
   return { ...result, added, arrival: added && arrived ? { order, arrived, madeId: made?.id ?? null } : null }
 }
 
-// A new item or variant made for an arrival that then never happened
+// A new item made for an arrival that then never happened
 // (the second step failed and the dialog was closed): deleted again while
 // it is still empty and nothing was written about it.
 export function discardUnusedItem(id) {
@@ -310,7 +311,7 @@ const sameArrival = (now, arrived) =>
   now.status === 'arrived' &&
   (arrived.arrived_log_id ? now.arrived_log_id === arrived.arrived_log_id : !now.arrived_log_id && now.arrived_date === arrived.arrived_date && !(Number(now.stock_added) > 0))
 
-// A new HOME item or variant made by an arrival (plan 9J, K3 / K4), as it
+// A new HOME item made by an arrival (plan 9J, K3 / K4), as it
 // is now, when it can go again with the arrival: after taking out what the
 // arrival added it is at 0, it has no history row but the arrival's, no
 // SHOP entry but its automatic ones still "to buy", and no other order.
@@ -323,7 +324,7 @@ async function madeByArrival(order, madeId = null) {
   const id = madeId ?? order.arrived_item_id
   if (!id || (madeId && order.arrived_item_id && order.arrived_item_id !== madeId)) return null
   const item = must(await supabase.from('pantry_items').select('*').eq('id', id).maybeSingle())
-  if (!item || item.is_group) return null
+  if (!item) return null
   const logs = must(await supabase.from('stock_logs').select('id, created_at').eq('item_id', id))
   if (logs.some((l) => l.id !== order.arrived_log_id)) return null
   if (!madeId) {
@@ -343,8 +344,8 @@ async function madeByArrival(order, madeId = null) {
 
 // Deletes an item made by an arrival, once the arrival is undone: only
 // while it is still at 0 with no history row (the other phone may have
-// used it meanwhile); its automatic "to buy" entries go with it. Its
-// group, for a variant, is judged again. → whether it was deleted.
+// used it meanwhile); its automatic "to buy" entries go with it. → whether
+// it was deleted.
 async function deleteMadeItem(item) {
   let gone = false
   await followUp(`the new item "${item.name}"`, async () => {
@@ -365,7 +366,7 @@ async function deleteMadeItem(item) {
 // Food"", "2 pcs taken out, and the new item "Catnip Snack" deleted from
 // HOME".
 function takenOutText({ qty, item, made, gone }) {
-  const what = made ? `the new ${made.group_id ? 'variant' : 'item'} "${made.name}"` : ''
+  const what = made ? `the new item "${made.name}"` : ''
   if (gone) return qty ? `${qty} taken out, and ${what} deleted from HOME` : `${what} deleted from HOME`
   if (!qty) return ''
   return `${qty} taken out of "${item?.name ?? made?.name ?? 'HOME'}"${made ? ' (kept in HOME: it changed meanwhile)' : ''}`
@@ -376,8 +377,8 @@ function takenOutText({ qty, item, made, gone }) {
 // unarrive_order takes out exactly the stock it added and deletes its
 // history row, the order and its SHOP entry are on the way again, a
 // first-time usual size is undone (restoreArrivalPack) and the order's
-// pack size is what it was before (K8); a new item or variant made by it
-// goes too while untouched (K3, K4); the SHOP list is judged again. Never
+// pack size is what it was before (K8); a new item made by it goes too
+// while untouched (K3, K4); the SHOP list is judged again. Never
 // a price, an order group, a share or an expense. Refused offline.
 export async function undoArrival({ order, arrived, madeId = null }) {
   let state = null
@@ -408,7 +409,7 @@ export async function undoArrival({ order, arrived, madeId = null }) {
   }
   const gone = made ? await deleteMadeItem(made) : false
   await refreshFlow()
-  await syncListFor(order, gone ? made.group_id : now.arrived_item_id ?? madeId)
+  await syncListFor(order, gone ? null : now.arrived_item_id ?? madeId)
   const qty = undone.qty ?? (Number(now.stock_added) > 0 ? `${Number(now.stock_added)} ${item?.unit ?? made?.unit ?? ''}`.trim() : '')
   const taken = takenOutText({ qty, item, made: madeId ? made ?? item : null, gone })
   showToast({ message: `"${order.item_name}" is on the way again${taken ? ` — ${taken}` : ''}` })
@@ -433,7 +434,7 @@ async function rememberArrivalPack(order, item, pack) {
   if (!(pack?.value > 0) || !packColumnsReady(order)) return true
   const element = pack.onName && item ? nameElement(item, order.item_name) : null
   if (pack.onName) return rememberNamePack(order, item, pack, element)
-  const first = Boolean(pack.firstTime && item && !item.is_group)
+  const first = Boolean(pack.firstTime && item)
   const before = first ? { packaging_unit: item.packaging_unit ?? null, quantity_per_pack: item.quantity_per_pack ?? null } : null
   const saved = { packaging_unit: pack.unit, quantity_per_pack: pack.value }
   return followUp('the pack size', async () => {
@@ -451,7 +452,7 @@ async function rememberArrivalPack(order, item, pack) {
 }
 
 async function rememberNamePack(order, item, pack, element) {
-  const first = Boolean(pack.firstTime && element && !item.is_group)
+  const first = Boolean(pack.firstTime && element)
   const saved = { packaging_unit: pack.unit, quantity_per_pack: pack.value }
   const before = first ? { packaging_unit: element.packaging_unit ?? null, quantity_per_pack: element.quantity_per_pack ?? null, name: element.name } : null
   return followUp('the pack size', async () => {
@@ -464,8 +465,8 @@ async function rememberNamePack(order, item, pack, element) {
   })
 }
 
-// "Back on the way" days later (plan 9J, K3 / K4): the new item or variant
-// this arrival made, when it would go with it (madeByArrival), or null —
+// "Back on the way" days later (plan 9J, K3 / K4): the new item this
+// arrival made, when it would go with it (madeByArrival), or null —
 // also when it can't be read now (then it is simply kept).
 export async function itemMadeByArrival(order) {
   if (!(Number(order.stock_added) > 0) || !order.arrived_item_id || !order.arrived_log_id || isOffline()) return null
@@ -500,7 +501,7 @@ export async function unarriveOrder(order, { made = null } = {}) {
     await restoreArrivalPack(order)
     const gone = made ? await deleteMadeItem(made) : false
     await refreshFlow()
-    await syncListFor(order, gone ? made.group_id : order.arrived_item_id)
+    await syncListFor(order, gone ? null : order.arrived_item_id)
   }
   return result
 }

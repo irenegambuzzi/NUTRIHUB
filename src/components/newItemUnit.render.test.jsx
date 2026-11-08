@@ -486,7 +486,7 @@ describe('HOME editor (K5, K8, K11)', () => {
     expect(onSave.mock.calls[0][1]).toEqual({ converted: false })
   })
 
-  it('K8: kg → gr keeps "Convert the numbers" (no pack choice); pcs → btl neither; a variant\'s unit stays locked', async () => {
+  it('K8: kg → gr keeps "Convert the numbers" (no pack choice); pcs → btl neither; a variant of a group row (older app version) can change its unit like any item', async () => {
     editor({ item: { ...soft, unit: 'kg', current_stock: 2, min_stock: 1, price_unit: 'kg' } })
     fireEvent.change(unitSelect(), { target: { value: 'gr' } })
     await screen.findByText('Convert the numbers')
@@ -500,8 +500,9 @@ describe('HOME editor (K5, K8, K11)', () => {
     expect(screen.queryByText('Convert with the pack size')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     cleanup()
-    editor({ item: { ...soft, group_id: 'g' }, groups: [{ id: 'g', name: 'Drinks', unit: 'pack' }] })
-    expect(unitSelect().disabled).toBe(true)
+    editor({ item: { ...soft, group_id: 'g' } })
+    expect(unitSelect().disabled).toBe(false)
+    expect(text()).not.toContain('unit of its group')
   })
 
   it('K5: an order "1 pack" (€3.00): multipack on, purchase unit pack, "pcs per pack" empty and required, stock 1 counted in packs; 4 → 4 pcs, usual pack 4, €3.00 per 1 pack', async () => {

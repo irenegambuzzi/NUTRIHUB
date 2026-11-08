@@ -9,12 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const client = vi.hoisted(() => ({ supabase: {} }))
 vi.mock('../lib/supabaseClient', () => client)
 const { arrivalDb } = await import('./arrivalDb.fixture')
-const { arriveLinkedOrder, arrivedToast, discardUnusedItem, markDurableArrived, undoArrival } = await import('./useOrders')
+const { arriveLinkedOrder, arrivedToast, discardUnusedItem, linkedItemOf, markDurableArrived, undoArrival } = await import('./useOrders')
 const { askBackOnTheWay, EXPENSE_DELETED, NO_STOCK_RECORDED } = await import('./orderActions')
 const { shopStore } = await import('../lib/stores')
 const { closeDialog, dismissToast, getDialog, getToasts, runToastAction } = await import('../lib/feedback')
 const { setOnlineForTest } = await import('../lib/connection')
-const { newVariantFields } = await import('../lib/groups')
 
 let db
 beforeEach(() => {
@@ -100,17 +99,19 @@ describe('Arrived of a linked order, then Undo on the toast', () => {
     expect(messages()).toContain('"Dish Soap" is on the way again')
   })
 
-  it('a new variant made by a linked arrival is deleted again by Undo (K4), and its group is judged again', async () => {
+  it('an order linked to a group row (older app version) is never "linked" (K138): its stock goes to the item chosen, never to the group row; Undo takes it out', async () => {
     const chips = db.add('pantry_items', { name: 'Chips & Snacks', unit: 'pcs', is_group: true, min_stock: 2 })
-    db.add('pantry_items', { name: 'Paprika Crisps', unit: 'pcs', group_id: chips.id, current_stock: 1 })
+    const paprika = db.add('pantry_items', { name: 'Paprika Crisps', unit: 'pcs', group_id: chips.id, current_stock: 1 })
     const o = db.add('orders', { item_name: 'Chips & Snacks', price: 6, pantry_item_id: chips.id, quantity: 4, unit: 'pcs' })
-    const variant = { id: 'variant-chili', fields: newVariantFields(item(chips.id), 'Chili Crisps') }
-    const { arrival } = await arriveLinkedOrder(asShown(o.id), { itemId: null, newVariant: variant, delta: 4, date: TODAY })
-    expect(item('variant-chili')).toMatchObject({ name: 'Chili Crisps', group_id: chips.id, current_stock: 4 })
+    expect(linkedItemOf(order(o.id), db.tables.pantry_items)).toBeNull()
+    expect(linkedItemOf({ pantry_item_id: paprika.id }, db.tables.pantry_items).id).toBe(paprika.id)
+    const { arrival } = await arriveLinkedOrder(asShown(o.id), { itemId: paprika.id, delta: 4, date: TODAY })
+    expect(item(paprika.id).current_stock).toBe(5)
+    expect(item(chips.id).current_stock ?? 0).toBe(0)
     await undoArrival(arrival)
-    expect(item('variant-chili')).toBeNull()
+    expect(item(paprika.id).current_stock).toBe(1)
     expect(db.tables.stock_logs).toEqual([])
-    expect(messages()).toContain('"Chips & Snacks" is on the way again — 4 pcs taken out, and the new variant "Chili Crisps" deleted from HOME')
+    expect(messages()).toContain('"Chips & Snacks" is on the way again — 4 pcs taken out of "Paprika Crisps"')
   })
 })
 
@@ -133,7 +134,7 @@ describe('"It arrived!" (an order not linked to HOME): one arrive_order step, th
     expect(messages()).toContain('"Basmati rice 5 kg" is on the way again — 5000 gr taken out of "Basmati Rice"')
   })
 
-  it('"Add to a variant of an item group", an existing variant: +3, Undo −3', async () => {
+  it('"Add to an existing item" with a variant of a group row (older app version), a normal item now: +3, Undo −3', async () => {
     const pasta = db.add('pantry_items', { name: 'Pasta', unit: 'pack', is_group: true, min_stock: 2 })
     const penne = db.add('pantry_items', { name: 'Penne Rigate', unit: 'pack', group_id: pasta.id, current_stock: 2 })
     const o = db.add('orders', { item_name: 'Penne x3', price: 4.47 })
@@ -144,19 +145,18 @@ describe('"It arrived!" (an order not linked to HOME): one arrive_order step, th
     expect(logsOf(penne.id)).toEqual([])
   })
 
-  it('a new variant: made with stock 0, then +6; used on the other phone meanwhile → Undo takes the 6 out but keeps it (K4)', async () => {
-    const tea = db.add('pantry_items', { name: 'Tea', unit: 'box', is_group: true, min_stock: 1 })
+  it('a new item: made with stock 0, then +6; used on the other phone meanwhile → Undo takes the 6 out but keeps it (K4)', async () => {
     const o = db.add('orders', { item_name: 'Green tea', price: 9.6 })
-    const fields = newVariantFields(item(tea.id), 'Green Tea Sencha')
-    const { arrival } = await arriveLinkedOrder(asShown(o.id), { itemId: null, newVariant: { id: 'variant-sencha', fields }, delta: 6, date: TODAY })
-    expect(item('variant-sencha').current_stock).toBe(6)
-    expect(logsOf('variant-sencha').map((l) => l.reason)).toEqual(['purchased'])
+    const fields = { name: 'Green Tea Sencha', unit: 'box', min_stock: 0, category_id: 'drinks' }
+    const { arrival } = await arriveLinkedOrder(asShown(o.id), { itemId: null, newItem: { id: 'new-sencha', fields }, delta: 6, date: TODAY })
+    expect(item('new-sencha').current_stock).toBe(6)
+    expect(logsOf('new-sencha').map((l) => l.reason)).toEqual(['purchased'])
     // The other phone uses 1 box.
-    await db.supabase.rpc('increment_stock', { item_id: 'variant-sencha', delta: -1 })
-    db.add('stock_logs', { item_id: 'variant-sencha', change: -1, reason: 'used' })
+    await db.supabase.rpc('increment_stock', { item_id: 'new-sencha', delta: -1 })
+    db.add('stock_logs', { item_id: 'new-sencha', change: -1, reason: 'used' })
     await undoArrival(arrival)
-    expect(item('variant-sencha').current_stock).toBe(0)
-    expect(logsOf('variant-sencha').map((l) => l.reason)).toEqual(['used'])
+    expect(item('new-sencha').current_stock).toBe(0)
+    expect(logsOf('new-sencha').map((l) => l.reason)).toEqual(['used'])
     expect(messages()).toContain('"Green tea" is on the way again — 6 box taken out of "Green Tea Sencha" (kept in HOME: it changed meanwhile)')
   })
 

@@ -16,7 +16,7 @@ export const RESTOCK_REASONS = ['purchased', 'restocked']
 // RESTOCK_REASONS since NEW_ITEM_SINCE. A purchase that creates the item
 // is saved in the same moment as the item itself, so only entries after
 // the item was created count — and so does one within a few seconds, like
-// the purchase that fills a variant made on the spot.
+// the arrival that fills an item made on the spot ("It arrived!").
 export const ENTRY_GRACE_MS = 30000
 
 export function isNewItem(item, restocks) {

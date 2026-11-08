@@ -24,7 +24,7 @@ const pantry = [
   { id: 'milk', name: 'Milk', unit: 'btl', current_stock: 1, min_stock: 2 },
   { id: 'rice', name: 'Rice', unit: 'gr', current_stock: 500 },
   { id: 'cream', name: 'Sun cream', unit: 'pcs', current_stock: 0, one_time: true },
-  { id: 'chips', name: 'Chips', unit: 'pack', is_group: true, current_stock: 2, variants: [{ id: 'lays', name: 'Lays', unit: 'pack', current_stock: 2, group_id: 'chips' }, { id: 'tuc', name: 'Tuc', unit: 'pack', current_stock: 0, group_id: 'chips' }] },
+  { id: 'chips', name: 'Chips', unit: 'pack', is_group: true, current_stock: 0 },
   { id: 'lays', name: 'Lays', unit: 'pack', current_stock: 2, group_id: 'chips' },
   { id: 'tuc', name: 'Tuc', unit: 'pack', current_stock: 0, group_id: 'chips' },
 ]
@@ -95,10 +95,11 @@ describe('round 9F: the durable lock', () => {
 })
 
 describe('which HOME item a row is', () => {
-  it('matches a normal item by name (a finished 1× item too), else a group', () => {
+  it('matches an item by name (a finished 1× item too, a variant of a group row too), never a group row (K138)', () => {
     expect(homeItemFor(' milk ', pantry).id).toBe('milk')
     expect(homeItemFor('Sun cream', pantry).id).toBe('cream')
-    expect(homeItemFor('chips', pantry).id).toBe('chips')
+    expect(homeItemFor('tuc', pantry).id).toBe('tuc')
+    expect(homeItemFor('chips', pantry)).toBeNull()
     expect(homeItemFor('Bread', pantry)).toBeNull()
   })
 
@@ -126,17 +127,19 @@ describe('which HOME item a row is', () => {
     expect(answered).toMatchObject({ needsPackSize: false, add: 1000 })
   })
 
-  it('a group: the stock goes to a variant (the first at 0 until one is picked), never to the group', () => {
-    const line = rowLine(row({ name: 'Chips', priceText: '1.99', unit: 'pack', categoryId: 'snacks' }), pantry)
-    expect(line.group.id).toBe('chips')
-    expect(line.target.id).toBe('tuc')
-    const picked = rowLine(row({ name: 'Chips', priceText: '1.99', unit: 'pack', categoryId: 'snacks', variantId: 'lays' }), pantry)
-    expect(picked.target.id).toBe('lays')
-    const none = rowLine(row({ name: 'Chips', priceText: '1.99', unit: 'pack', categoryId: 'snacks', variantId: null }), pantry)
-    expect(none.needsVariant).toBe(true)
-    expect(rowProblem(none)).toBe('Choose which variant of "Chips" gets the stock.')
-    const payload = moneyPurchasePayload({ id: 't', date: '2026-10-20', paidBy: 'irene', lines: [picked], budgetFor: () => 'groceries' })
-    expect(payload.items[0].pantry_item_id).toBe('lays')
+  it('no variant select any more (round 6D stage 5): a variant is a normal item; a group row\'s name makes a new item, never stock to the group row (K138)', () => {
+    const tuc = rowLine(row({ name: 'Tuc', priceText: '1.99', unit: 'pack', categoryId: 'snacks' }), pantry)
+    expect(tuc).toMatchObject({ isNew: false, add: 1 })
+    expect(tuc.target.id).toBe('tuc')
+    expect(tuc).not.toHaveProperty('variants')
+    expect(tuc).not.toHaveProperty('needsVariant')
+    expect(homeNote(tuc)).toBe('Adds to "Tuc" in HOME (+1 pack).')
+    const chips = rowLine(row({ name: 'Chips', priceText: '1.99', unit: 'pack', categoryId: 'snacks' }), pantry)
+    expect(chips).toMatchObject({ target: null, isNew: true })
+    expect(rowProblem(chips)).toBe('')
+    expect(homeNote(chips)).toBe('New in HOME (shown as New Item).')
+    const payload = moneyPurchasePayload({ id: 't', date: '2026-10-20', paidBy: 'shared', lines: [tuc, chips], budgetFor: () => 'groceries' })
+    expect(payload.items.map((i) => i.pantry_item_id)).toEqual(['tuc', null])
   })
 
   it('a new item: made in HOME with 1× and Min (Min 0 while 1× is on)', () => {

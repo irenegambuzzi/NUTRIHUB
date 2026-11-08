@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft, Layers, PackageCheck, PackagePlus, Plus, X } from 'lucide-react'
+import { ChevronLeft, PackageCheck, PackagePlus, Plus, X } from 'lucide-react'
 import { Label, Select } from '../ui/Field'
 import { SearchBox } from '../ui/SearchBox'
 import { ItemEditor } from '../inventory/ItemEditor'
@@ -9,7 +9,6 @@ import { pickFields, usePantryItems } from '../../hooks/usePantryItems'
 import { useInventoryCategories } from '../../hooks/useInventoryCategories'
 import { alreadyArrivedMessage, arriveLinkedOrder, arrivedToast, discardUnusedItem } from '../../hooks/useOrders'
 import { keepTypedName } from '../../hooks/itemNameActions'
-import { newVariantFields } from '../../lib/groups'
 import { formatPurchaseQuantity } from '../../lib/inventory'
 import { arrivalPickLabel } from '../../lib/similarItems'
 import { anyNameIncludes } from '../../lib/itemNames'
@@ -18,53 +17,45 @@ import { localDateString } from '../../lib/week'
 
 const CHOICES = [
   { mode: 'item', label: 'Add to an existing item', hint: 'Restock something you already have in HOME.', Icon: PackagePlus },
-  { mode: 'group', label: 'Add to a variant of an item group', hint: 'E.g. one brand inside "Chips & Snacks".', Icon: Layers },
   { mode: 'new', label: 'Create a new item', hint: 'It becomes a New Item in HOME.', Icon: Plus },
 ]
 
 // "Arrived" on an order not linked to HOME: should it go into HOME? Stock
-// goes to an existing item, to a variant of an item group, or into a new
+// goes to an existing item (found by its own or another name) or into a new
 // item; the quantity can be given in the item's purchase unit or its stock
 // unit (the same conversion as the + button in HOME; in a package, with
 // the pack field of plan 9H, for this arrival only — nothing is saved as
 // the item's usual size here). Every choice marks the order arrived and
 // adds the stock in one step, exactly like a linked arrival (arrive_order,
 // plan 9J), so the toast's Undo and "Back on the way" take out exactly
-// that; a new item or variant is made first with stock 0. "Don't add to
+// that; a new item is made first with stock 0. "Don't add to
 // HOME" marks it arrived with nothing added. Closed with × or a tap
 // outside, nothing happens: the order stays on the way. Only the first
-// Arrived adds anything, on whichever phone. Never an expense.
+// Arrived adds anything, on whichever phone. Never an expense. An item
+// chosen in "Which item?" doesn't remember the order's name as another name
+// (K137: that is done by hand in "Edit item" → "Other names"); only the word
+// typed before "Add it to …" is (K58). A group row from an older version of
+// the app is never offered (K138): it never receives stock.
 export function ArrivedDialog({ order, onClose }) {
   const { items } = usePantryItems()
   const { pantryParents: parents, subsByParent, addCategory, addSubcategory } = useInventoryCategories()
-  const [mode, setMode] = useState(null) // null | 'item' | 'group' | 'new'
+  const [mode, setMode] = useState(null) // null | 'item' | 'new'
   const [search, setSearch] = useState('')
   const [itemId, setItemId] = useState('')
-  const [groupId, setGroupId] = useState('')
-  const [variantStart, setVariantStart] = useState(null)
   const [busy, setBusy] = useState(false)
   const saved = useRef(false)
-  // Ids fixed per dialog, so pressing again never makes a second item:
-  // one for "Create a new item", one per group for "New variant…".
+  // Fixed per dialog, so pressing again never makes a second item.
   const newItemId = useRef(crypto.randomUUID())
-  const variantIds = useRef(new Map())
-  const variantIdFor = (id) => {
-    if (!variantIds.current.has(id)) variantIds.current.set(id, crypto.randomUUID())
-    return variantIds.current.get(id)
-  }
   // New items made by a try whose second step failed: deleted again when
   // the dialog closes without them having arrived.
   const tried = useRef(new Set())
   // The word "Add it to …" was pressed for (K58): { word, itemId }.
   const typedWord = useRef(null)
 
-  const plainItems = useMemo(() => items.filter((i) => !i.is_group && !i.group_id).sort((a, b) => a.name.localeCompare(b.name)), [items])
-  const groups = useMemo(() => items.filter((i) => i.is_group).sort((a, b) => a.name.localeCompare(b.name)), [items])
+  const plainItems = useMemo(() => items.filter((i) => !i.is_group).sort((a, b) => a.name.localeCompare(b.name)), [items])
   const query = search.trim().toLowerCase()
   const matching = query ? plainItems.filter((i) => anyNameIncludes(i, query)) : plainItems
   const item = plainItems.find((i) => i.id === itemId)
-  const group = groups.find((g) => g.id === groupId)
-  const variants = group ? items.filter((i) => i.group_id === group.id).sort((a, b) => a.name.localeCompare(b.name)) : []
 
   const discardTried = (except = null) => {
     for (const id of tried.current) if (id !== except) discardUnusedItem(id)
@@ -79,7 +70,7 @@ export function ArrivedDialog({ order, onClose }) {
   // One arrival (arriveLinkedOrder) and its toast, with Undo. On a failure
   // the form stays open with what was typed.
   const arrive = async (args, message) => {
-    const made = args.newVariant ?? args.newItem
+    const made = args.newItem
     const result = await arriveLinkedOrder(order, { date: localDateString(), ...args })
     if (result.error) {
       if (made && !result.error.offline) tried.current.add(made.id)
@@ -96,14 +87,6 @@ export function ArrivedDialog({ order, onClose }) {
     const result = await arrive({ itemId: item.id, delta }, `Added ${formatPurchaseQuantity(delta, item.unit, item)} to "${item.name}"`)
     if (result.added && typedWord.current?.itemId === item.id) keepTypedName(typedWord.current.word, item.id)
     return result
-  }
-
-  const restockGroup = ({ delta, variantId, newName }) => {
-    const variant = variantId ? variants.find((v) => v.id === variantId) : null
-    const message = `Added ${delta} ${group.unit} to ${variant ? `"${variant.name}"` : `a new variant of "${group.name}"`}`
-    if (variant) return arrive({ itemId: variant.id, delta }, message)
-    const fields = newVariantFields(group, newName, { packaging_unit: group.packaging_unit ?? null, quantity_per_pack: group.quantity_per_pack ?? null })
-    return arrive({ newVariant: { id: variantIdFor(group.id), fields }, delta }, message)
   }
 
   // "Create a new item": the item is made with stock 0, then the arrival
@@ -125,28 +108,20 @@ export function ArrivedDialog({ order, onClose }) {
   }
 
   // The new item's name is (like) one already in HOME (plan 9G safety
-  // net, K12): its button adds the arrival to that item instead — a
-  // variant through its group — with the quantity asked as usual. The word
-  // typed (`word`) becomes another name of that item once it has arrived.
+  // net, K12): its button opens "Add to an existing item" with that item
+  // chosen, with the quantity asked as usual. The word typed (`word`)
+  // becomes another name of that item once it has arrived.
   const pickExisting = (existing, word) => {
     setSearch('')
     typedWord.current = { word, itemId: existing.id }
-    if (existing.is_group || existing.group_id) {
-      setGroupId(existing.is_group ? existing.id : existing.group_id)
-      setVariantStart(existing.is_group ? null : existing.id)
-      setMode('group')
-    } else {
-      setItemId(existing.id)
-      setMode('item')
-    }
+    setItemId(existing.id)
+    setMode('item')
   }
 
   const back = () => {
     typedWord.current = null
     setMode(null)
     setItemId('')
-    setGroupId('')
-    setVariantStart(null)
   }
 
   if (mode === 'new') {
@@ -236,40 +211,6 @@ export function ArrivedDialog({ order, onClose }) {
           </div>
         )}
 
-        {mode === 'group' && (
-          <div className="space-y-3">
-            <button type="button" onClick={back} className="min-h-9 text-[11px] font-bold text-[var(--color-accent)] inline-flex items-center gap-1">
-              <ChevronLeft size={12} /> Back
-            </button>
-            {groups.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)]">There are no item groups yet. Make one in HOME ("Add group"), or create a new item instead.</p>
-            ) : (
-              <>
-                <div>
-                  <Label>Which group?</Label>
-                  <Select
-                    value={groupId}
-                    onChange={(e) => {
-                      setGroupId(e.target.value)
-                      setVariantStart(null)
-                    }}
-                    aria-label="Item group"
-                  >
-                    <option value="">Choose a group…</option>
-                    {groups.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name} ({g.current_stock} {g.unit})
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                {group && (
-                  <RestockForm key={`${group.id}:${variantStart ?? ''}`} item={group} variants={variants} initial={variantStart ? { variantId: variantStart } : null} onSubmit={restockGroup} onClose={back} packs />
-                )}
-              </>
-            )}
-          </div>
-        )}
       </div>
     </div>,
     document.body

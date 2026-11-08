@@ -25,15 +25,14 @@ export function byCartOrder(a, b) {
 
 export const inCartOrder = (items) => items.filter((i) => i.in_cart).sort(byCartOrder)
 
-// Reason order for each sort; 'stocked' = in the pantry and fine;
-// 'not-urgent' = a group whose total is fine but with a variant at 0, at
-// the bottom. Budget planning always uses PRIORITY, whatever the chosen
-// sort; A–Z, price and recent keep their own order.
-export const PRIORITY = ['out', 'low', 'expired', 'new', 'stocked', 'not-urgent']
+// Reason order for each sort; 'stocked' = in the pantry and fine. Budget
+// planning always uses PRIORITY, whatever the chosen sort; A–Z, price and
+// recent keep their own order.
+export const PRIORITY = ['out', 'low', 'expired', 'new', 'stocked']
 const REASON_ORDERS = {
   priority: PRIORITY,
-  low: ['low', 'out', 'expired', 'new', 'stocked', 'not-urgent'],
-  new: ['new', 'out', 'low', 'expired', 'stocked', 'not-urgent'],
+  low: ['low', 'out', 'expired', 'new', 'stocked'],
+  new: ['new', 'out', 'low', 'expired', 'stocked'],
 }
 
 // The list in the chosen order (`mode`: priority, low, new, az, price,

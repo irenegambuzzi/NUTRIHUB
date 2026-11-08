@@ -9,8 +9,7 @@ import { decimalProblem, firstDecimalProblem, moneyText, parseDecimal } from '..
 import { cn } from '../../lib/cn'
 import { DEFAULT_UNIT, PACK_SIZE_PRESETS, PACKAGING_UNITS, SUGGESTED_UNITS, UNIT_GROUPS, UNIT_VALUES } from '../../data/constants'
 import { purchaseUnitOptions } from '../../lib/units'
-import { askDialog, confirmDialog } from '../../lib/feedback'
-import { checkMoveIntoGroup } from '../../lib/groups'
+import { askDialog } from '../../lib/feedback'
 import { isDurable, roundQuantity, unitFactor } from '../../lib/inventory'
 import { money, priceUnitOptions } from '../../lib/pricing'
 import { COUNT_STOCK_UNITS, isPackageUnit } from '../../lib/newItemUnit'
@@ -27,14 +26,13 @@ import { exactKey, goToLabel, matchHomeItems, sameItemName } from '../../lib/sim
 import { canMergeInto, draftProblems, nameDrafts, namesChange, newNameDraft, takenNote } from '../../lib/itemNames'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
-function initialState(item, group, prefill) {
+function initialState(item, prefill) {
   const perPack = Number(item?.quantity_per_pack) || ''
   const start = {
     name: item?.name ?? prefill?.name ?? '',
-    category_id: item?.category_id ?? group?.category_id ?? '',
-    subcategory_id: item?.subcategory_id ?? group?.subcategory_id ?? '',
-    unit: item?.unit ?? group?.unit ?? DEFAULT_UNIT,
-    group_id: item?.group_id ?? group?.id ?? '',
+    category_id: item?.category_id ?? '',
+    subcategory_id: item?.subcategory_id ?? '',
+    unit: item?.unit ?? DEFAULT_UNIT,
     multipack: Boolean(item?.packaging_unit && perPack),
     packaging_unit: item?.packaging_unit ?? PACKAGING_UNITS[0],
     quantity_per_pack: perPack || 6,
@@ -47,7 +45,7 @@ function initialState(item, group, prefill) {
     price: Number(item?.price) > 0 ? moneyText(item.price) : '',
     price_qty: item?.price_qty ? String(item.price_qty) : '1',
     price_unit: item?.price_unit ?? '',
-    usual_shop_id: item?.usual_shop_id ?? group?.usual_shop_id ?? '',
+    usual_shop_id: item?.usual_shop_id ?? '',
     one_time: Boolean(item?.one_time),
   }
   // A new item started from something else (an order that arrived, plan
@@ -59,10 +57,10 @@ function initialState(item, group, prefill) {
 // Adding or editing a pantry item. For a new item the category is
 // suggested from the name until the user picks one; a pick by hand is
 // remembered for that name on both phones.
-// `asGroup`: making (or editing) a group — a total of variants, with no
-// stock, expiry or batch of its own. `groups`: the groups an item can be
-// moved into; `group`: the group a new variant is made in; `variantCount`:
-// how many variants the edited group has. `prefill` ({ name }): a new item
+// A group row made by an older version of the app (K138) is edited as "Edit
+// item" without stock, expiry, batch or 1×: it never receives stock, and
+// "Merge other items into this one…" takes all its variants (K112).
+// `prefill` ({ name }): a new item
 // that starts with this name and the category suggested for it; it may
 // also say the unit, the multipack fields, the stock and the price
 // (lib/newItemUnit.js arrivalPrefill).
@@ -75,7 +73,7 @@ function initialState(item, group, prefill) {
 // the text of each item's button ("Go to …" by default).
 // `namesReady`: supabase/032 is known to have run (plan 9N): a normal item
 // being edited gets "Other names".
-// With `namesReady` an item or a group being edited also gets "Merge other
+// With `namesReady` an item (or a group row) being edited also gets "Merge other
 // items into this one…" (K108, `onMerge(ids)` → whether it is done) and every
 // other name "Separate" (K114, `onSeparate(name)`); both wait while the form
 // has unsaved changes (K113). `categoryName(id)`: for the merge search.
@@ -85,15 +83,15 @@ function initialState(item, group, prefill) {
 // (plan 9L K11); `names` the save_item_names payload, only when the names
 // changed; `firstWord`, a new item only: the word first typed before "Create
 // new", when the name was then changed (K58).
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel, namesReady = false, onMerge = null, onSeparate = null, categoryName = () => '' }) {
-  const isGroup = asGroup || Boolean(item?.is_group)
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel, namesReady = false, onMerge = null, onSeparate = null, categoryName = () => '' }) {
+  const isGroup = Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
-  const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
+  const [startPick] = useState(() => (!item && prefill?.name ? suggest(prefill.name) : null))
   const [form, setForm] = useState(() => ({
-    ...initialState(item, group, prefill),
+    ...initialState(item, prefill),
     ...(startPick ? { category_id: startPick.categoryId ?? '', subcategory_id: startPick.subcategoryId ?? '' } : {}),
   }))
-  const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id || group))
+  const [categoryTouched, setCategoryTouched] = useState(Boolean(item?.category_id))
   const [categoryPicked, setCategoryPicked] = useState(false)
   const [suggested, setSuggested] = useState(Boolean(startPick))
   const [categoryError, setCategoryError] = useState('')
@@ -105,7 +103,6 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   // Started from an order bought in a package ("It arrived!", plan 9L K5).
   const [fromPackage] = useState(() => Boolean(!item && prefill?.multipack && prefill?.stockInPacks))
   const [expiryValid, setExpiryValid] = useState(true)
-  const [groupNote, setGroupNote] = useState('')
   // The safety net's open question ({ kind: 'exact', item } or { kind:
   // 'similar', options }) and the name "Create new" was pressed for.
   const [question, setQuestion] = useState(null)
@@ -122,10 +119,9 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [opened] = useState(() => JSON.stringify({ form, names }))
   const unsaved = Boolean(item) && JSON.stringify({ form, names }) !== opened
   const [merging, setMerging] = useState(false)
-  // "Usually bought at" (supabase/021): for items and groups, not variants
-  // (their group's store counts).
+  // "Usually bought at" (supabase/021).
   const flow = useFlow()
-  const showUsualShop = flow.ready && !(form.group_id && !isGroup)
+  const showUsualShop = flow.ready
   // A name the keywords call durable (plan 9F): HOME stock is only for
   // consumables. Only a warning — saving stays possible.
   const durablePath = durableLookalike(form.name, { parents: allParents ?? parents, subsByParent })
@@ -243,32 +239,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
     setForm((f) => ({ ...f, multipack: !f.multipack, stockInPacks: false, packaging_unit: f.packaging_unit === f.unit ? purchaseUnitOptions(f.unit)[0] : f.packaging_unit }))
   }
 
-  // Moving an item into a group: same unit, or a confirmed conversion, or
-  // blocked — never mixed silently.
-  const changeGroup = async (e) => {
-    const id = e.target.value
-    setGroupNote('')
-    if (!id) return setForm((f) => ({ ...f, group_id: '' }))
-    const target = groups.find((g) => g.id === id)
-    const check = checkMoveIntoGroup({ ...item, name: form.name || item?.name, unit: form.unit }, target)
-    if (check.blocked) return setGroupNote(check.blocked)
-    if (check.convert) {
-      const stock = roundQuantity((parseDecimal(form.current_stock) || 0) * check.convert.factor, target.unit)
-      const ok = await confirmDialog({
-        title: `Move into "${target.name}"?`,
-        message: `"${target.name}" counts in ${target.unit}, this item in ${form.unit}. Its stock ${form.current_stock} ${form.unit} will be converted to ${stock} ${target.unit} (the same amount). Nothing is saved until you press Save.`,
-        confirmLabel: 'Convert and move',
-      })
-      if (!ok) return
-      const min = roundQuantity((parseDecimal(form.min_stock) || 0) * check.convert.factor, target.unit)
-      return setForm((f) => ({ ...f, group_id: id, unit: target.unit, current_stock: String(stock), min_stock: String(min) }))
-    }
-    setForm((f) => ({ ...f, group_id: id }))
-  }
-
   const oneTime = !isGroup && form.one_time
-  // Only a normal item being edited, never a group, a variant or a durable.
-  const showNames = namesReady && Boolean(item) && !isGroup && !form.group_id && !isDurable(form)
+  // Only a normal item being edited, never a group row, a variant of one
+  // (rows an older version of the app made, K138) or a durable.
+  const showNames = namesReady && Boolean(item) && !isGroup && !item.group_id && !isDurable(form)
   const showMerge = namesReady && Boolean(onMerge) && canMergeInto(item)
   const perPack = parseDecimal(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
@@ -337,19 +311,12 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         unit: form.unit,
         packaging_unit: form.multipack ? form.packaging_unit : null,
         quantity_per_pack: form.multipack ? perPack : null,
-        // A group has no stock, expiry or batch of its own.
-        ...(isGroup
-          ? item
-            ? {}
-            : { current_stock: 0, is_group: true }
-          : { current_stock: roundQuantity(baseStock, form.unit), expiry_date: form.expiry_date || null, batch_lot: form.batch_lot.trim() || null }),
-        // Only sent when it changes: until supabase/018 has been run the
-        // column doesn't exist.
-        ...(!isGroup && (form.group_id || null) !== (item?.group_id ?? null) ? { group_id: form.group_id || null } : {}),
+        // A group row never receives stock (K138): no stock, expiry or batch.
+        ...(isGroup ? {} : { current_stock: roundQuantity(baseStock, form.unit), expiry_date: form.expiry_date || null, batch_lot: form.batch_lot.trim() || null }),
         // A one-time item has no minimum: a new one gets 0, an edited one
         // keeps what it had (the field is only hidden).
         min_stock: oneTime && !item ? 0 : roundQuantity(form.min_stock, form.unit),
-        // A group can never be one-time (the database refuses it too).
+        // A group row can never be one-time (the database refuses it too).
         ...(!isGroup ? { one_time: form.one_time } : {}),
         notes: form.notes.trim() || null,
         ...(showUsualShop ? { usual_shop_id: form.usual_shop_id || null } : {}),
@@ -378,7 +345,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl sm:rounded-3xl w-full sm:max-w-lg max-h-[92vh] overflow-y-auto p-5 space-y-4"
       >
         <div className="flex justify-between items-center">
-          <p className="text-sm font-extrabold text-[var(--color-primary)]">{isGroup ? (item ? 'Edit group' : 'Add a group') : group && !item ? `Add a variant to ${group.name}` : item ? 'Edit item' : 'Add an item'}</p>
+          <p className="text-sm font-extrabold text-[var(--color-primary)]">{item ? 'Edit item' : 'Add an item'}</p>
           <button type="button" onClick={onClose} className="text-[var(--color-icon-muted)] hover:text-[var(--color-text)] p-1">
             <X size={18} />
           </button>
@@ -386,7 +353,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
         <div>
           <Label>Name</Label>
-          <Input autoFocus placeholder={isGroup ? 'e.g. Chips & Snacks' : group ? 'Name or brand, e.g. Lays paprika' : 'e.g. Rice, Dish soap, Paracetamol'} value={form.name} onChange={(e) => changeName(e.target.value)} />
+          <Input autoFocus placeholder="e.g. Rice, Dish soap, Paracetamol" value={form.name} onChange={(e) => changeName(e.target.value)} />
           {/* "Go to …" closes this form without saving anything (a stock
               typed here is not used) and opens the existing item (from
               "It arrived!": the arrival goes to that item instead). */}
@@ -437,7 +404,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
 
         <div>
           <Label>Unit (what you count stock in)</Label>
-          <Select value={form.unit} onChange={changeUnit} disabled={Boolean(form.group_id) || (isGroup && variantCount > 0)}>
+          <Select value={form.unit} onChange={changeUnit}>
             {UNIT_GROUPS.map((g) => (
               <optgroup key={g.label} label={g.label}>
                 {g.units.map((u) => (
@@ -448,8 +415,6 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
               </optgroup>
             ))}
           </Select>
-          {form.group_id && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Counted in the unit of its group. Take it out of the group to change it.</p>}
-          {isGroup && variantCount > 0 && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">The variants count in this unit — move them out of the group before changing it.</p>}
           {unitNote && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">{unitNote}</p>}
           {unusualUnit && (
             <div className="mt-1.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 p-2 space-y-1.5">
@@ -577,30 +542,10 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
             {stockValue} {form.packaging_unit} × {perPack} = {roundQuantity(baseStock, form.unit)} {form.unit}
           </p>
         )}
-        <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
-          {isGroup
-            ? 'The group goes on the grocery list as one line when the total of its variants falls to the minimum or below, or when one of its variants is at 0.'
-            : oneTime
-              ? 'One-time: no minimum, and it never goes on the grocery list by itself.'
-              : form.group_id
-              ? "While it's in a group, the group's minimum decides when to buy — this one isn't used."
-              : 'It goes on the grocery list automatically when stock falls to the minimum or below.'}
-        </p>
-
-        {!isGroup && !group && (groups.length > 0 || item?.group_id) && (
-          <div>
-            <Label>Group (optional)</Label>
-            <Select value={form.group_id} onChange={changeGroup} aria-label="Group">
-              <option value="">No group — a normal item</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name} ({g.unit})
-                </option>
-              ))}
-            </Select>
-            {groupNote && <p className="text-[11px] text-red-400 mt-1">{groupNote}</p>}
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Put it in a group like "Chips &amp; Snacks" to count it with the others. Its stock, expiry, batch and history stay with it.</p>
-          </div>
+        {!isGroup && (
+          <p className="text-[11px] text-[var(--color-text-muted)] -mt-2">
+            {oneTime ? 'One-time: no minimum, and it never goes on the grocery list by itself.' : 'It goes on the grocery list automatically when stock falls to the minimum or below.'}
+          </p>
         )}
 
         {!isGroup && (
@@ -707,7 +652,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
         {error && <p className="text-xs text-red-400">{error}</p>}
 
         <Button type="submit" disabled={saving} className="w-full">
-          {saving ? 'Saving…' : item ? 'Save changes' : isGroup ? 'Create group' : 'Add to inventory'}
+          {saving ? 'Saving…' : item ? 'Save changes' : 'Add to inventory'}
         </Button>
       </form>
     </div>

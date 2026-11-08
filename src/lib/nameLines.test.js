@@ -143,7 +143,7 @@ describe('a card of one line sends what it always sent', () => {
     expect('add_name' in sent).toBe(false)
   })
 
-  it('never on a group, a variant or a durable line (K93)', () => {
+  it('never on a group row, a variant of one (older app version, K138) or a durable line (K93)', () => {
     const group = item('g', 'Biscuits', [], { is_group: true, variants: [] })
     const variant = item('v', 'Oreo', [], { group_id: 'g' })
     expect(purchaseLine(card('e5', 'Biscuits', 'g'), [group, variant], {}, { typedName: 'Biscuits' }).takesNames).toBe(false)

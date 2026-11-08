@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { afterStockChange, insertRows, latestLogId, normalizeItem, orderedEntryIds, stockChangeWithLog, syncShoppingForItem, toBuyEntriesOf, undoStockChange, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
@@ -6,10 +6,12 @@ import { confirmDialog, showToast } from '../lib/feedback'
 import { groceryStore, pantryStore, stockLogStore } from '../lib/stores'
 import { isOffline } from '../lib/connection'
 import { cancelQueuedStock, queueStock } from '../lib/offlineActions'
-import { withGroupTotals } from '../lib/groups'
+import { groupDeleteText } from '../lib/groups'
 import { becameFinished, isOneTime } from '../lib/oneTime'
 import { mergedNamesDeleteText, nameElement, otherNames } from '../lib/itemNames'
 
+// `is_group` and `group_id` stay for old backups and an older version of the
+// app (K134): no screen of this one writes them any more.
 export const ITEM_FIELDS = [
   'name',
   'category_id',
@@ -101,10 +103,8 @@ async function takeOffShopList(item, entries) {
 }
 
 export function usePantryItems() {
-  const { rows } = pantryStore.useRows()
-  // Groups show the total of their variants (see lib/groups.js); every
-  // other item is exactly as stored.
-  const items = useMemo(() => withGroupTotals(rows), [rows])
+  // Every item exactly as stored.
+  const { rows: items } = pantryStore.useRows()
   const fetchItems = pantryStore.refresh
 
   const addItem = useCallback(async (fields) => {
@@ -153,7 +153,7 @@ export function usePantryItems() {
       const delta = stock == null ? 0 : Math.round((Number(stock) - Number(item.current_stock)) * 100) / 100
       // Becoming one-time: what is "to buy" now is read first, so it can
       // be put back exactly (saving may already remove the automatic one).
-      const flagging = patch.one_time === true && !isOneTime(item) && !item.is_group
+      const flagging = patch.one_time === true && !isOneTime(item)
       let toBuy = []
       if (flagging && !isOffline()) {
         try {
@@ -179,13 +179,6 @@ export function usePantryItems() {
       const data = result.item
       pantryStore.upsertLocal([data])
       if (!delta) await followUp('the shopping list', () => syncShoppingForItem(data))
-      // Moved into or out of a group: both groups are judged again.
-      if ((data.group_id ?? null) !== (item.group_id ?? null)) {
-        for (const id of [item.group_id, data.group_id].filter(Boolean)) {
-          const group = pantryStore.getSnapshot().rows.find((r) => r.id === id)
-          if (group) await followUp('the shopping list', () => syncShoppingForItem(group))
-        }
-      }
       // A rename carries over to the item's open grocery entries, except
       // those bought under another name of the item: they keep it.
       if (data.name !== item.name) {
@@ -254,21 +247,16 @@ export function usePantryItems() {
   // first: once deleted, they can't be separated again (K116).
   const deleteItem = useCallback(
     async (item) => {
-      // A group is only deleted once it's empty: its variants and their
-      // stock are never deleted with it.
+      // A group row from an older version of the app is only deleted once it
+      // has no variants (K138 c): they are merged into it first.
       if (item.is_group && pantryStore.getSnapshot().rows.some((r) => r.group_id === item.id)) {
-        showToast({ message: `"${item.name}" still has variants — move them out of the group first.`, tone: 'error' })
+        showToast({ message: groupDeleteText(item), tone: 'error' })
         return
       }
       const merged = mergedNamesDeleteText(item)
       if (merged && !(await confirmDialog({ title: `Delete "${item.name}"?`, message: merged, confirmLabel: 'Delete' }))) return
       // Its automatic SHOP entries still "to buy" go with it (in the cart
-      // or on the way they stay): a deleted variant is no longer listed in
-      // its group's card. Undo puts them back.
-      const resyncGroup = () => {
-        const group = item.group_id && pantryStore.getSnapshot().rows.find((r) => r.id === item.group_id)
-        return group ? followUp('the shopping list', () => syncShoppingForItem(group)) : null
-      }
+      // or on the way they stay). Undo puts them back.
       return deleteWithUndo({
         message: `Deleted "${item.name}"`,
         remove: async () => {
@@ -282,7 +270,6 @@ export function usePantryItems() {
           const history = must(await supabase.from('stock_logs').select('id').eq('item_id', item.id))
           const [row] = must(await supabase.from('pantry_items').delete().eq('id', item.id).select())
           pantryStore.removeLocal([item.id])
-          await resyncGroup()
           const kept = grocery.filter((g) => !listed.includes(g))
           return { row, groceryIds: kept.map((g) => g.id), listed, logIds: history.map((l) => l.id) }
         },
@@ -293,7 +280,6 @@ export function usePantryItems() {
           if (logIds.length) must(await supabase.from('stock_logs').update({ item_id: item.id }).in('id', logIds))
           await fetchItems()
           await groceryStore.refresh()
-          await resyncGroup()
         },
         onFail: fetchItems,
       })

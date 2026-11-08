@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./supabaseClient', () => ({ supabase: {} }))
 const { becameFinished, entryIsOneTime, isFinished, isOneTime, splitFinished } = await import('./oneTime')
-const { firstOutVariant, listedOutVariants, variantOrder, withGroupTotals } = await import('./groups')
-const { displayReason, restockReason, shopReason, shownStatus } = await import('./inventory')
+const { OLD_GROUP_NOTE, oldGroupLineText } = await import('./groups')
+const { displayReason, restockReason, shownStatus, stockStatus } = await import('./inventory')
+const { RESTOCK_LABELS, STATUS_STYLES } = await import('./inventoryStyles')
 const { byCartOrder, inCartOrder, PRIORITY, sortGroceryItems } = await import('./grocery')
 const { purchaseLine } = await import('./purchase')
 const { matchesStatus } = await import('./pantryFilters')
@@ -38,7 +39,6 @@ describe('one-time purchases (1×)', () => {
     for (const stock of [0, 1, 2]) {
       const sun = item({ one_time: true, current_stock: stock })
       expect(restockReason(sun)).toBeNull()
-      expect(shopReason(sun)).toBeNull()
       expect(displayReason(sun)).toBeNull()
       expect(shownStatus(sun)).toBe('ok')
     }
@@ -73,84 +73,83 @@ describe('one-time purchases (1×)', () => {
   })
 })
 
-// Chips & Snacks, min 4.
-const chips = (stocks, extra = {}) =>
-  withGroupTotals([
-    { id: 'g', name: 'Chips & Snacks', unit: 'pcs', min_stock: 4, is_group: true, category_id: 'snacks' },
-    ...Object.entries(stocks).map(([name, current_stock]) => ({ id: name, name, unit: 'pcs', current_stock, min_stock: 0, group_id: 'g', category_id: 'snacks', ...(extra[name] ?? {}) })),
-  ])[0]
+describe('every item is judged on its own stock and minimum (round 6D stage 5, K135)', () => {
+  it('minimum 1: stock 2 → not on the list; 1 → yellow "Low Stock"; 0 → red "Out of Stock"', () => {
+    for (const [name, unit] of [['Milk', 'btl'], ['Rice', 'kg'], ['Corn Bites TEST', 'pcs']]) {
+      const at = (current_stock) => item({ name, unit, min_stock: 1, current_stock })
+      expect(restockReason(at(2))).toBeNull()
+      expect(restockReason(at(1))).toBe('low')
+      expect(restockReason(at(0))).toBe('out')
+      expect(displayReason(at(1))).toBe('low')
+      expect(displayReason(at(0))).toBe('out')
+    }
+    expect(RESTOCK_LABELS.low).toMatchObject({ label: 'Low Stock', className: STATUS_STYLES.low.badge })
+    expect(RESTOCK_LABELS.out).toMatchObject({ label: 'Out of Stock', className: STATUS_STYLES.out.badge })
+  })
 
-describe('group variants on the SHOP list', () => {
-  it('total above the minimum but variants at 0 → one sky "Not urgent" row listing them', () => {
-    const group = chips({ Lays: 5, Pringles: 0, Tuc: 0 })
+  it('minimum 3 and stock 3 → low; 3.5 → fine; expired with plenty → purple', () => {
+    expect(restockReason(item({ min_stock: 3, current_stock: 3 }))).toBe('low')
+    expect(restockReason(item({ min_stock: 3, current_stock: 3.5 }))).toBeNull()
+    expect(restockReason(item({ min_stock: 3, current_stock: 8, expiry_date: '2020-01-01' }))).toBe('expired')
+  })
+
+  it('"Not urgent" exists nowhere: no reason, no colour, no label, not in any sort', () => {
+    expect(PRIORITY).toEqual(['out', 'low', 'expired', 'new', 'stocked'])
+    expect(Object.keys(STATUS_STYLES)).toEqual(['ok', 'low', 'out', 'expired', 'new'])
+    expect(Object.keys(RESTOCK_LABELS)).toEqual(['out', 'low', 'expired', 'new'])
+  })
+})
+
+describe('a group row from an older app version and its variants (round 6D stage 5, K138)', () => {
+  const group = { id: 'g', name: 'Chips & Snacks', unit: 'pcs', current_stock: 0, min_stock: 4, is_group: true, category_id: 'snacks' }
+  const zero = { id: 'v0', name: 'Pringles', unit: 'pcs', current_stock: 0, min_stock: 0, group_id: 'g', category_id: 'snacks' }
+  const five = { id: 'v5', name: 'Lays', unit: 'pcs', current_stock: 5, min_stock: 1, group_id: 'g', category_id: 'snacks' }
+
+  it('the group row is never Low or Out and never needs buying (own stock 0, minimum 4); purple only when expired', () => {
+    expect(stockStatus(group)).toBe('out')
     expect(restockReason(group)).toBeNull()
-    expect(shopReason(group)).toBe('not-urgent')
-    expect(listedOutVariants(group.variants).map((v) => v.name)).toEqual(['Pringles', 'Tuc'])
+    expect(displayReason(group)).toBeNull()
+    expect(shownStatus(group)).toBe('ok')
+    expect(matchesStatus(group, 'out')).toBe(false)
+    expect(displayReason({ ...group, expiry_date: '2020-01-01' })).toBe('expired')
+    expect(OLD_GROUP_NOTE).toBe('Item group from an older app version — merge its variants into it: Edit item → Merge other items into this one…')
   })
 
-  it('total at or below the minimum → yellow; total 0 → red; the out ones are listed too', () => {
-    const low = chips({ Lays: 3, Pringles: 0 })
-    expect(shopReason(low)).toBe('low')
-    expect(listedOutVariants(low.variants).map((v) => v.name)).toEqual(['Pringles'])
-    expect(shopReason(chips({ Lays: 0, Pringles: 0 }))).toBe('out')
+  it('its variants are normal items: at 0 → Out, at 5 with minimum 1 → fine, at 1 with minimum 1 → Low', () => {
+    expect(restockReason(zero)).toBe('out')
+    expect(restockReason(five)).toBeNull()
+    expect(restockReason({ ...five, current_stock: 1 })).toBe('low')
+    expect(displayReason(zero)).toBe('out')
   })
 
-  it('no variant at 0 and total above the minimum → not on the list', () => {
-    expect(shopReason(chips({ Lays: 5, Pringles: 1 }))).toBeNull()
-  })
-
-  it('never lists a one-time variant; an old "taken off" mark (shop_dismissed_at) no longer hides one', () => {
-    const group = chips({ Lays: 5, Pringles: 0, Tuc: 0, Party: 0 }, { Party: { one_time: true }, Tuc: { shop_dismissed_at: '2026-10-20T10:00:00Z' } })
-    expect(listedOutVariants(group.variants).map((v) => v.name)).toEqual(['Pringles', 'Tuc'])
-    const onlyOneTime = chips({ Lays: 5, Party: 0 }, { Party: { one_time: true } })
-    expect(shopReason(onlyOneTime)).toBeNull()
-  })
-
-  it('a variant at 0 never needs buying by itself: only the group does', () => {
-    const group = chips({ Lays: 5, Pringles: 0 })
-    expect(restockReason(group.variants.find((v) => v.name === 'Pringles'))).toBeNull()
-  })
-
-  it('puts variants at 0 first, then from the lowest to the highest stock', () => {
-    const group = chips({ Lays: 5, Doritos: 2, Pringles: 0, Amica: 0, Tuc: 1 })
-    expect(variantOrder(group.variants).map((v) => v.name)).toEqual(['Amica', 'Pringles', 'Tuc', 'Doritos', 'Lays'])
-  })
-
-  it('Confirm purchase of a group-level entry from before takes the first out variant until the user chooses', () => {
-    const group = chips({ Lays: 5, Pringles: 0, Amica: 0 })
-    const pantry = [group, ...group.variants]
-    const entry = { id: 'e1', name: 'Chips & Snacks', pantry_item_id: 'g', quantity: 2, unit: 'pcs' }
-    expect(firstOutVariant(group.variants).name).toBe('Amica')
-    expect(purchaseLine(entry, pantry).target.name).toBe('Amica')
-    expect(purchaseLine(entry, pantry).needsVariant).toBe(false)
-    // The user's choice wins, also "none".
-    expect(purchaseLine(entry, pantry, { variantId: 'Lays' }).target.name).toBe('Lays')
-    expect(purchaseLine(entry, pantry, { variantId: null }).needsVariant).toBe(true)
-    // Stock goes to the variant, never to the group.
-    expect(purchaseLine(entry, pantry).target.is_group).toBeFalsy()
-  })
-
-  it('pre-selects nothing when no variant is out (the group is just low)', () => {
-    const group = chips({ Lays: 3, Pringles: 1 })
-    const entry = { id: 'e1', name: 'Chips & Snacks', pantry_item_id: 'g', quantity: 2, unit: 'pcs' }
-    expect(purchaseLine(entry, [group, ...group.variants]).needsVariant).toBe(true)
+  it('Confirm purchase: a card linked to the group row is never ready and never sends stock to it; a variant\'s card restocks the variant', () => {
+    const pantry = [group, zero, five]
+    const old = purchaseLine({ id: 'e1', name: 'Chips & Snacks', pantry_item_id: 'g', quantity: 2, unit: 'pcs' }, pantry)
+    expect(old).toMatchObject({ target: null, pantry: null, isNew: false, add: 0, ready: false, groupProblem: oldGroupLineText(group) })
+    expect(old.groupProblem).toBe('"Chips & Snacks" is an item group from an older app version and can\'t get stock — merge its variants into it first (Home → Edit item → Merge other items into this one…), or take this card out of the cart.')
+    const line = purchaseLine({ id: 'e2', name: 'Pringles', pantry_item_id: 'v0', quantity: 2, unit: 'pcs' }, pantry)
+    expect(line).toMatchObject({ add: 2, ready: true, groupProblem: '' })
+    expect(line.target.id).toBe('v0')
+    // A typed name equal to the group's makes a normal item (as 022 does).
+    const typed = purchaseLine({ id: 'e3', name: 'chips & snacks', quantity: 1, unit: 'pcs' }, pantry)
+    expect(typed).toMatchObject({ target: null, isNew: true, ready: true })
   })
 })
 
 describe('the SHOP list order', () => {
-  const reasons = { a: 'stocked', b: 'not-urgent', c: 'out', d: 'low', e: 'new' }
+  const reasons = { a: 'stocked', c: 'out', d: 'low', e: 'new', f: 'expired' }
   const list = Object.keys(reasons).map((id, i) => ({ id, name: id.toUpperCase(), created_at: `2026-10-0${i + 1}` }))
   const ctx = { reasonOf: (g) => reasons[g.id], costOf: () => 1 }
 
-  it('priority: red and yellow on top, "Not urgent" at the bottom', () => {
-    expect(PRIORITY.at(-1)).toBe('not-urgent')
-    expect(sortGroceryItems(list, 'priority', ctx).map((g) => g.id)).toEqual(['c', 'd', 'e', 'a', 'b'])
-    expect(sortGroceryItems(list, 'low', ctx).map((g) => g.id).at(-1)).toBe('b')
+  it('priority: red, then yellow, then purple, then a card added by hand (blue "New Item"), then the rest', () => {
+    expect(sortGroceryItems(list, 'priority', ctx).map((g) => g.id)).toEqual(['c', 'd', 'f', 'e', 'a'])
+    expect(sortGroceryItems(list, 'low', ctx).map((g) => g.id)).toEqual(['d', 'c', 'f', 'e', 'a'])
+    expect(sortGroceryItems(list, 'new', ctx).map((g) => g.id)).toEqual(['e', 'c', 'd', 'f', 'a'])
   })
 
   it('A–Z and recent keep their own order', () => {
-    expect(sortGroceryItems(list, 'az', ctx).map((g) => g.id)).toEqual(['a', 'b', 'c', 'd', 'e'])
-    expect(sortGroceryItems(list, 'recent', ctx).map((g) => g.id)).toEqual(['e', 'd', 'c', 'b', 'a'])
+    expect(sortGroceryItems(list, 'az', ctx).map((g) => g.id)).toEqual(['a', 'c', 'd', 'e', 'f'])
+    expect(sortGroceryItems(list, 'recent', ctx).map((g) => g.id)).toEqual(['f', 'e', 'd', 'c', 'a'])
   })
 })
 

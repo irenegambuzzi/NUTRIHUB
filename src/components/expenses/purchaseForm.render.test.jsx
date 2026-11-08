@@ -11,6 +11,8 @@ const data = vi.hoisted(() => ({
     { id: 'chips', name: 'Chips', unit: 'pack', is_group: true, current_stock: 0, category_id: 'snacks' },
     { id: 'lays', name: 'Lays', unit: 'pack', current_stock: 2, group_id: 'chips', category_id: 'snacks' },
     { id: 'tuc', name: 'Tuc', unit: 'pack', current_stock: 0, group_id: 'chips', category_id: 'snacks' },
+    // The real data after the merge of 08/11 (was the only group row).
+    { id: 'snackbox', name: 'Snack Box TEST', unit: 'pcs', current_stock: 11, min_stock: 1, is_group: false, group_id: null, category_id: 'snacks', names: ['Corn Bites TEST', 'Nuvole TEST', 'Teriyaki TEST', 'Peperoncino TEST', 'Sale olive TEST', 'Verdure TEST', 'Kiss Burn TEST', 'Miele TEST', 'Sale Pepe TEST', 'Tortilla TEST'].map((name) => ({ name })) },
   ],
   last: null,
   grocery: [{ id: 'g-milk', name: 'Milk', pantry_item_id: 'milk', completed: false, in_cart: false }],
@@ -37,7 +39,7 @@ const rememberBudget = vi.fn()
 // What the suggestion door answers for a few names (lib/categorySuggest.js
 // has its own tests): HOME chips, and budget chips for a row not added to HOME.
 const homeChip = (categoryId, label) => ({ categoryId, subcategoryId: null, expenseCategoryId: null, source: 'keywords', label })
-const HOME_CHIPS = { milk: [homeChip('dairy', 'Dairy')], shampoo: [homeChip('toiletries', 'Toiletries'), homeChip('dairy', 'Dairy')], chips: [homeChip('snacks', 'Snacks')] }
+const HOME_CHIPS = { milk: [homeChip('dairy', 'Dairy')], shampoo: [homeChip('toiletries', 'Toiletries'), homeChip('dairy', 'Dairy')], chips: [homeChip('snacks', 'Snacks')], tuc: [homeChip('snacks', 'Snacks')], 'corn bites test': [homeChip('snacks', 'Snacks')], 'tortilla test': [homeChip('snacks', 'Snacks')], 'snack box test': [homeChip('snacks', 'Snacks')] }
 const budgetChip = (expenseCategoryId, label, source = 'keywords') => ({ categoryId: null, subcategoryId: null, expenseCategoryId, source, label })
 const BUDGET_CHIPS = {
   gift: [budgetChip('dining', 'Dining', 'name')],
@@ -230,11 +232,24 @@ describe('MONEY Add expense: the purchase form', () => {
     expect(screen.getByText('On your SHOP list — it stays there (Add to HOME is off).')).toBeTruthy()
   })
 
-  it('a group asks for the variant inline (the first at 0 is taken)', () => {
+  it('never a variant select (round 6D stage 5): a variant is a normal item, a group row\'s name makes a new item (K138)', () => {
     form()
-    type('Name', 'Chips')
-    expect(screen.getByLabelText('Variant').value).toBe('tuc')
+    type('Name', 'Tuc')
     expect(screen.getByText('Adds to "Tuc" in HOME (+1 pack).')).toBeTruthy()
+    expect(screen.queryByLabelText(/Variant/)).toBeNull()
+    type('Name', 'Chips')
+    expect(screen.getByText('New in HOME (shown as New Item).')).toBeTruthy()
+    expect(screen.queryByLabelText(/Variant/)).toBeNull()
+    expect(document.body.textContent).not.toMatch(/Which variant|Choose a variant|has no variants yet|is a group/)
+  })
+
+  it('the item that used to be the group row (10 other names, 11 pcs): an other name adds to it, no variant select', () => {
+    form()
+    for (const name of ['Corn Bites TEST', 'tortilla test', 'Snack Box TEST']) {
+      type('Name', name)
+      expect(screen.getByText('Adds to "Snack Box TEST" in HOME (+1 pcs).')).toBeTruthy()
+      expect(screen.queryByLabelText(/Variant/)).toBeNull()
+    }
   })
 
   it('a new HOME item has 1× and Min; Min hides while 1× is on', () => {

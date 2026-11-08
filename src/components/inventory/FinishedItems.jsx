@@ -7,9 +7,8 @@ import { cn } from '../../lib/cn'
 // HOME's "Finished one-time items (N)": one-time purchases used up, kept
 // (never deleted) so buying the same name again brings them back. Closed
 // at first. "Not one-time" makes one a normal item again — then at 0 it is
-// Out and goes on the SHOP list like any other. `groupName(id)` names a
-// variant's group.
-export function FinishedItems({ items, groupName = () => null, onNotOneTime, onEdit, onDelete }) {
+// Out and goes on the SHOP list like any other.
+export function FinishedItems({ items, onNotOneTime, onEdit, onDelete }) {
   const [open, setOpen] = useState(false)
   if (items.length === 0) return null
   return (
@@ -30,7 +29,6 @@ export function FinishedItems({ items, groupName = () => null, onNotOneTime, onE
                     <span className="truncate">{item.name}</span>
                     <OneTimeBadge className="shrink-0" />
                   </span>
-                  {item.group_id && groupName(item.group_id) && <span className="block text-[10px] text-[var(--color-text-muted)]">in {groupName(item.group_id)}</span>}
                 </span>
                 <button
                   type="button"

@@ -16,8 +16,7 @@ import { RESTOCK_LABELS, SMALL_LABEL, STATUS_STYLES } from '../../lib/inventoryS
 
 // `onOrderOnline` (supabase/021) adds "Order online"; it is the main
 // action when the item's usual store is online (`orderFirst`,
-// `usualShop`). `oneTime`: a one-time purchase (grey "1× purchase"). A
-// group's variants are shown in the group's card instead (GroupShopCard).
+// `usualShop`). `oneTime`: a one-time purchase (grey "1× purchase").
 // `highlighted`: outlined for a moment after "Go to card" (data-spot).
 // `namesReady` (supabase/032, plan 9N K53): the title is the HOME item's
 // name (`pack`), with the card's own name under it when that differs.

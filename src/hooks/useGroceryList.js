@@ -1,13 +1,12 @@
 import { useCallback, useMemo } from 'react'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { inCartOrder, normName, PRIORITY, sortGroceryItems } from '../lib/grocery'
-import { isDurable, shopReason } from '../lib/inventory'
+import { isDurable, restockReason } from '../lib/inventory'
 import { lineTotal } from '../lib/pricing'
 import { useGroceryItems } from './useGroceryItems'
 import { usePantryItems } from './usePantryItems'
 import { useBudget } from './useBudget'
-import { groceryStore, orderStore, pantryStore } from '../lib/stores'
-import { useShopTidy } from './useShopTidy'
+import { orderStore } from '../lib/stores'
 import { addOtherNames } from '../lib/itemNames'
 
 // Reason order for each sort (lib/grocery.js); budget planning always
@@ -25,7 +24,7 @@ export { PRIORITY }
 export function useGroceryList() {
   const grocery = useGroceryItems()
   const { items: allItems, toggleCart } = grocery
-  const { rows: orders, loaded: ordersLoaded } = orderStore.useRows()
+  const { rows: orders } = orderStore.useRows()
   const openOrders = useMemo(() => new Map(orders.filter((o) => o.status === 'on_the_way' && o.grocery_item_id).map((o) => [o.grocery_item_id, o])), [orders])
   const openOrderOf = useCallback((g) => openOrders.get(g.id) ?? null, [openOrders])
   const items = useMemo(() => allItems.filter((i) => !openOrders.has(i.id)), [allItems, openOrders])
@@ -37,15 +36,10 @@ export function useGroceryList() {
   const { items: pantryItems } = usePantryItems()
   const { groceryBudget, saveGroceryBudget } = useBudget()
 
-  // Old group-level entries and duplicates are tidied once (useShopTidy).
-  const { rows: groceryRows, loaded: groceryLoaded } = groceryStore.useRows()
-  const { rows: pantryRows, loaded: pantryLoaded } = pantryStore.useRows()
-  const orderedIds = useMemo(() => new Set(openOrders.keys()), [openOrders])
-  useShopTidy({ entries: groceryRows, pantryRows, ordered: orderedIds, ready: groceryLoaded && pantryLoaded && ordersLoaded })
-
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
-  // By name, never a group (see pantryItemFor): only a link by id points to
-  // one. Another name of an item counts too, after every item's own name.
+  // By name, never a group row from an older app version (see
+  // pantryItemFor): only a link by id points to one. Another name of an item
+  // counts too, after every item's own name.
   const pantryByName = useMemo(() => {
     const plain = pantryItems.filter((p) => !p.is_group)
     return addOtherNames(new Map(plain.map((p) => [normName(p.name), p])), plain)
@@ -53,29 +47,16 @@ export function useGroceryList() {
 
   const pantryFor = useCallback((g) => pantryById.get(g.pantry_item_id) || pantryByName.get(normName(g.name)), [pantryById, pantryByName])
 
-  // The group an entry belongs to: its variant's group (or the group itself,
-  // for a group-level entry from before), with its total; else null. The
-  // list shows one card per group (lib/groupShop.js).
-  const groupOf = useCallback(
-    (g) => {
-      const p = pantryFor(g)
-      if (!p) return null
-      if (p.is_group) return p
-      return p.group_id ? pantryById.get(p.group_id) ?? null : null
-    },
-    [pantryFor, pantryById]
-  )
-
-  // Why each entry is on the list, worked out live from its pantry item —
-  // for a variant, from its group (the card's colour and place).
+  // Why each entry is on the list, worked out live from its pantry item
+  // (the card's colour and place).
   const reasonOf = useMemo(() => {
     const cache = new Map()
     for (const g of items) {
-      const p = groupOf(g) ?? pantryFor(g)
-      cache.set(g.id, isDurable(g) ? 'durable' : p ? shopReason(p) || 'stocked' : 'new')
+      const p = pantryFor(g)
+      cache.set(g.id, isDurable(g) ? 'durable' : p ? restockReason(p) || 'stocked' : 'new')
     }
     return (g) => cache.get(g.id) || 'new'
-  }, [items, pantryFor, groupOf])
+  }, [items, pantryFor])
 
   // What each line really costs: unit price × quantity bought. null when
   // the units can't be converted; sums and the budget leave those out.
@@ -134,7 +115,6 @@ export function useGroceryList() {
     pantryItems,
     pantryByName,
     pantryFor,
-    groupOf,
     reasonOf,
     totalOf,
     costOf,

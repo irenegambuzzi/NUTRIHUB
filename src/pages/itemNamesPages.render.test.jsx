@@ -67,7 +67,6 @@ vi.mock('../hooks/useGroceryList', () => {
       updatePayer: vi.fn(),
       updateCategory: vi.fn(),
       deleteItem: vi.fn(),
-      addVariant: vi.fn(),
       cartItems: [],
       pantryItems: data.items,
       pantryByName: new Map(),

@@ -74,7 +74,7 @@ const expenseChoice = (order) => ({
 
 // A finished order goes back on the way. An arrived order (any, plan 9J
 // K10) takes the stock its arrival added back out of HOME, after asking —
-// with a new item or variant that arrival made, while untouched (K3, K4);
+// with a new item that arrival made, while untouched (K3, K4);
 // one with no stock recorded asks too, unless it is durable or a service
 // (`durable`, K17); after a unit change it says what the arrival really
 // added (plan 9M, K37: backOnTheWayStockText). An order whose expense was deleted can get it again:

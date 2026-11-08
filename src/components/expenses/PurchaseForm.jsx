@@ -22,8 +22,6 @@ import { cn } from '../../lib/cn'
 import { decimalProblem, moneyText } from '../../lib/decimal'
 import { localDateString } from '../../lib/expensePeriods'
 import { splitCategory } from '../../lib/moneyList'
-import { normName } from '../../lib/grocery'
-import { withGroupTotals } from '../../lib/groups'
 import { money } from '../../lib/pricing'
 import {
   budgetOf,
@@ -115,10 +113,9 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const { parents, subsByParent, addCategory: addHomeCategory, addSubcategory } = useInventoryCategories()
   const { rows: inventoryRows } = inventoryCategoryStore.useRows()
   const { rows: mapRows } = budgetMapStore.useRows()
-  const { rows: pantryRows } = pantryStore.useRows()
+  const { rows: pantryItems } = pantryStore.useRows()
   const { rows: groceryItems } = groceryStore.useRows()
   const { rows: orders } = orderStore.useRows()
-  const pantryItems = useMemo(() => withGroupTotals(pantryRows), [pantryRows])
   const orderedIds = useMemo(() => new Set(orders.filter((o) => o.status === 'on_the_way' && o.grocery_item_id).map((o) => o.grocery_item_id)), [orders])
   const budgetCtx = useMemo(() => ({ expenseCategories, inventoryCategories: inventoryRows, mapRows }), [expenseCategories, inventoryRows, mapRows])
   // A HOME suggestion's budget category follows the mapping, like a row's.
@@ -128,7 +125,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // A row is locked out of HOME when its HOME category or its budget
   // category is a durable one (lib/durable.js), so it needs both lists.
   const { lines, priced } = useMemo(() => pricedLines(rows.map((row) => rowLine(row, pantryItems, budgetCtx, { unitsReady: unitsKnown, namesReady })), coupon), [rows, pantryItems, budgetCtx, coupon, unitsKnown, namesReady])
-  const entryOf = (line) => listEntryFor(line.row.name, line.target ?? (line.known && !line.known.is_group ? line.known : null), groceryItems, orderedIds)
+  const entryOf = (line) => listEntryFor(line.row.name, line.target ?? line.known, groceryItems, orderedIds)
   const plain = savesAsPlainExpense(lines)
   // The similar-name safety net (plan 9G), for rows added to HOME: a name
   // like a HOME item's must be answered ("Use …" or "Create new") before
@@ -156,7 +153,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // budget category used while "Add to HOME" is off or there is no HOME
   // category (the first budget chip, until one is picked by hand; none
   // without a chip; lib/moneyPurchase.js budgetOf) and the unit
-  // of the HOME item (or group) with that name (until one is picked), so
+  // of the HOME item with that name (until one is picked), so
   // its stock converts without asking. `usedWord`: "Use …" was pressed
   // ({ word, itemId }); typing the name again forgets it, and an item chosen
   // with "It's another name of…" too.
@@ -171,7 +168,6 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
     if (!row.budgetTouched) patch.autoBudgetId = budgetAutoFill(budgetSuggestions(name))?.expenseCategoryId ?? ''
     const known = homeItemFor(name, pantryItems)
     if (!row.unitTouched && !row.autoFilled) patch.unit = known?.unit ?? DEFAULT_UNIT
-    if (normName(name) !== normName(row.name)) patch.variantId = undefined
     change(row.key, patch)
   }
 
@@ -388,7 +384,8 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
 }
 
 // K54: "It's another name of…" opens a search of the HOME items that can
-// have names (never a group, a variant or a durable); a tap chooses one.
+// have names (never a group row or a variant of one from an older version
+// of the app, nor a durable); a tap chooses one.
 const SHOWN_ITEMS = 6
 function AnotherNameOf({ items, label, onPick }) {
   const [open, setOpen] = useState(false)
@@ -580,21 +577,6 @@ function ItemRow({ index, line, listEntry, similarEntry, ask, tried, optionLabel
         <button type="button" onClick={() => onName(row.name)} className="min-h-9 text-[11px] font-bold text-[var(--color-accent)]">
           Not this item
         </button>
-      )}
-
-      {home && line.group && (
-        <div className={cn('rounded-xl border p-2 space-y-1.5', line.needsVariant ? 'bg-amber-500/10 border-amber-400/30' : 'bg-[var(--color-surface-soft)] border-[var(--color-border)]')}>
-          <p className="text-[11px] text-[var(--color-text-soft)]">Which variant of "{line.group.name}" gets this stock?</p>
-          <Select value={line.target?.id ?? ''} onChange={(e) => onChange({ variantId: e.target.value || null })} aria-label={label('Variant')} className="text-xs p-2">
-            <option value="">Choose a variant…</option>
-            {line.variants.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.current_stock} {v.unit})
-              </option>
-            ))}
-          </Select>
-          {line.variants.length === 0 && <p className="text-[11px] text-amber-200">This group has no variants yet — add one in HOME, or turn Add to HOME off.</p>}
-        </div>
       )}
 
       {line.pack && <PackSizeField pack={line.pack} onChange={(text) => onChange({ packSizeText: text, packUnit: line.pack.unit })} ariaLabel={label(`${line.pack.stockUnit} per ${line.pack.unit}`)} />}

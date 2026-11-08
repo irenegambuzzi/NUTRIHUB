@@ -1833,7 +1833,7 @@ describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, c
       expect(await snapshot()).toEqual(start)
     })
 
-    it('an entry in the cart is never closed; a group gives its stock to the chosen variant, never to the group', async () => {
+    it('an entry in the cart is never closed; a group row (older app version) never gets stock: its name makes a normal item (round 6D stage 5, K138)', async () => {
       const id = '24000000-0000-0000-0000-000000000003'
       await db.query(`update grocery_items set in_cart = true where id = $1`, [entry])
       cartEntry = entry
@@ -1841,15 +1841,16 @@ describe('023: cart order, 1×, purchases typed in MONEY, merging, trips away, c
         { name: 'Milk R4', priceText: '1.20', unit: 'btl', categoryId: 'dairy' },
         { name: 'Chips R4', priceText: '1.99', unit: 'pack', categoryId: 'snacks' },
       ])
-      // The group's first variant at 0 is taken until the user picks.
-      expect(lines[1].target.id).toBe(tuc)
+      // No variant is chosen any more: the group row is never the target.
+      expect(lines[1]).toMatchObject({ target: null, isNew: true })
       await save(id, lines)
       expect(await row(`select completed, in_cart from grocery_items where id = $1`, [cartEntry])).toEqual({ completed: false, in_cart: true })
-      expect(await stockOf(tuc)).toBe(1)
+      expect(await stockOf(tuc)).toBe(0)
       expect(await stockOf(lays)).toBe(2)
       expect(await stockOf(chips)).toBe(0)
+      expect(await rows(`select current_stock::float as stock, is_group, group_id from pantry_items where name = 'Chips R4' and id <> $1`, [chips])).toEqual([{ stock: 1, is_group: false, group_id: null }])
       expect(await reopen(id)).toBe(2)
-      expect(await stockOf(tuc)).toBe(0)
+      expect((await row(`select count(*)::int as n from pantry_items where name = 'Chips R4'`)).n).toBe(1)
       await db.query(`update grocery_items set in_cart = false where id = $1`, [entry])
     })
 
@@ -7167,6 +7168,64 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       await writeItems(plan.items)
       expect(await fieldsOf(fx, x)).toMatchObject({ name: 'Lime C6', notes: 'file note', stock: 2 })
       expect((await namesOf(fx, t)).map((n) => n.name)).toEqual(['Corn C6'])
+    })
+  })
+
+  describe('stage 5: no item groups in the app any more (K138)', () => {
+    const appItem = (itemId) =>
+      row(`select id, name, unit, current_stock::float as current_stock, min_stock::float as min_stock, packaging_unit, quantity_per_pack::float as quantity_per_pack, expiry_date::text as expiry_date, category_id, is_group, group_id, names from pantry_items where id = $1`, [itemId])
+    const entryRow = (entryId, name, pantryId, extra = {}) => ({ id: entryId, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, price_qty: 1, price_unit: 'pcs', payer: 'shared', category_id: 'snacks', ...extra })
+    const lineTotalOf = (i) => Math.round(((Number(i.price) || 0) * (Number(i.quantity) || 1) * 100) / (Number(i.price_qty) || 1)) / 100
+    const appPayload = (tripId, lines) => confirmationPayload({ id: tripId, date: '2026-11-09', at: '2026-11-09T10:00:00Z', lines, answers: {}, totalOf: lineTotalOf, expenseCategoryFor: () => BUDGET })
+
+    it('K138 b, proof: a line linked to a group row by id is NOT refused by 032 — its stock goes to the group row itself; so the app never sends it (the line is never ready)', async () => {
+      const group = await addItem(fx, 'Old Group S5', 'pcs', 0, { is_group: true, min: 4 })
+      const variant = await addItem(fx, 'Old Variant S5', 'pcs', 0, { group })
+      const entry = await addEntry(fx, 'Old Group S5', { pantry: group, price: 2, quantity: 2 })
+      // The app: the line is locked, so Confirm sends nothing.
+      const line = purchaseLine(entryRow(entry, 'Old Group S5', group, { quantity: 2, price: 2, price_qty: 2 }), [await appItem(group), await appItem(variant)])
+      expect(line).toMatchObject({ ready: false, target: null, add: 0 })
+      expect(line.groupProblem).toContain('is an item group from an older app version and can\'t get stock')
+      // What 032 would do with such a payload (sent by hand): stock on the group row.
+      const tripId = next()
+      await shop(fx, tripId, [{ entry, pantry: group, add: 2, total: 2, quantity: 2, unit: 'pcs' }])
+      expect(await stockOf(fx, group)).toBe(2)
+      expect(await stockOf(fx, variant)).toBe(0)
+      await reopen(fx, tripId)
+      expect(await stockOf(fx, group)).toBe(0)
+    })
+
+    it('K138: a variant of a group row bought with the app\'s payload: the stock goes to the variant, the group row stays at 0', async () => {
+      const group = await addItem(fx, 'Old Group 2 S5', 'pcs', 0, { is_group: true, min: 4 })
+      const variant = await addItem(fx, 'Old Variant 2 S5', 'pcs', 5, { group, min: 1 })
+      const entry = await addEntry(fx, 'Old Variant 2 S5', { pantry: variant, price: 1.5 })
+      const home = [await appItem(group), await appItem(variant)]
+      const line = purchaseLine(entryRow(entry, 'Old Variant 2 S5', variant, { price: 1.5 }), home, {}, { typedName: 'Old Variant 2 S5' })
+      expect(line).toMatchObject({ ready: true, add: 1, takesNames: false })
+      const tripId = next()
+      await call(fx, 'confirm_shopping_trip', appPayload(tripId, [line]))
+      expect(await stockOf(fx, variant)).toBe(6)
+      expect(await stockOf(fx, group)).toBe(0)
+    })
+
+    it('the real data shape: the old group row, a normal item now (10 other names, 11 pcs), bought under an other name and a new name with the app\'s payload; Reopen puts it back', async () => {
+      const box = await addItem(fx, 'Snack Box S5', 'pcs', 11, { min: 1 })
+      const NAMES = ['Corn S5', 'Nuvole S5', 'Teriyaki S5', 'Peperoncino S5', 'Olive S5', 'Verdure S5', 'Kiss S5', 'Miele S5', 'Pepe S5', 'Tortilla S5']
+      await addNames(fx, box, NAMES)
+      expect(await fieldsOf(fx, box)).toMatchObject({ is_group: false, group_id: null, stock: 11, min: 1 })
+      const entry = await addEntry(fx, 'Corn S5', { pantry: box, price: 1.2 })
+      const home = [await appItem(box)]
+      const first = purchaseLine(entryRow(entry, 'Corn S5', box, { price: 1.2 }), home, {}, { typedName: 'Corn S5' })
+      expect(first).toMatchObject({ ready: true, takesNames: true })
+      const second = laterNameLine(first, { ...emptyNameLine(2, 'pcs'), name: 'Paprika S5', totalText: '0,90' }, home)
+      const lines = newNameOnce(expiryOncePerItem([first, second]))
+      const tripId = next()
+      await call(fx, 'confirm_shopping_trip', appPayload(tripId, lines))
+      expect(await stockOf(fx, box)).toBe(13)
+      expect((await namesOf(fx, box)).map((n) => n.name)).toEqual([...NAMES, 'Paprika S5'])
+      await reopen(fx, tripId)
+      expect(await stockOf(fx, box)).toBe(11)
+      expect((await namesOf(fx, box)).map((n) => n.name)).toEqual(NAMES)
     })
   })
 })
