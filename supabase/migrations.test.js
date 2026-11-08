@@ -5080,7 +5080,7 @@ const NAMES_REOPEN_ADDED = [
 // Stage 4 of 032 (plan 9N): the app's own merge, separate and restore rules.
 const { changedMeanwhileText, mergeCheck, mergePayload, mergeQuestion, mergeRow, mergedToast, separatePayload, separateQuestion, separatedToast, separationCheck } = await import('../src/lib/itemNames.js')
 const { restockReason } = await import('../src/lib/inventory.js')
-const { restorePlan, restoredText } = await import('../src/lib/inventoryBackup.js')
+const { csvRowsToItems, importPlan, importedText, itemsToCsv, parseCsv, restorePlan, restoredText } = await import('../src/lib/inventoryBackup.js')
 const { pickFields } = await import('../src/hooks/usePantryItems.js')
 
 describe('032: one item, many names — pantry_items.names, confirm and reopen replaced, three new functions', () => {
@@ -7067,6 +7067,69 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       expect(await fieldsOf(fx, t)).toMatchObject({ stock: 6, price: 1, is_group: false, group_id: null })
       expect((await namesOf(fx, t)).map((n) => [n.name, n.from_item_id])).toEqual([['A R4', a], ['B R4', b]])
       expect((await logsOf(fx, t)).filter((l) => l.reason === 'added').map((l) => l.item_name)).toEqual(['A R4', 'B R4'])
+    })
+
+    // What importItems sends: one upsert of every row with an id (the
+    // columns of all rows; a missing one would be written as null), then
+    // the rows without one.
+    const writeItems = async (items) => {
+      const withId = items.filter((r) => r.id).map((r) => ({ id: r.id, ...pickFields(r) }))
+      const cols = [...new Set(withId.flatMap((r) => Object.keys(r)))]
+      if (withId.length)
+        await fx.query(
+          `insert into pantry_items (${cols.join(', ')}) select ${cols.join(', ')} from jsonb_populate_recordset(null::pantry_items, $1::jsonb) on conflict (id) do update set ${cols.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ')}`,
+          [JSON.stringify(withId)]
+        )
+      for (const r of items.filter((r) => !r.id)) await addItem(fx, r.name, r.unit, r.current_stock)
+    }
+    const batchOf = async (item) => (await row(`select batch_lot from pantry_items where id = $1`, [item])).batch_lot
+
+    it('follow-up K120 + K125: restore after merges; T keeps 10 pcs, its expiry and batch; C from the file; X with no group, Y keeps its deleted group G2', async () => {
+      const t = await addItem(fx, 'T R5', 'pcs', 1, { notes: 'old note', expiry: '2026-11-20' })
+      const a = await addItem(fx, 'A R5', 'pcs', 2)
+      const b = await addItem(fx, 'B R5', 'pcs', 3)
+      const c = await addItem(fx, 'C R5', 'L', 3, { expiry: '2026-12-05' })
+      const g = await addItem(fx, 'G R5', 'pcs', 0, { is_group: true })
+      const x = await addItem(fx, 'X R5', 'pcs', 2, { group: g })
+      const g2 = await addItem(fx, 'G2 R5', 'pcs', 0, { is_group: true })
+      const y = await addItem(fx, 'Y R5', 'pcs', 1, { group: g2 })
+      await fx.query(`update pantry_items set batch_lot = 'L-OLD' where id = $1`, [t])
+      const backup = { app: 'nutrihub-inventory', items: await appRows([t, a, b, c, g, x, g2, y]) }
+      // After the backup: X out of G, then G merged (a normal item holding a name); G2 and Y deleted; A and B into T, T bought +4.
+      await fx.query(`update pantry_items set group_id = null where id = $1`, [x])
+      await mergeApp(g, [await addItem(fx, 'Q R5', 'pcs', 1)])
+      await fx.query(`delete from pantry_items where id = any($1::uuid[])`, [uuids([y, g2])])
+      await mergeApp(t, [a, b])
+      await fx.query(`update pantry_items set current_stock = 10, expiry_date = '2027-03-01', batch_lot = 'L-NEW', notes = 'new note' where id = $1`, [t])
+      await fx.query(`update pantry_items set current_stock = 1, expiry_date = '2027-01-10' where id = $1`, [c])
+      const plan = restorePlan(backup, await all())
+      expect(restoredText(plan)).toBe('Restored 6 items. 2 skipped: merged into another item. 2 items kept their merged names and stock: T R5, G R5.')
+      await writeItems(plan.backup.items)
+      expect(await fieldsOf(fx, t)).toMatchObject({ stock: 10, expiry: '2027-03-01', notes: 'old note', is_group: false, group_id: null })
+      expect(await batchOf(t)).toBe('L-NEW')
+      expect((await namesOf(fx, t)).map((n) => n.from_item_id)).toEqual([a, b])
+      expect(await fieldsOf(fx, c)).toMatchObject({ stock: 3, unit: 'L', expiry: '2026-12-05' })
+      expect(await fieldsOf(fx, g)).toMatchObject({ is_group: false, stock: 1 })
+      expect(await fieldsOf(fx, x)).toMatchObject({ group_id: null, stock: 2 })
+      expect(await fieldsOf(fx, g2)).toMatchObject({ is_group: true })
+      expect(await fieldsOf(fx, y)).toMatchObject({ group_id: g2, stock: 1 })
+    })
+
+    it('follow-up K119: a CSV made before the merge, imported after it as the app writes it: A and B skipped; T stays 10 pcs with its names, expiry and batch; its note from the file', async () => {
+      const t = await addItem(fx, 'T C5', 'pcs', 1, { notes: 'old note', expiry: '2026-11-20' })
+      const a = await addItem(fx, 'A C5', 'pcs', 2)
+      const b = await addItem(fx, 'B C5', 'pcs', 3)
+      const categories = [{ id: 'snacks', name: 'Snacks', type: 'parent', parent_id: null }]
+      const csv = itemsToCsv(await appRows([t, a, b]), () => 'Snacks')
+      await mergeApp(t, [a, b])
+      await fx.query(`update pantry_items set current_stock = 10, expiry_date = '2027-03-01', batch_lot = 'L-NEW', notes = 'new note' where id = $1`, [t])
+      const plan = importPlan(csvRowsToItems(parseCsv(csv), categories), await all())
+      expect(importedText(plan)).toBe('Imported 1 item. 2 skipped: merged into another item. 1 item kept its merged names and stock: T C5.')
+      await writeItems(plan.items)
+      expect(await count(fx, 'pantry_items', 'id = any($1::uuid[])', [uuids([a, b])])).toBe(0)
+      expect(await fieldsOf(fx, t)).toMatchObject({ stock: 10, unit: 'pcs', expiry: '2027-03-01', notes: 'old note', is_group: false, group_id: null })
+      expect(await batchOf(t)).toBe('L-NEW')
+      expect(await namesOf(fx, t)).toHaveLength(2)
     })
   })
 })

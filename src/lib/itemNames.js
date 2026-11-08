@@ -470,5 +470,5 @@ export function mergedNamesDeleteText(item) {
   if (!names.length) return ''
   const n = names.length
   const listed = n <= 2 ? names.join(', ') : `${names[0]}, ${names[1]} +${n - 2}`
-  return `It holds the name${n === 1 ? '' : 's'} of ${n} merged item${n === 1 ? '' : 's'} (${listed}). Once deleted, they can't be separated again.`
+  return `It holds the name${n === 1 ? '' : 's'} of ${n} merged item${n === 1 ? '' : 's'} (${listed}). Once deleted, ${n === 1 ? 'it' : 'they'} can't be separated again.`
 }

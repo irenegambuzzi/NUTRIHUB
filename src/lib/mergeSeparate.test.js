@@ -188,7 +188,7 @@ describe('separating a name (K115)', () => {
 describe('the delete question (K116)', () => {
   const names = (n) => Array.from({ length: n }, (_, k) => ({ name: ['Corn Snack', 'Tortilla Chips'][k] ?? `TEST Name ${k}`, origin: { id: `o${k}` }, from_item_id: `o${k}` }))
   it('1, 2 and 10 merged names; a plain name never counts', () => {
-    expect(mergedNamesDeleteText({ names: names(1) })).toBe("It holds the name of 1 merged item (Corn Snack). Once deleted, they can't be separated again.")
+    expect(mergedNamesDeleteText({ names: names(1) })).toBe("It holds the name of 1 merged item (Corn Snack). Once deleted, it can't be separated again.")
     expect(mergedNamesDeleteText({ names: names(2) })).toBe("It holds the names of 2 merged items (Corn Snack, Tortilla Chips). Once deleted, they can't be separated again.")
     expect(mergedNamesDeleteText({ names: names(10) })).toBe("It holds the names of 10 merged items (Corn Snack, Tortilla Chips +8). Once deleted, they can't be separated again.")
     expect(mergedNamesDeleteText({ names: [{ name: 'Svelto', origin: null }] })).toBe('')

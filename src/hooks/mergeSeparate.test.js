@@ -244,7 +244,7 @@ describe('the delete question (K116)', () => {
     const result = await hook()
     const running = result.current.deleteItem(pantryStore.getSnapshot().rows.find((r) => r.id === one.id))
     await tick()
-    expect(getDialog().message).toBe("It holds the name of 1 merged item (Corn Snack). Once deleted, they can't be separated again.")
+    expect(getDialog().message).toBe("It holds the name of 1 merged item (Corn Snack). Once deleted, it can't be separated again.")
     closeDialog(null)
     await running
     await result.current.deleteItem(pantryStore.getSnapshot().rows.find((r) => r.id === plain.id))

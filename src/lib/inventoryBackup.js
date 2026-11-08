@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient'
 import { must } from './db'
 import { isDurable, normalizeUnit, stockStatus } from './inventory'
 import { mergedNames } from './itemNames'
+import { exactKey } from './similarItems'
 
 const CSV_COLUMNS = [
   'id',
@@ -198,44 +199,92 @@ export async function readCurrentItems() {
   return must(await supabase.from('pantry_items').select('*'))
 }
 
+// The fields of an item that describe its stock now: an item holding
+// merged names keeps them (K117, K125).
+const STOCK_FIELDS = ['current_stock', 'unit', 'expiry_date', 'batch_lot']
+
 // The fields of an item counted in its unit: kept as they are when a
-// backup counted it in another unit (K118).
+// file counted it in another unit (K118, K124).
 const UNIT_FIELDS = ['min_stock', 'packaging_unit', 'quantity_per_pack', 'price', 'price_qty', 'price_unit']
 
-// K117 + K118: what a backup restores now that items may have been merged.
-// `current`: the items now. An item merged away since (its id is the
-// from_item_id of a name) is skipped, and its history goes to the item
-// that holds that name. An item holding merged names keeps its stock, its
-// names, its unit and no group (and, in another unit, every field counted
-// in it); the rest comes back. `names` is never written (pickFields).
-// → { backup (items and history to restore), skipped, kept (items now) }
-export function restorePlan(backup, current) {
+// K117–K125: which rows of a file (a backup's items, or an imported CSV /
+// Excel) still apply now that items may have been merged. `current`: the
+// items now. A row of an item merged away since (its id is the
+// from_item_id of a name) is skipped; with `importing` (the CSV / Excel
+// import, which adds rows without an id as new items) so is a row that
+// would make a new item named like a merged name (one with an origin). A
+// row of an item holding merged names (a target) keeps that item's stock,
+// unit, expiry, batch, names and no group (and, in another unit, every
+// field counted in it); the rest comes from the file. An imported row only
+// has the file's columns, and only those are replaced, so every row still
+// writes the same columns (its group, never in the file, stays as it is).
+// A row keeps its group only when that group is still a group afterwards
+// (K120). `names` is never written (pickFields).
+// → { items (to write), skipped (file rows), kept (targets now), holder }
+function guardRows(rows, current, { importing = false } = {}) {
   const holder = new Map()
   for (const item of current ?? []) for (const element of mergedNames(item)) if (element.from_item_id) holder.set(element.from_item_id, item)
   const now = new Map((current ?? []).map((item) => [item.id, item]))
+  const isTarget = (id) => mergedNames(now.get(id)).length > 0
+  const mergedKeys = new Set()
+  if (importing) for (const item of current ?? []) for (const element of mergedNames(item)) if (element.origin != null) mergedKeys.add(exactKey(element.name))
+  const skippedRow = (row) => {
+    if (holder.has(row.id)) return true
+    const key = importing && !now.has(row.id) && exactKey(row.name)
+    return Boolean(key) && mergedKeys.has(key)
+  }
+  // A group after the restore / import (K120): a group now, or a group row
+  // of the file, that is neither skipped nor a target.
+  const groups = new Set(
+    [...(current ?? []), ...rows]
+      .filter((item) => item.is_group && item.id && !skippedRow(item) && !isTarget(item.id))
+      .map((item) => item.id)
+  )
   const skipped = []
   const kept = []
   const items = []
-  for (const row of backup.items ?? []) {
-    if (holder.has(row.id)) {
+  for (const row of rows) {
+    if (skippedRow(row)) {
       skipped.push(row)
       continue
     }
-    const target = now.get(row.id)
-    if (!target || !mergedNames(target).length) {
-      items.push(row)
+    if (!isTarget(row.id)) {
+      items.push(row.group_id && !groups.has(row.group_id) ? { ...row, group_id: null } : row)
       continue
     }
+    const target = now.get(row.id)
     kept.push(target)
-    const sameUnit = row.unit === target.unit
-    const keep = ['current_stock', 'unit', 'is_group', 'group_id', ...(sameUnit ? [] : UNIT_FIELDS)]
-    items.push({ ...row, ...Object.fromEntries(keep.map((field) => [field, target[field] ?? null])), is_group: false, group_id: null })
+    const keep = [...STOCK_FIELDS, ...(row.unit === target.unit ? [] : UNIT_FIELDS)].filter((field) => !importing || field in row)
+    const written = { ...row, ...Object.fromEntries(keep.map((field) => [field, target[field] ?? null])) }
+    items.push(importing ? written : { ...written, is_group: false, group_id: null })
   }
+  return { items, skipped, kept, holder }
+}
+
+// K117 + K118: what a backup restores; the history of a skipped item goes
+// to the item that holds its name.
+// → { backup (items and history to restore), skipped, kept (items now) }
+export function restorePlan(backup, current) {
+  const { items, skipped, kept, holder } = guardRows(backup.items ?? [], current)
   const logs = backup.stock_logs?.map((log) => (holder.has(log.item_id) ? { ...log, item_id: holder.get(log.item_id).id } : log))
   return { backup: { ...backup, items, ...(logs ? { stock_logs: logs } : {}) }, skipped, kept }
 }
 
+// K119: what "Import CSV / Excel" writes (`rows` from csvRowsToItems).
+// → { items, skipped, kept (items now) }
+export function importPlan(rows, current) {
+  const { items, skipped, kept } = guardRows(rows, current, { importing: true })
+  return { items, skipped, kept }
+}
+
 const itemsWord = (n) => `${n} item${n === 1 ? '' : 's'}`
+
+// `{k} items kept their merged names and stock: {names}.`, '' without any.
+function keptText(kept) {
+  if (!kept.length) return ''
+  const names = kept.map((item) => item.name).join(', ')
+  return kept.length === 1 ? `1 item kept its merged names and stock: ${names}.` : `${itemsWord(kept.length)} kept their merged names and stock: ${names}.`
+}
 
 // The extra line of "Restore {n} items?" (K117), '' without skips.
 export const skippedQuestionLine = (m) =>
@@ -248,12 +297,29 @@ export const skippedQuestionLine = (m) =>
 // What "Restore backup" says when it is done (K117).
 export function restoredText({ backup, skipped, kept }) {
   const n = backup.items.length
-  const parts = [skipped.length ? `Restored ${n} items. ${skipped.length} skipped: merged into another item.` : `Restored ${n} items.`]
-  if (kept.length) {
-    const names = kept.map((item) => item.name).join(', ')
-    parts.push(kept.length === 1 ? `1 item kept its merged names and stock: ${names}.` : `${itemsWord(kept.length)} kept their merged names and stock: ${names}.`)
-  }
-  return parts.join(' ')
+  const parts = [skipped.length ? `Restored ${n} items. ${skipped.length} skipped: merged into another item.` : `Restored ${n} items.`, keptText(kept)]
+  return parts.filter(Boolean).join(' ')
+}
+
+// The extra line of "Import {n} items?" (K119), '' without skips.
+export const skippedImportLine = (m) =>
+  !m
+    ? ''
+    : m === 1
+      ? '1 of these items was merged into another item since this file was made — it is skipped.'
+      : `${m} of these items were merged into another item since this file was made — they are skipped.`
+
+// What "Import CSV / Excel" says when it is done (K119): today's text
+// (`durableNote` included) with the imported rows counted, then the
+// skipped and the kept.
+export function importedText({ items, skipped, kept }, durableNote = '') {
+  return [
+    `Imported ${itemsWord(items.length)}.${durableNote}`,
+    skipped.length ? `${skipped.length} skipped: merged into another item.` : '',
+    keptText(kept),
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 export function downloadFile(filename, content, type) {

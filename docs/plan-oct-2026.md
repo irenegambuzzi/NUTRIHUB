@@ -4723,7 +4723,7 @@ iPhone test of 9M done 03/11/2026: all OK.
 
 K41: the old "one-time database update" notices are kept (03/11).
 
-### 9N. One item, many names (round 6D, decided 04–08/11, stages 1–4 as built)
+### 9N. One item, many names (round 6D, decided 04–08/11, stages 1–4 and the stage-4 follow-up as built)
 
 Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
 household chose **option C** (`pantry_items.names jsonb`) and the decisions
@@ -4975,6 +4975,43 @@ update, also after stage 2.
   its stock, names, unit and group (and, in another unit, every field counted
   in it); `names` is never written. One more line in the question and in the
   result (texts in "Stage 4 as built").
+- **K119** (08/11) "Import CSV / Excel" gets the same guard as "Restore
+  backup": the current items (with names) are read before anything is
+  written. A row whose id is a merged id (a `from_item_id` in any item's
+  names) is skipped; so is a row that would make a new item (no id, or an id
+  of no item now) whose name (exactKey) is a merged name (one with an
+  `origin`) of an item now. A row of a target (an item holding merged names)
+  is imported except `current_stock`, `names`, `is_group`, `group_id`,
+  `unit`, the K124 and the K125 fields, which stay as they are now. Question
+  line (m > 0): `{m} of these items were merged into another item since this
+  file was made — they are skipped.` (m = 1: `1 of these items was merged
+  into another item since this file was made — it is skipped.`). Result:
+  today's text, then ` {m} skipped: merged into another item.` (m > 0), then
+  ` {k} items kept their merged names and stock: {names}.` (k = 1: ` 1 item
+  kept its merged names and stock: {name}.`). Without either: today's text.
+- **K120** (08/11) Restore and import: a row keeps its `group_id` only when
+  that group is a group afterwards: an item that is a group now and isn't
+  skipped, or a group row of the same file that is neither skipped nor a
+  target. Otherwise (the group is a normal item now, a target, gone or
+  skipped) the row comes back with no group, as a normal item.
+- **K121** (08/11) "When it was merged it brought {x}" stays computed from
+  the origin (as built).
+- **K122** (08/11) A merge 032 would refuse is refused before the question,
+  with 032's own text, nothing sent (as built).
+- **K123** (08/11) "Merged 1 item into …", the disabled "Merge 0 items…" and
+  the two empty-list texts stay as built. K116 with one name: `It holds the
+  name of 1 merged item ({name}). Once deleted, it can't be separated
+  again.` (several names unchanged, "they").
+- **K124** (08/11) K118 stays: when the file's unit differs from the
+  target's unit now, unit, stock, minimum, pack size and price stay as now;
+  name, category, notes, store and payer come from the file. The same for
+  the CSV / Excel import.
+- **K125** (08/11) Restore and import: a target also keeps its current
+  `expiry_date` and `batch_lot` (they describe the current stock, which is
+  kept). Example: backup 1 Nov, T 1 pcs, expiry 20/11/2026; on 10 Nov A and B
+  merged into T → 6 pcs, expiry 01/03/2027; restore on 15 Nov → T stays 6 pcs
+  with 01/03/2027. Items that are no target come back fully, stock and expiry
+  together, as before.
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5723,12 +5760,103 @@ answered.
    expiry from the backup. Options: (a) as built; (b) skip the whole row.
    Suggestion: (a).
 
+(Answered 08/11: 1 → K119, 2 → K120, 3 → K121, 4 → K122, 5 → K123, 6 → K124.)
+
+### Stage 4 follow-up as built (08/11; K119, K120, K123, K125, code and tests only, no SQL)
+
+The import guard, the group of a restored row, a target's expiry and batch,
+and one text. No SQL, no new column, no new browser storage, no new offline
+queue; `names` is still out of `ITEM_FIELDS` and is never written by a
+restore or an import. Group code is not touched.
+
+**One rule for both** (`lib/inventoryBackup.js` `guardRows`, used by
+`restorePlan` and the new `importPlan`). Skipped: a row whose id is a
+`from_item_id` of a name now; for the import also a row that would make a new
+item (no id, or an id of no item now) whose exactKey is a merged name with an
+`origin` ("test corn bite" against "TEST Corn Bites"). A plain other name
+(no origin) or the row of an item now is never skipped by name. A target's
+row keeps `current_stock`, `unit`, `expiry_date`, `batch_lot` (K125) and, in
+another unit, `min_stock`, `packaging_unit`, `quantity_per_pack`, `price`,
+`price_qty`, `price_unit` (K124). The restore still writes `is_group` false
+and `group_id` null for a target (as built). An imported row only has the
+file's columns and only those are replaced: the import adds no column (one
+upsert writes the same columns for every row; a column missing from one row
+would be written as null), so a target's group, names and `price_qty` /
+`price_unit` stay as they are.
+
+**K120.** The groups afterwards: every item that is a group now plus every
+group row of the file, minus the skipped and the targets. A row whose
+`group_id` is not one of them comes back with `group_id` null (this also
+means a row never points to an item that doesn't exist). The CSV / Excel file
+has no `group_id` or `is_group` column, so an import never changes a group:
+an item now keeps its group, a new item has none.
+
+**The import** (`inventory/DataView.jsx` `handleCsv`). Unchanged until the
+rows are read (an unreadable file, no rows, only durables: as before). Then
+the items of now are read (offline or a failed read: the error toast,
+nothing written), the question `Import {n} items?` (n = every row of the
+file, after the durables, as today) with today's text (and today's durable
+note) and, when m > 0, the line `{m} of these items were merged into another
+item since this file was made — they are skipped.` / `1 of these items was
+merged into another item since this file was made — it is skipped.`;
+"Cancel" / "Import". After "Import" only the rows of the plan are written
+(`importItems`, as before). The result under the two cards:
+`Imported {n} item(s).{durable note}` with n = the rows written, then
+` {m} skipped: merged into another item.` (m > 0), then ` {k} items kept
+their merged names and stock: {names}.` / ` 1 item kept its merged names and
+stock: {name}.` (k > 0). Without skips and kept items exactly today's text.
+Example: `Imported 1 item. 2 skipped: merged into another item. 1 item kept
+its merged names and stock: TEST Nacho Tray.`
+
+**K123** (`lib/itemNames.js` `mergedNamesDeleteText`): one name → `It holds
+the name of 1 merged item (Corn Snack). Once deleted, it can't be separated
+again.`; two or more unchanged.
+
+**Files.** New: tests `lib/importGuard.test.js`. Changed:
+`lib/inventoryBackup.js`, `lib/itemNames.js`, `inventory/DataView.jsx`;
+tests `lib/mergeSeparate.test.js`, `hooks/mergeSeparate.test.js` (K116 with
+one name), `components/restoreGuard.render.test.jsx`,
+`supabase/migrations.test.js`; this plan.
+
+**Tests: 2459 → 2473 (132 → 133 files).** `lib/importGuard.test.js` (9: tests
+1, 2, 3 (JSON and CSV), 4 (and a group gone and not in the file), 5, 6, the
+texts without merges); `components/restoreGuard.render.test.jsx` (+3: test 1
+on the screen, Cancel, a file without merges as before);
+`supabase/migrations.test.js` block "032" → "stage 4" (+2, PGlite, written in
+one upsert as `importItems` sends it: K120 + K125 after real merges and a
+deleted group, and test 1 from a real CSV).
+
+**Kata ragu (08/11 stage 4 follow-up, tanya Zidane).** Built the safe way
+until answered.
+
+1. The name rule only for a row that makes a new item. A CSV row with the id
+   of an item now ("TEST Lime Soda" now, "TEST Corn Bites" in the file
+   because it was renamed after the export) whose file name is a merged name
+   of T is imported: the item is renamed to "TEST Corn Bites", and that name
+   is then on two items. Options: (a) as built; (b) skip the row; (c) import
+   it but keep its current name. Suggestion: (c).
+2. The question counts every row, the result only the rows written: 3 rows,
+   2 skipped → `Import 3 items?` … `Imported 1 item. 2 skipped: …` (as
+   "Restore backup" does). Options: (a) as built; (b) `Import 1 item?`.
+   Suggestion: (a).
+3. `last_purchased_at` of a target. The restore brings back the backup's date
+   (T last bought 12/11 after the merge, the backup of 1/11 says 28/10 →
+   28/10). The CSV import never writes it (its column is exported but not
+   read). Not changed (K125 says no other field). Options: (a) leave it;
+   (b) a target keeps it too. Suggestion: (b).
+4. A group in a CSV. The export writes a group's total (what HOME shows: 1 +
+   1 + 1 = 3) as its `current_stock`; importing that file writes 3 on the
+   group's own stock (stored 0), so HOME then shows 6. Not changed (as before
+   this round). Options: (a) leave it, stage 5 removes groups; (b) the import
+   never writes a group's stock. Suggestion: (a).
+
 **Notes for later stages.**
 
 - **Stage 3:** built (above).
 - **Stage 4:** built (above): the stored `was`, a group target with every
   variant locked, Reopen / Undo stock only for `merged_from`, the restore
-  guard, the delete question. Next: the household merges on the phone, TEST
+  guard, the delete question. Follow-up built (above): the same guard for the CSV /
+  Excel import, K120, K125, K123. Next: the household merges on the phone, TEST
   items first. The name lines of Confirm never show for a group or a variant
   (K93): once stage 5 removes groups, the merged item is a normal item and
   gets them by itself.

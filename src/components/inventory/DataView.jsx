@@ -9,6 +9,8 @@ import {
   buildBackup,
   csvRowsToItems,
   downloadFile,
+  importedText,
+  importPlan,
   itemsToCsv,
   itemsToXlsx,
   parseCsv,
@@ -18,6 +20,7 @@ import {
   restoreLogs,
   restorePlan,
   restoredText,
+  skippedImportLine,
   skippedQuestionLine,
   withoutDurables,
 } from '../../lib/inventoryBackup'
@@ -62,15 +65,20 @@ export function DataView({ items, categories, categoryName, importItems }) {
     const { items: rows, skipped } = withoutDurables(csvRowsToItems(parsed, categories))
     const skippedNote = skipped > 0 ? ` ${skipped} durable row${skipped === 1 ? '' : 's'} skipped (durable items don't go into HOME stock).` : ''
     if (rows.length === 0) return setMessage(skipped > 0 ? skippedNote.trim() : 'No items found in that file. The first row must be a header with at least a "name" column.')
+    // The same guard as "Restore backup" (plan 9N K119): the items of now
+    // are read first, before anything is written.
+    const { data: current, error: readError } = await attempt(readCurrentItems, { retry: false })
+    if (readError) return
+    const plan = importPlan(rows, current)
     const confirmed = await confirmDialog({
       title: `Import ${rows.length} item${rows.length === 1 ? '' : 's'}?`,
-      message: `Rows with an existing id overwrite that item; the others are added as new items.${skippedNote}`,
+      message: [`Rows with an existing id overwrite that item; the others are added as new items.${skippedNote}`, skippedImportLine(plan.skipped.length)],
       confirmLabel: 'Import',
     })
     if (!confirmed) return
-    const { error } = await importItems(rows)
+    const { error } = await importItems(plan.items)
     // A failure shows a toast.
-    setMessage(error ? '' : `Imported ${rows.length} item${rows.length === 1 ? '' : 's'}.${skippedNote}`)
+    setMessage(error ? '' : importedText(plan, skippedNote))
   }
 
   const handleJson = async (e) => {
