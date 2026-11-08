@@ -10,7 +10,7 @@ vi.mock('../lib/supabaseClient', () => client)
 
 const { arrivalDb } = await import('./arrivalDb.fixture')
 const { ITEM_FIELDS, pickFields, usePantryItems } = await import('./usePantryItems')
-const { dismissToast, getToasts, runToastAction } = await import('../lib/feedback')
+const { closeDialog, dismissToast, getDialog, getToasts, runToastAction } = await import('../lib/feedback')
 const { pantryStore } = await import('../lib/stores')
 
 let db
@@ -37,7 +37,12 @@ describe('deleting an item with names (3G)', () => {
     ['Dish soap', [{ name: 'Svelto', origin: null }], 0],
   ])('Undo brings "%s" back with every name, a merged one with its origin', async (name, list, stock) => {
     const { item, result } = await hook({ name, names: list, current_stock: stock })
-    await result.current.deleteItem(pantryStore.getSnapshot().rows.find((r) => r.id === item.id))
+    const deleting = result.current.deleteItem(pantryStore.getSnapshot().rows.find((r) => r.id === item.id))
+    // Holding a merged name, it asks first (stage 4, K116).
+    await new Promise((resolve) => setTimeout(resolve))
+    if (list.some((n) => n.from_item_id)) closeDialog({})
+    else expect(getDialog()).toBeNull()
+    await deleting
     expect(db.row('pantry_items', item.id)).toBeNull()
     await undoLast()
     expect(db.row('pantry_items', item.id).names).toEqual(list)

@@ -188,6 +188,8 @@ export function arrivalDb({ units = false } = {}) {
   }
 
   const functions = { arrive_order: arriveOrder, unarrive_order: unarriveOrder, increment_stock: incrementStock, save_item_names: saveItemNames }
+  // A test may add a function of its own (e.g. a merge with fixed results).
+  db.functions = functions
 
   db.supabase = {
     from,
@@ -198,7 +200,7 @@ export function arrivalDb({ units = false } = {}) {
       try {
         return Promise.resolve({ data: functions[name]?.(args) ?? null, error: null })
       } catch (error) {
-        return Promise.resolve({ data: null, error: { message: error.message } })
+        return Promise.resolve({ data: null, error: { message: error.message, ...(error.code ? { code: error.code } : {}) } })
       }
     },
     channel: () => ({

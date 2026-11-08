@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient'
 import { must } from './db'
 import { isDurable, normalizeUnit, stockStatus } from './inventory'
+import { mergedNames } from './itemNames'
 
 const CSV_COLUMNS = [
   'id',
@@ -189,6 +190,70 @@ export async function restoreCategories(backup) {
 export async function restoreLogs(backup) {
   if (!backup.stock_logs?.length) return
   must(await supabase.from('stock_logs').upsert(backup.stock_logs))
+}
+
+// The items as they are now, with their names (plan 9N K117), read before
+// a restore writes anything.
+export async function readCurrentItems() {
+  return must(await supabase.from('pantry_items').select('*'))
+}
+
+// The fields of an item counted in its unit: kept as they are when a
+// backup counted it in another unit (K118).
+const UNIT_FIELDS = ['min_stock', 'packaging_unit', 'quantity_per_pack', 'price', 'price_qty', 'price_unit']
+
+// K117 + K118: what a backup restores now that items may have been merged.
+// `current`: the items now. An item merged away since (its id is the
+// from_item_id of a name) is skipped, and its history goes to the item
+// that holds that name. An item holding merged names keeps its stock, its
+// names, its unit and no group (and, in another unit, every field counted
+// in it); the rest comes back. `names` is never written (pickFields).
+// → { backup (items and history to restore), skipped, kept (items now) }
+export function restorePlan(backup, current) {
+  const holder = new Map()
+  for (const item of current ?? []) for (const element of mergedNames(item)) if (element.from_item_id) holder.set(element.from_item_id, item)
+  const now = new Map((current ?? []).map((item) => [item.id, item]))
+  const skipped = []
+  const kept = []
+  const items = []
+  for (const row of backup.items ?? []) {
+    if (holder.has(row.id)) {
+      skipped.push(row)
+      continue
+    }
+    const target = now.get(row.id)
+    if (!target || !mergedNames(target).length) {
+      items.push(row)
+      continue
+    }
+    kept.push(target)
+    const sameUnit = row.unit === target.unit
+    const keep = ['current_stock', 'unit', 'is_group', 'group_id', ...(sameUnit ? [] : UNIT_FIELDS)]
+    items.push({ ...row, ...Object.fromEntries(keep.map((field) => [field, target[field] ?? null])), is_group: false, group_id: null })
+  }
+  const logs = backup.stock_logs?.map((log) => (holder.has(log.item_id) ? { ...log, item_id: holder.get(log.item_id).id } : log))
+  return { backup: { ...backup, items, ...(logs ? { stock_logs: logs } : {}) }, skipped, kept }
+}
+
+const itemsWord = (n) => `${n} item${n === 1 ? '' : 's'}`
+
+// The extra line of "Restore {n} items?" (K117), '' without skips.
+export const skippedQuestionLine = (m) =>
+  !m
+    ? ''
+    : m === 1
+      ? '1 of these items was merged into another item since this backup — it is skipped, and its history goes to that item.'
+      : `${m} of these items were merged into another item since this backup — they are skipped, and their history goes to that item.`
+
+// What "Restore backup" says when it is done (K117).
+export function restoredText({ backup, skipped, kept }) {
+  const n = backup.items.length
+  const parts = [skipped.length ? `Restored ${n} items. ${skipped.length} skipped: merged into another item.` : `Restored ${n} items.`]
+  if (kept.length) {
+    const names = kept.map((item) => item.name).join(', ')
+    parts.push(kept.length === 1 ? `1 item kept its merged names and stock: ${names}.` : `${itemsWord(kept.length)} kept their merged names and stock: ${names}.`)
+  }
+  return parts.join(' ')
 }
 
 export function downloadFile(filename, content, type) {

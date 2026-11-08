@@ -13,8 +13,12 @@ import {
   itemsToXlsx,
   parseCsv,
   parseXlsx,
+  readCurrentItems,
   restoreCategories,
   restoreLogs,
+  restorePlan,
+  restoredText,
+  skippedQuestionLine,
   withoutDurables,
 } from '../../lib/inventoryBackup'
 
@@ -82,18 +86,26 @@ export function DataView({ items, categories, categoryName, importItems }) {
     if (backup.app !== 'nutrihub-inventory' || !Array.isArray(backup.items)) {
       return setMessage('That file is not a NutriHub inventory backup.')
     }
+    // Items merged since the backup (plan 9N K117): the items of now are
+    // read first, before anything is written.
+    const { data: current, error: readError } = await attempt(readCurrentItems, { retry: false })
+    if (readError) return
+    const plan = restorePlan(backup, current)
     const confirmed = await confirmDialog({
       title: `Restore ${backup.items.length} items?`,
-      message: `From the backup of ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'an unknown date'}. Items in the backup overwrite current ones with the same id; other items are kept.`,
+      message: [
+        `From the backup of ${backup.exported_at ? localDateString(new Date(backup.exported_at)) : 'an unknown date'}. Items in the backup overwrite current ones with the same id; other items are kept.`,
+        skippedQuestionLine(plan.skipped.length),
+      ],
       confirmLabel: 'Restore',
     })
     if (!confirmed) return
     setMessage('')
     // Each step shows a toast if it fails; the restore stops there.
-    if ((await attempt(() => restoreCategories(backup), { retry: false })).error) return
-    if ((await importItems(backup.items)).error) return
-    if ((await attempt(() => restoreLogs(backup), { retry: false })).error) return
-    setMessage(`Restored ${backup.items.length} items.`)
+    if ((await attempt(() => restoreCategories(plan.backup), { retry: false })).error) return
+    if ((await importItems(plan.backup.items)).error) return
+    if ((await attempt(() => restoreLogs(plan.backup), { retry: false })).error) return
+    setMessage(restoredText(plan))
   }
 
   return (

@@ -23,7 +23,7 @@ import { showToast } from '../lib/feedback'
 import { usePantryItems } from '../hooks/usePantryItems'
 import { useNewItemIds } from '../hooks/useNewItemIds'
 import { useItemNamesReady } from '../hooks/useItemNamesReady'
-import { keepTypedName, saveItemNames } from '../hooks/itemNameActions'
+import { keepTypedName, mergeItems, saveItemNames, separateName } from '../hooks/itemNameActions'
 import { useGroceryItems } from '../hooks/useGroceryItems'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
 import { daysUntil, expiryLabel, expiryState, restockReason, shownStatus, suggestedPurchase } from '../lib/inventory'
@@ -194,6 +194,17 @@ export function PantryPage() {
     const result = await addItem(fields)
     if (!result.error && firstWord) keepTypedName(firstWord, result.data.id)
     return result
+  }
+
+  // Merge and separate (plan 9N stage 4): done → the editor closes.
+  const mergeInto = (target) => async (ids) => {
+    const done = await mergeItems(target.id, ids)
+    if (done) setEditor(null)
+    return done
+  }
+  const separate = (item) => async (name) => {
+    const place = [item.category_id, item.subcategory_id].filter(Boolean).map(categoryName).join(' › ')
+    if (await separateName(item.id, name, { place })) setEditor(null)
   }
 
   return (
@@ -439,6 +450,9 @@ export function PantryPage() {
           homeItems={items}
           onGoTo={(existing) => setEditor({ item: existing })}
           namesReady={namesReady}
+          categoryName={categoryName}
+          onMerge={editor.item ? mergeInto(editor.item) : null}
+          onSeparate={editor.item ? separate(editor.item) : null}
         />
       )}
     </div>

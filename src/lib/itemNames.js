@@ -304,13 +304,171 @@ export function separationCheck({ item, name, stockMoved, items }) {
   if (taken) return refuse(takenText(element.name, taken))
   const origin = element.origin ?? null
   const oldUnit = origin?.unit ?? item.unit
-  const factor = stockFactor(oldUnit, { unit: item.unit, packaging_unit: element.packaging_unit, quantity_per_pack: element.quantity_per_pack })
+  // K75: the name's pack size first, then the item's usual pack.
+  const factor = stockFactor(oldUnit, { unit: item.unit, packaging_unit: element.packaging_unit, quantity_per_pack: element.quantity_per_pack }) ?? stockFactor(oldUnit, item)
   return {
     problem: null,
     element,
     origin,
     unit: factor === null ? item.unit : oldUnit,
-    stock: factor === null ? moved : moved / factor,
+    stock: round3(factor === null ? moved : moved / factor),
     stockLeft: current - moved,
   }
+}
+
+// ── Stage 4: the merge and separate actions (plan 9N, K108–K116) ──
+
+// A stock as 032 stores it: 3 decimals, no trailing zeros.
+const round3 = (n) => Math.round(n * 1000) / 1000
+export const amountText = (n, unit) => `${round3(Number(n) || 0)} ${unit}`
+
+// A name that came from a merge (K74): it holds the row it was.
+export const isMergedName = (element) => element?.origin != null || element?.from_item_id != null
+export const mergedNames = (item) => nameElements(item).filter(isMergedName)
+
+const byName = (a, b) => a.name.trim().localeCompare(b.name.trim(), undefined, { sensitivity: 'base' })
+
+// The merge button (K108): an item or a group being edited, never a
+// variant or a durable.
+export const canMergeInto = (item) => Boolean(item?.id) && !item.group_id && !isDurable(item)
+
+// One row of the picker (K109, K110): `factor` as 032 converts (K44, null:
+// none), `converted` the text " (= 0.5 kg)" for stock in another unit,
+// `blocked` the note when stock can't be converted, `variant` a variant of
+// the target (always chosen, locked: K70, K112).
+export function mergeRow(source, target) {
+  const stock = Number(source.current_stock) || 0
+  const factor = stockFactor(source.unit, target)
+  const converted = stock > 0 && factor !== null && source.unit !== target.unit ? ` (= ${amountText(stock * factor, target.unit)})` : ''
+  const blocked =
+    stock > 0 && factor === null
+      ? `Counted in ${source.unit} (${amountText(stock, source.unit)} at home); "${target.name}" counts in ${target.unit} — convert it first (Edit item → Unit).`
+      : ''
+  return { item: source, stock, factor, converted, blocked, variant: source.group_id === target.id, label: `${source.name} · ${amountText(stock, source.unit)}${converted}` }
+}
+
+// Every item the picker may show for `target` (K110): normal items (finished
+// 1× ones too) and the target's own variants; never the target, a durable,
+// a group row or a variant of another group. A–Z.
+export const mergeRows = (target, items) =>
+  (items ?? [])
+    .filter((item) => item.id !== target.id && !isDurable(item) && !item.is_group && (!item.group_id || item.group_id === target.id))
+    .sort(byName)
+    .map((item) => mergeRow(item, target))
+
+// "Merge 2 items…" / "Merge 1 item…"
+export const mergeButtonText = (n) => `Merge ${n} item${n === 1 ? '' : 's'}…`
+export const groupMergeNote = (group, n) => `All ${n} variants of "${group.name}" are always merged together.`
+
+// The question before a merge (K111), from the STORED rows (never a group
+// total): { title, message: [lines] }.
+export function mergeQuestion(target, sources) {
+  const n = sources.length
+  const unit = target.unit
+  const moved = sources.reduce((sum, source) => {
+    const row = mergeRow(source, target)
+    return sum + (row.stock > 0 ? row.stock * row.factor : 0)
+  }, 0)
+  const targetOneTime = Boolean(target.one_time) && !target.is_group
+  return {
+    title: `Merge ${n} item${n === 1 ? '' : 's'} into "${target.name}"?`,
+    message: [
+      ...sources.map((source) => {
+        const row = mergeRow(source, target)
+        return `${source.name} · ${amountText(row.stock, source.unit)}${row.converted}${row.variant ? ' (variant)' : ''}`
+      }),
+      `Together: ${amountText((Number(target.current_stock) || 0) + moved, unit)} in "${target.name}".`,
+      `Their names stay as other names of "${target.name}", and their purchases, history and orders move with them. MONEY doesn't change.`,
+      `"${target.name}" keeps its own price, pack size, payer, notes, store and minimum (${amountText(target.min_stock, unit)}).`,
+      ...sources
+        .filter((source) => source.one_time)
+        .map((source) => `"${source.name}" is a one-time (1×) item — after merging it follows "${target.name}" (${targetOneTime ? 'one-time' : 'not one-time'}).`),
+      "This can't be undone. A name can be separated again later: Edit item → Other names → Separate.",
+    ],
+  }
+}
+
+// What merge_pantry_items gets (plan 9N): `was` is every row as STORED —
+// a group row its own stock (0), never the total of its variants.
+const wasOf = (row) => ({ current_stock: Number(row.current_stock) || 0, unit: row.unit, ...(row.updated_at ? { updated_at: row.updated_at } : {}) })
+export const mergePayload = (target, sources) => ({
+  into_id: target.id,
+  from_ids: sources.map((source) => source.id),
+  was: Object.fromEntries([target, ...sources].map((row) => [row.id, wasOf(row)])),
+})
+
+export const mergedToast = (n, target, result) => `Merged ${n} item${n === 1 ? '' : 's'} into "${target.name}" · ${amountText(result?.stock ?? target.current_stock, target.unit)}`
+
+// What separate_item_name gets: `was` is the parent as stored.
+export const separatePayload = (item, name, stockMoved) => ({ item_id: item.id, name, stock_moved: stockMoved, was: wasOf(item) })
+
+// What the separated item would be at 0 (K115): its old row, or a new item
+// of the parent's category and unit with minimum 0.
+function separatedAtZero(item, element, unit) {
+  const origin = element?.origin ?? null
+  return origin
+    ? { ...origin, current_stock: 0, unit, group_id: null, is_group: false, names: [] }
+    : { name: element?.name, category_id: item.category_id, subcategory_id: item.subcategory_id, current_stock: 0, unit, min_stock: 0, one_time: false, group_id: null, is_group: false }
+}
+
+// The question before "Separate" (K115). `place`: "Snacks › Savory" for a
+// name without origin. → { title, message, field, note, unit } (`unit`: what
+// the separated item counts in; `atZero`: whether, at 0, the SHOP rule
+// `listsAtZero(item)` lists it).
+export function separateQuestion({ item, name, place, listsAtZero }) {
+  const element = nameElement(item, name)
+  const origin = element?.origin ?? null
+  const shown = element?.name ?? String(name ?? '').trim()
+  const stock = Number(item.current_stock) || 0
+  const { unit = item.unit } = separationCheck({ item, name, stockMoved: 0, items: [item] })
+  const atZero = Boolean(listsAtZero(separatedAtZero(item, element, unit)))
+  const brought = () => {
+    const was = Number(origin.current_stock) || 0
+    const factor = stockFactor(origin.unit, item)
+    return was > 0 && factor !== null ? amountText(was * factor, item.unit) : was > 0 ? amountText(was, origin.unit) : amountText(0, item.unit)
+  }
+  return {
+    title: `Separate "${shown}" into its own item?`,
+    message: origin
+      ? `It comes back as its own item, as it was before the merge (category, unit, price, minimum). Its purchases, orders and history under "${shown}" go with it. MONEY doesn't change.`
+      : `It becomes a new item in ${place}, counted in ${unit}, minimum 0. Its purchases, orders and history under "${shown}" go with it. MONEY doesn't change.`,
+    unit,
+    atZero,
+    field: {
+      name: 'stock',
+      type: 'number',
+      label: `Stock that goes with it (${item.unit})`,
+      required: true,
+      value: '',
+      unit: item.unit,
+      check: (raw, n) => {
+        if (!raw) return 'Type how much stock goes with it — 0 is fine.'
+        if (!Number.isFinite(n) || n < 0) return 'Enter a valid number.'
+        return n > stock + 1e-9 ? `It can't be more than ${amountText(stock, item.unit)}.` : ''
+      },
+      help: (values) => {
+        const typed = String(values?.stock ?? '').trim()
+        const zero = typed !== '' && parseDecimal(typed) === 0
+        return [
+          origin ? `When it was merged it brought ${brought()}.` : '',
+          `"${item.name}" has ${amountText(stock, item.unit)} now.`,
+          zero && atZero ? `With 0 ${unit} it goes on the SHOP list as out of stock.` : '',
+        ]
+      },
+    },
+    note: "This can't be undone — to put it back, merge it again.",
+  }
+}
+
+export const separatedToast = (name, origin, stock, unit) =>
+  origin ? `"${name}" is its own item again · ${amountText(stock, unit)}` : `"${name}" is now its own item · ${amountText(stock, unit)}`
+
+// K116: the sentence of the delete question for an item holding merged
+// names, or '' without any.
+export function mergedNamesDeleteText(item) {
+  const names = mergedNames(item).map((element) => element.name.trim())
+  if (!names.length) return ''
+  const n = names.length
+  const listed = n <= 2 ? names.join(', ') : `${names[0]}, ${names[1]} +${n - 2}`
+  return `It holds the name${n === 1 ? '' : 's'} of ${n} merged item${n === 1 ? '' : 's'} (${listed}). Once deleted, they can't be separated again.`
 }

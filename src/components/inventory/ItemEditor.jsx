@@ -18,12 +18,13 @@ import { PriceFields } from './PriceFields'
 import { CategoryFields } from './CategoryFields'
 import { OneTimeToggle } from './OneTimeToggle'
 import { OtherNamesFields } from './OtherNamesFields'
+import { MergePicker } from './MergePicker'
 import { useCategorySuggestions } from '../../hooks/useCategorySuggestions'
 import { durableLookalike, durableLookalikeText } from '../../lib/durable'
 import { useFlow } from '../../hooks/useFlow'
 import { ShopPicker } from '../expenses/ShopPicker'
 import { exactKey, goToLabel, matchHomeItems, sameItemName } from '../../lib/similarItems'
-import { draftProblems, nameDrafts, namesChange, newNameDraft, takenNote } from '../../lib/itemNames'
+import { canMergeInto, draftProblems, nameDrafts, namesChange, newNameDraft, takenNote } from '../../lib/itemNames'
 import { CreateNewHint, SimilarItemsQuestion } from '../ui/SimilarItemsPrompt'
 
 function initialState(item, group, prefill) {
@@ -74,13 +75,17 @@ function initialState(item, group, prefill) {
 // the text of each item's button ("Go to …" by default).
 // `namesReady`: supabase/032 is known to have run (plan 9N): a normal item
 // being edited gets "Other names".
+// With `namesReady` an item or a group being edited also gets "Merge other
+// items into this one…" (K108, `onMerge(ids)` → whether it is done) and every
+// other name "Separate" (K114, `onSeparate(name)`); both wait while the form
+// has unsaved changes (K113). `categoryName(id)`: for the merge search.
 // `onSave(fields, { converted, names, firstWord })`: `converted` when the
 // stock was converted to a new unit ("Convert the numbers" / "Convert with
 // the pack size"), so its history row says the new stock, not a difference
 // (plan 9L K11); `names` the save_item_names payload, only when the names
 // changed; `firstWord`, a new item only: the word first typed before "Create
 // new", when the name was then changed (K58).
-export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel, namesReady = false }) {
+export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSubcategory, onSave, onClose, asGroup = false, groups = [], group = null, variantCount = 0, prefill = null, allParents = null, homeItems = null, onGoTo = null, optionLabel = goToLabel, namesReady = false, onMerge = null, onSeparate = null, categoryName = () => '' }) {
   const isGroup = asGroup || Boolean(item?.is_group)
   const { suggest, remember } = useCategorySuggestions({ parents, subsByParent })
   const [startPick] = useState(() => (!item && !group && prefill?.name ? suggest(prefill.name) : null))
@@ -112,6 +117,11 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const [names, setNames] = useState(() => nameDrafts(item))
   const [nameProblems, setNameProblems] = useState(() => new Map())
   const [nextName, setNextName] = useState(1)
+  // K113: anything typed since it opened? Then merging and separating wait
+  // for "Save changes" (nothing is saved or thrown away for them).
+  const [opened] = useState(() => JSON.stringify({ form, names }))
+  const unsaved = Boolean(item) && JSON.stringify({ form, names }) !== opened
+  const [merging, setMerging] = useState(false)
   // "Usually bought at" (supabase/021): for items and groups, not variants
   // (their group's store counts).
   const flow = useFlow()
@@ -259,6 +269,7 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
   const oneTime = !isGroup && form.one_time
   // Only a normal item being edited, never a group, a variant or a durable.
   const showNames = namesReady && Boolean(item) && !isGroup && !form.group_id && !isDurable(form)
+  const showMerge = namesReady && Boolean(onMerge) && canMergeInto(item)
   const perPack = parseDecimal(form.quantity_per_pack) || 0
   const pack = form.multipack ? { unit: form.unit, packaging_unit: form.packaging_unit, quantity_per_pack: perPack } : null
   const priceUnits = priceUnitOptions({ unit: form.unit }, pack)
@@ -665,7 +676,28 @@ export function ItemEditor({ item, parents, subsByParent, onAddCategory, onAddSu
           </div>
         )}
 
-        {showNames && <OtherNamesFields drafts={names} problems={nameProblems} stockUnit={form.unit} onChange={changeDraft} onRemove={removeDraft} onAdd={addDraft} />}
+        {showNames && (
+          <OtherNamesFields
+            drafts={names}
+            problems={nameProblems}
+            stockUnit={form.unit}
+            onChange={changeDraft}
+            onRemove={removeDraft}
+            onAdd={addDraft}
+            onSeparate={onSeparate}
+            locked={unsaved}
+          />
+        )}
+
+        {showMerge && (
+          <div>
+            <button type="button" onClick={() => setMerging(true)} disabled={unsaved} className="min-h-9 text-xs font-bold text-[var(--color-accent)] disabled:text-[var(--color-text-muted)] disabled:cursor-default text-left">
+              Merge other items into this one…
+            </button>
+            {unsaved && <p className="text-[11px] text-[var(--color-text-muted)]">Save changes first.</p>}
+          </div>
+        )}
+        {merging && <MergePicker target={item} items={homeItems ?? []} categoryName={categoryName} onMerge={onMerge} onClose={() => setMerging(false)} />}
 
         <div>
           <Label>Notes</Label>

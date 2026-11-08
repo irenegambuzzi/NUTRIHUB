@@ -5,7 +5,7 @@ import { Button } from './Button'
 import { DateField } from './DateField'
 import { Input, Label, Select } from './Field'
 import { cn } from '../../lib/cn'
-import { closeDialog, dialogErrors, dismissToast, fieldShown, getDialog, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
+import { closeDialog, dialogErrors, dialogTexts, dismissToast, fieldShown, getDialog, initialDialogValues, runToastAction, useDialog, useToasts } from '../../lib/feedback'
 
 // Toasts sit above the mobile tab bar; the dialog covers everything.
 //
@@ -175,7 +175,11 @@ function DialogForm({ dialog }) {
         <p id="dialog-title" className="text-sm font-extrabold text-[var(--color-primary)]">
           {dialog.title}
         </p>
-        {dialog.message && <p className="text-xs text-[var(--color-text-soft)]">{dialog.message}</p>}
+        {dialogTexts(dialog.message).map((text, i) => (
+          <p key={i} className="text-xs text-[var(--color-text-soft)] break-words">
+            {text}
+          </p>
+        ))}
       </div>
 
       {dialog.fields.map((f, i) => fieldShown(f, values) && (
@@ -241,10 +245,16 @@ function DialogForm({ dialog }) {
               {f.unit && <span className="text-xs text-[var(--color-text-muted)] shrink-0">{f.unit}</span>}
             </div>
           )}
-          {f.help && <p className="text-[10px] text-[var(--color-text-muted)]">{f.help}</p>}
+          {dialogTexts(f.help, values).map((text, k) => (
+            <p key={k} className="text-[10px] text-[var(--color-text-muted)] break-words">
+              {text}
+            </p>
+          ))}
           {showErrors && errors[f.name] && <p className="text-[11px] text-rose-400">{errors[f.name]}</p>}
         </div>
       ))}
+
+      {dialog.note && <p className="text-xs text-[var(--color-text-soft)] break-words">{dialog.note}</p>}
 
       <div className="flex gap-2">
         <Button type="button" variant="ghost" className="flex-1" onClick={() => closeDialog(null)}>

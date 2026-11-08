@@ -2,13 +2,13 @@ import { useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { afterStockChange, insertRows, latestLogId, normalizeItem, orderedEntryIds, stockChangeWithLog, syncShoppingForItem, toBuyEntriesOf, undoStockChange, updateRows, upsertRows } from '../lib/inventory'
 import { attempt, deleteWithUndo, followUp, inSteps, must } from '../lib/db'
-import { showToast } from '../lib/feedback'
+import { confirmDialog, showToast } from '../lib/feedback'
 import { groceryStore, pantryStore, stockLogStore } from '../lib/stores'
 import { isOffline } from '../lib/connection'
 import { cancelQueuedStock, queueStock } from '../lib/offlineActions'
 import { withGroupTotals } from '../lib/groups'
 import { becameFinished, isOneTime } from '../lib/oneTime'
-import { nameElement, otherNames } from '../lib/itemNames'
+import { mergedNamesDeleteText, nameElement, otherNames } from '../lib/itemNames'
 
 export const ITEM_FIELDS = [
   'name',
@@ -250,15 +250,18 @@ export function usePantryItems() {
 
   // Deletes right away; Undo puts the item back exactly, including the
   // grocery entries and history rows that pointed to it (the database
-  // unlinks them on delete).
+  // unlinks them on delete). An item holding the names of merged items asks
+  // first: once deleted, they can't be separated again (K116).
   const deleteItem = useCallback(
-    (item) => {
+    async (item) => {
       // A group is only deleted once it's empty: its variants and their
       // stock are never deleted with it.
       if (item.is_group && pantryStore.getSnapshot().rows.some((r) => r.group_id === item.id)) {
         showToast({ message: `"${item.name}" still has variants — move them out of the group first.`, tone: 'error' })
         return
       }
+      const merged = mergedNamesDeleteText(item)
+      if (merged && !(await confirmDialog({ title: `Delete "${item.name}"?`, message: merged, confirmLabel: 'Delete' }))) return
       // Its automatic SHOP entries still "to buy" go with it (in the cart
       // or on the way they stay): a deleted variant is no longer listed in
       // its group's card. Undo puts them back.

@@ -123,6 +123,12 @@ export function purchasedPackLabel(line, item) {
   return packAmountLabel(quantity, normalizeUnit(line.unit), added / quantity, stockUnit)
 }
 
+// What a purchase line bought, the same in Money's opened purchase row and
+// in Shop → Receipts (K107): "1 box · 30 pcs" for a line bought in packages
+// (above), else its quantity, "2 pcs"; null for an old line without one.
+export const purchasedQuantityLabel = (line, item) =>
+  purchasedPackLabel(line, item) ?? (line && Number(line.quantity) > 0 ? `${Math.round(Number(line.quantity) * 100) / 100} ${line.unit || 'pcs'}` : null)
+
 // An order with a pack size (orders.pack_size) and its HOME item's stock
 // unit, as above; null without one.
 export function orderPackLabel(order, stockUnit) {

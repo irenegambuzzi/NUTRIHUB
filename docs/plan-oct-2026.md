@@ -4723,7 +4723,7 @@ iPhone test of 9M done 03/11/2026: all OK.
 
 K41: the old "one-time database update" notices are kept (03/11).
 
-### 9N. One item, many names (round 6D, decided 04–07/11, stages 1–3 as built)
+### 9N. One item, many names (round 6D, decided 04–08/11, stages 1–4 as built)
 
 Analysis: `tmp-export/6d-readonly-report.md` (04/11, read only, A–N). The
 household chose **option C** (`pantry_items.names jsonb`) and the decisions
@@ -4913,6 +4913,68 @@ update, also after stage 2.
   same name in the SAME card are not K101 (as built; see the follow-up below).
 - **K102** An old card whose name is not one of its item's names: line 1 is
   sent without add_name (as built).
+- **K103** (08/11) A filled-in line-1 price (K98) reaches the SHOP card only at
+  Confirm; "Back" without confirming leaves the card as it was (as built).
+- **K104** (08/11) After Reopen the card keeps the price used at Confirm,
+  exactly like a typed price (as built).
+- **K105** (08/11) No price conversion through a pack size for the filled-in
+  price: the same unit, kg/gr and L/ml only (as built).
+- **K106** (08/11) A filled-in price follows line 1's quantity while it hasn't
+  been typed by hand (as built).
+- **K107** (08/11) Shop → "Receipts": every line of a purchase card shows its
+  quantity under the name, small and grey ("2 pcs", also "1 pcs"), with the
+  same rule as Money's opened purchase row; a line bought in packages keeps
+  "1 pack · 4 pcs"; an old line without quantity shows what Money shows.
+- **K108** The merge button "Merge other items into this one…" sits in "Edit
+  item" (and "Edit group") right after "Other names", before Notes. Never in
+  "Add an item", "Add a group", "Add a variant", a variant's "Edit item", a
+  durable, or while `useItemNamesReady` is not true.
+- **K109** The picker, on top of the editor: `Merge into "{target}"`, × (aria
+  "Close"), "Search your items…"; empty search = eligible items of the
+  target's main category A–Z; typing = every eligible item by `searchRank`
+  (other names too); a row per item with a checkbox ("{name} · {stock}
+  {unit}", aria "Merge {name} into {target}"); ticked items on top under
+  "Chosen ({n})"; at the bottom "Merge {n} items…" ("Merge 1 item…"),
+  disabled while nothing is chosen.
+- **K110** In the picker: normal items (finished 1× too), a source at 0 in
+  another unit, a source with stock whose unit converts (K44, then "(= 0.5
+  kg)" / "(= 4 pcs)"). Greyed and not tickable: stock that can't be
+  converted, with `Counted in {unit} ({stock} {unit} at home); "{target}"
+  counts in {target unit} — convert it first (Edit item → Unit).` Not shown:
+  the target, durables, group rows, variants of other groups.
+- **K111** The merge question (title `Merge {n} items into "{target}"?`, one
+  line per source with its conversion and "(variant)", "Together: …", the
+  names / MONEY line, what the target keeps, a line per 1× source, "This
+  can't be undone…"; "Cancel" / "Merge"), then `merge_pantry_items` with every
+  row as STORED, the lists read again, the SHOP list judged again for the
+  target; editor and picker close; toast `Merged {n} items into "{target}" ·
+  {stock} {unit}` without a button. Refused: the database's message; "already
+  merged": nothing extra; offline: refused before writing.
+- **K112** A group target: all its variants (finished 1× too) start in
+  "Chosen", ticked and locked, "(variant)"; above the list `All {n} variants
+  of "{group}" are always merged together.`; afterwards a normal item.
+- **K113** Unsaved changes in "Edit item" / "Edit group": the merge button and
+  every Separate are disabled with "Save changes first."; nothing is saved or
+  thrown away.
+- **K114** "Separate" (aria "Separate {name} into its own item") next to every
+  saved other name; a merged name has only "Separate".
+- **K115** The separate question (title, the text with or without origin, the
+  required field "Stock that goes with it ({parent unit})" starting empty, the
+  hints, the two errors, the SHOP line at 0 only when the real rule lists it,
+  "This can't be undone — to put it back, merge it again."; "Cancel" /
+  "Separate"), then `separate_item_name`, the lists read again, the SHOP list
+  judged for both items, the editor closes; toast `"{name}" is its own item
+  again · {stock} {unit}` / `"{name}" is now its own item · {stock} {unit}`.
+- **K116** Deleting an item that holds merged names first asks `Delete
+  "{item}"?` with `It holds the names of {n} merged items ({first}, {second}
+  +{rest}). Once deleted, they can't be separated again.`; "Cancel" /
+  "Delete"; "Delete" is today's delete with its toast and Undo.
+- **K117 + K118** Restore guard ("Restore backup", JSON): the current items
+  (with names) are read first; a backup item merged away since is skipped and
+  its history goes to the item holding its name; that item is restored except
+  its stock, names, unit and group (and, in another unit, every field counted
+  in it); `names` is never written. One more line in the question and in the
+  result (texts in "Stage 4 as built").
 - **Stock format** `separate_item_name`: the new stock carries no long decimal:
   `trim_scale(round(v_moved / v_factor, 3))`, and the history rows use that
   value. 3 ÷ 3 stores exactly 1; 2 ÷ 3 stores 0.667.
@@ -5529,17 +5591,145 @@ until answered.
    lines 2…N do; the decision did not say. Options: (a) as built; (b) keep the
    total of the moment of filling. Suggestion: (a).
 
+(Answered 08/11: 1 → K103, 2 → K104, 3 → K105, 4 → K106.)
+
+iPhone test of stage 3 done 08/11/2026: all OK.
+
+### Stage 4 as built (08/11; code and tests only, no SQL)
+
+The merge and separate actions, the delete question, the restore guard and
+K107. No SQL, no new column, no change to any 032 function: the payloads are
+exactly what `merge_pantry_items` and `separate_item_name` take, proven with
+the real 032 in PGlite. No new browser storage, no new offline queue. `names`
+is still out of `ITEM_FIELDS`. Group code (`GroupTile`, `GroupShopCard`,
+`syncGroup`, `useShopTidy`, `lib/groups.js`, `lib/groupShop.js`, the variant
+selects) is not touched.
+
+**Pure rules** (`lib/itemNames.js`). `mergeRow` / `mergeRows` (K109, K110:
+`stockFactor`, the same rule as 032: the same unit, kg/gr, L/ml, the target's
+usual pack), `mergeQuestion`, `mergePayload` (`was` = `current_stock`, `unit`,
+`updated_at` of each STORED row), `mergedToast`, `separateQuestion`,
+`separatePayload`, `separatedToast`, `mergedNamesDeleteText`, `canMergeInto`.
+`separationCheck` now follows K75 fully (the name's pack size, then the
+parent's usual pack) and rounds to 3 decimals like 032.
+
+**Actions** (`hooks/itemNameActions.js` `mergeItems`, `separateName`). Offline:
+`"You're offline — this needs a connection."` before anything is asked. Every
+row is read from the pantry store as stored (a group row with its own 0, never
+the `withGroupTotals` total). Before the question `mergeCheck` (the same
+refusals and texts as 032) — a merge 032 would refuse is never asked, the text
+is shown as an error toast. After "Merge" / "Separate": the 032 function; a
+refusal (P0001) is the database's message as the error toast and the lists are
+read again; then pantry and SHOP entries are read again, and orders, history
+and purchase lines when those lists are open; `syncShoppingForItem` for the
+target (merge) or both items (separate); the toast (15 s, no button).
+"already merged": the lists are read again, nothing is said.
+
+**Screens.** `inventory/ItemEditor.jsx`: "Merge other items into this one…"
+after "Other names" (in "Edit group" in the same place, before Notes); K113 by
+comparing the form and the name list with what they were when the editor
+opened. `inventory/MergePicker.jsx`: the picker (portal, z-50, above the
+editor; the question z-60 above it). `inventory/OtherNamesFields.jsx`:
+"Separate" per saved name. `pages/PantryPage.jsx`: the actions; the editor
+closes when one is done. `ui/Feedback.jsx` + `lib/feedback.js`: a question's
+`message` may be several paragraphs, a number field may have `check(text,
+number)`, a field's `help` may follow the values, and a `note` closes the
+question (all optional; every other question unchanged).
+
+**K116** in `usePantryItems.deleteItem` (every delete: the tile, a group tile,
+"Finished one-time items"): only an item with a name with `origin` or
+`from_item_id` asks; "Delete" runs today's delete with its toast and Undo.
+Deleting asked no question before, so this is the only one.
+
+**K117 + K118** (`lib/inventoryBackup.js` `readCurrentItems`, `restorePlan`,
+`skippedQuestionLine`, `restoredText`; `inventory/DataView.jsx`). The items of
+now are read before the question (offline or a failed read: nothing is
+written). Question line (m > 0): `{m} of these items were merged into another
+item since this backup — they are skipped, and their history goes to that
+item.` (m = 1: `1 of these items was merged into another item since this
+backup — it is skipped, and its history goes to that item.`). Result:
+`Restored {n} items. {m} skipped: merged into another item.` (n = restored;
+without skips today's `Restored {n} items.`), then `{k} items kept their
+merged names and stock: {names}.` (k = 1: `1 item kept its merged names and
+stock: {name}.`). In another unit also `min_stock`, `packaging_unit`,
+`quantity_per_pack`, `price`, `price_qty`, `price_unit` stay as now.
+
+**K107** (`lib/packSize.js` `purchasedQuantityLabel`): Money's rule moved
+there; `expenses/ExpenseGroup.jsx` and `grocery/ReceiptsView.jsx` both use it.
+
+**Verified.** Reopen / Undo after a merge: `reopenNotes` treats a line with
+`merged_from` as stock only (an old purchase of B that created B, reopened on
+T: 6 → 3 pcs, no "stays in HOME" note; PGlite and unit). History after a real
+merge and separation: "TEST T" with "Corn Snack · Merged ·…" and "Corn Snack ·
+Separated ·…" under it; the separated item's own "Separated" row.
+
+**A separated item at 0** goes on the SHOP list when `restockReason` says so:
+a new item (minimum 0, not 1×) always ("Out of Stock" on its card); an item
+back from its origin unless it was 1×.
+
+**Files.** New: `components/inventory/MergePicker.jsx`, tests
+`lib/mergeSeparate.test.js`, `hooks/mergeSeparate.test.js`,
+`components/mergeSeparate.render.test.jsx`,
+`components/receiptsQuantity.render.test.jsx`,
+`components/restoreGuard.render.test.jsx`. Changed: `lib/itemNames.js`,
+`lib/inventoryBackup.js`, `lib/packSize.js`, `lib/feedback.js`,
+`hooks/itemNameActions.js`, `hooks/usePantryItems.js`,
+`components/ui/Feedback.jsx`, `inventory/ItemEditor.jsx`,
+`inventory/OtherNamesFields.jsx`, `inventory/DataView.jsx`,
+`expenses/ExpenseGroup.jsx`, `grocery/ReceiptsView.jsx`,
+`pages/PantryPage.jsx`; tests `hooks/arrivalDb.fixture.js` (a test may add a
+function; a refusal keeps its code), `hooks/itemNamesPantry.test.jsx` (the
+delete of an item with a merged name answers K116 first),
+`supabase/migrations.test.js`; this plan.
+
+**Tests: 2407 → 2459 (127 → 132 files).** `lib/mergeSeparate.test.js` (16),
+`hooks/mergeSeparate.test.js` (14), `components/mergeSeparate.render.test.jsx`
+(10), `components/receiptsQuantity.render.test.jsx` (2),
+`components/restoreGuard.render.test.jsx` (2), `supabase/migrations.test.js`
+block "032" → "stage 4" (8, PGlite, the app's own payloads: tests 1 + 10, 2
+(the total 3 refused, the stored 0 merged), 3 + 4, 5, 7, 8, 9, 12).
+
+**Kata ragu (08/11 stage 4, tanya Zidane).** Built the safe way until
+answered.
+
+1. CSV / Excel import can bring back a merged item and overwrite a target's
+   stock. A CSV exported before the merge (with its `id` column) imported
+   after it: A and B come back as items with their old stock (counted twice)
+   and T's stock is set back to 1 pcs; names stay, `is_group` isn't in the
+   file. Not built. Options: (a) leave it; (b) the same guard as the restore;
+   (c) refuse rows with an id of a merged item. Suggestion: (b).
+2. A restored backup row that was a variant of the group that is now a
+   normal item (taken out of the group after the backup, before the merge)
+   gets its `group_id` back and becomes a variant of a normal item. Not
+   built. Options: (a) leave it; (b) restore it with no group when its group
+   is no group any more. Suggestion: (b).
+3. "When it was merged it brought {x}" is worked out from the name's origin
+   (its stock then × the parent's conversion now), not from the "merged"
+   history row. They differ only when the parent's unit or usual pack changed
+   since the merge (then it says it in the old unit). Options: (a) as built;
+   (b) read the "merged" row. Suggestion: (a).
+4. A merge 032 would refuse (stock that can't be converted, a name of a third
+   item) is refused before the question with the same text, nothing sent.
+   Options: (a) as built; (b) ask and let the database refuse. Suggestion: (a).
+5. Texts the prompt didn't give: "Merged 1 item into …" (singular), "Merge 0
+   items…" (disabled), the picker's empty list "No other items in this
+   category — search to find more." / `Nothing else matches "{text}".`, and
+   K116 with one name keeps "they" ("Once deleted, they can't be separated
+   again."). Options: (a) as built; (b) other words. Suggestion: (a), or
+   "it" for one name.
+6. K118 in another unit. Backup: T counted in pack, minimum 1 pack, €5.00 per
+   pack; now 8 pcs, minimum 4 pcs, €1.20 per pcs. Restored: unit pcs, stock 8,
+   minimum 4, pack size and price as now; name, category, notes, store, payer,
+   expiry from the backup. Options: (a) as built; (b) skip the whole row.
+   Suggestion: (a).
+
 **Notes for later stages.**
 
 - **Stage 3:** built (above).
-- **Stage 4:** merge `was` must send the stored `current_stock`, never the group
-  total from `withGroupTotals`. A group target always sends all its variants,
-  ticked and locked. The app's Reopen and Undo toasts must treat lines with
-  `merged_from` as stock only, never as "stays in HOME" of a created item. The
-  restore guard K64 is built here, before real data is merged. Deleting an item
-  that has merged names also loses the way back, so the delete question must
-  say so. `reopenNotes` already treats a line with `merged_from` as stock only
-  (stage 3). The name lines of Confirm never show for a group or a variant
+- **Stage 4:** built (above): the stored `was`, a group target with every
+  variant locked, Reopen / Undo stock only for `merged_from`, the restore
+  guard, the delete question. Next: the household merges on the phone, TEST
+  items first. The name lines of Confirm never show for a group or a variant
   (K93): once stage 5 removes groups, the merged item is a normal item and
   gets them by itself.
 - **Stage 5:** `LinkedArrivedDialog` with a group still has no name pack

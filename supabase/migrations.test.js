@@ -5077,6 +5077,12 @@ const NAMES_REOPEN_ADDED = [
   "",
 ]
 
+// Stage 4 of 032 (plan 9N): the app's own merge, separate and restore rules.
+const { changedMeanwhileText, mergeCheck, mergePayload, mergeQuestion, mergeRow, mergedToast, separatePayload, separateQuestion, separatedToast, separationCheck } = await import('../src/lib/itemNames.js')
+const { restockReason } = await import('../src/lib/inventory.js')
+const { restorePlan, restoredText } = await import('../src/lib/inventoryBackup.js')
+const { pickFields } = await import('../src/hooks/usePantryItems.js')
+
 describe('032: one item, many names — pantry_items.names, confirm and reopen replaced, three new functions', () => {
   const file = '032_item_names.sql'
   const sql = fs.readFileSync(path.join(dir, file), 'utf8')
@@ -6884,6 +6890,183 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
         expect(await stockOf(fx, item)).toBe(2)
         expect(await namesOf(fx, item)).toEqual([])
       })
+    })
+  })
+
+  describe('stage 4: the app\'s own merge, separate and restore payloads', () => {
+    // Every row as the app holds it: all columns, as PostgREST sends them.
+    const appRows = async (ids) => {
+      const got = await rows(`select to_jsonb(p) as r from pantry_items p where id = any($1::uuid[])`, [uuids(ids)])
+      return ids.map((key) => got.map((g) => g.r).find((r) => r.id === key))
+    }
+    const all = async () => (await rows(`select to_jsonb(p) as r from pantry_items p`)).map((g) => g.r)
+    const mergeApp = async (targetId, sourceIds) => {
+      const [target, ...sources] = await appRows([targetId, ...sourceIds])
+      expect(mergeCheck({ target, sources, items: await all() }).problem).toBeNull()
+      return { target, sources, result: await call(fx, 'merge_pantry_items', mergePayload(target, sources)) }
+    }
+    const separateApp = async (itemId, name, stockMoved) => {
+      const [item] = await appRows([itemId])
+      const check = separationCheck({ item, name, stockMoved, items: await all() })
+      expect(check.problem).toBeNull()
+      return { item, check, result: await call(fx, 'separate_item_name', separatePayload(item, name, stockMoved)) }
+    }
+
+    it('test 1 and 10: T 1 pcs + A 2 + B 3 → 6 pcs; history, lines and orders on T; an old purchase of B reopened → 3 pcs, no "stays in HOME" note', async () => {
+      const t = await addItem(fx, 'T S4', 'pcs', 1)
+      const a = await addItem(fx, 'A S4', 'pcs', 2)
+      // B made by a purchase of +3 pcs (its line created it).
+      const bEntry = await addEntry(fx, 'B S4', { price: 1 })
+      const bTrip = next()
+      await shop(fx, bTrip, [{ entry: bEntry, add: 3, total: 3, quantity: 3, unit: 'pcs' }])
+      const b = (await row(`select id from pantry_items where name = 'B S4'`)).id
+      expect(await stockOf(fx, b)).toBe(3)
+      const aOrder = await addOrder(fx, 'A S4', { pantry: a })
+      await fx.query(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, 'A S4', 2, 2, 'pcs', 'added')`, [a])
+      const { target, sources, result } = await mergeApp(t, [a, b])
+      expect(mergeQuestion(target, sources).message).toContain('Together: 6 pcs in "T S4".')
+      expect(result).toMatchObject({ already_merged: false, stock: 6 })
+      expect(mergedToast(2, target, result)).toBe('Merged 2 items into "T S4" · 6 pcs')
+      expect(await count(fx, 'pantry_items', 'id = any($1::uuid[])', [uuids([a, b])])).toBe(0)
+      expect((await logsOf(fx, t)).map((l) => [l.item_name, l.reason])).toEqual(expect.arrayContaining([['A S4', 'added'], ['B S4', 'purchased'], ['A S4', 'merged'], ['B S4', 'merged']]))
+      expect((await linesOf(fx, bTrip))[0]).toMatchObject({ pantry_item_id: t, merged_from: b, pantry_created: true })
+      expect(await row(`select pantry_item_id, merged_from from orders where id = $1`, [aOrder])).toEqual({ pantry_item_id: t, merged_from: a })
+      // Test 10: Reopen B's purchase, as the app reads it before and after.
+      const lines = await rows(`select * from shopping_trip_items where trip_id = $1`, [bTrip])
+      const before = await appRows([t])
+      await reopen(fx, bTrip)
+      expect(await stockOf(fx, t)).toBe(3)
+      expect(reopenNotes({ lines, before, after: await appRows([t]) })).toEqual([])
+    })
+
+    it('test 2: the group "Chips & Snacks" as live data: was = its stored 0 (the total 3 is refused); 10 items → 11 pcs; a normal item', async () => {
+      const group = await addItem(fx, 'Chips & Snacks S4', 'pcs', 0, { is_group: true, min: 1 })
+      const variants = []
+      for (const [k, s] of [0, 1, 1, 1, 0].entries()) variants.push(await addItem(fx, `Variant ${k} S4`, 'pcs', s, { group, one_time: k === 4 }))
+      const sources = []
+      for (const [k, s] of [1, 1, 2, 3, 1].entries()) sources.push(await addItem(fx, `Source ${k} S4`, 'pcs', s))
+      const [stored, ...from] = await appRows([group, ...variants, ...sources])
+      // What HOME shows (withGroupTotals) is 3; sent, it is refused.
+      const shown = mergePayload({ ...stored, current_stock: 3 }, from)
+      expect(await fails(() => call(fx, 'merge_pantry_items', shown))).toBe(changedMeanwhileText('Chips & Snacks S4'))
+      const payload = mergePayload(stored, from)
+      expect(payload.was[group].current_stock).toBe(0)
+      const result = await call(fx, 'merge_pantry_items', payload)
+      expect(mergedToast(from.length, stored, result)).toBe('Merged 10 items into "Chips & Snacks S4" · 11 pcs')
+      expect(await fieldsOf(fx, group)).toMatchObject({ stock: 11, is_group: false, min: 1, group_id: null })
+      expect((await namesOf(fx, group))).toHaveLength(10)
+    })
+
+    it('test 3 and 4: 1 kg + 500 gr → 1.5 kg; pcs with a usual pack × 4: 1 pack → 4 pcs; without one the same refusal as the app; 0 pack merges', async () => {
+      const flour = await addItem(fx, 'Flour S4', 'kg', 1)
+      const zero = await addItem(fx, 'Flour 00 S4', 'gr', 500)
+      const [target, source] = await appRows([flour, zero])
+      expect(mergeRow(source, target).label).toBe('Flour 00 S4 · 500 gr (= 0.5 kg)')
+      expect((await mergeApp(flour, [zero])).result.stock).toBe(1.5)
+
+      const cat = await addItem(fx, 'Cat Food S4', 'pcs', 2, { packaging_unit: 'pack', quantity_per_pack: 4 })
+      const felix = await addItem(fx, 'Felix S4', 'pack', 1)
+      const [catRow, felixRow] = await appRows([cat, felix])
+      expect(mergeRow(felixRow, catRow)).toMatchObject({ label: 'Felix S4 · 1 pack (= 4 pcs)', blocked: '' })
+      expect((await mergeApp(cat, [felix])).result.stock).toBe(6)
+
+      const snacks = await addItem(fx, 'Meat Snacks S4', 'pcs', 1)
+      const jerky = await addItem(fx, 'Jerky S4', 'pack', 1)
+      const [snackRow, jerkyRow] = await appRows([snacks, jerky])
+      expect(mergeRow(jerkyRow, snackRow).blocked).toBe('Counted in pack (1 pack at home); "Meat Snacks S4" counts in pcs — convert it first (Edit item → Unit).')
+      const refused = mergeCheck({ target: snackRow, sources: [jerkyRow], items: await all() }).problem
+      expect(await fails(() => call(fx, 'merge_pantry_items', mergePayload(snackRow, [jerkyRow])))).toBe(refused)
+      await fx.query(`update pantry_items set current_stock = 0 where id = $1`, [jerky])
+      expect((await mergeApp(snacks, [jerky])).result.stock).toBe(1)
+    })
+
+    it('test 5: a 1× source merges and the target stays as it was; changed meanwhile → the database\'s message, nothing written', async () => {
+      const t = await addItem(fx, 'Party Shelf S4', 'pcs', 1)
+      const party = await addItem(fx, 'Party Chips S4', 'pcs', 2, { one_time: true })
+      const late = await addItem(fx, 'Late Chips S4', 'pcs', 1)
+      const [target, partyRow, lateRow] = await appRows([t, party, late])
+      expect(mergeQuestion(target, [partyRow]).message).toContain('"Party Chips S4" is a one-time (1×) item — after merging it follows "Party Shelf S4" (not one-time).')
+      await fx.query(`update pantry_items set current_stock = 4, updated_at = now() + interval '1 second' where id = $1`, [late])
+      expect(await fails(() => call(fx, 'merge_pantry_items', mergePayload(target, [partyRow, lateRow])))).toBe(changedMeanwhileText('Late Chips S4'))
+      expect([await stockOf(fx, t), await stockOf(fx, party), await stockOf(fx, late)]).toEqual([1, 2, 4])
+      expect((await call(fx, 'merge_pantry_items', mergePayload(target, [partyRow]))).stock).toBe(3)
+      expect(await fieldsOf(fx, t)).toMatchObject({ one_time: false })
+    })
+
+    it('test 7: separate with origin: 11 pcs, "Corn Snack" brought 1 pcs at €0.99; 1 typed → 10 pcs and Corn Snack 1 pcs with €0.99', async () => {
+      const parent = await addItem(fx, 'Snack Shelf S4', 'pcs', 10)
+      const corn = await addItem(fx, 'Corn Snack S4', 'pcs', 1, { price: 0.99, price_qty: 1, price_unit: 'pcs' })
+      await mergeApp(parent, [corn])
+      const [item] = await appRows([parent])
+      const q = separateQuestion({ item, name: 'Corn Snack S4', place: 'Snacks', listsAtZero: restockReason })
+      expect(q.field.help({ stock: '' }).slice(0, 2)).toEqual(['When it was merged it brought 1 pcs.', '"Snack Shelf S4" has 11 pcs now.'])
+      const { result, check } = await separateApp(parent, 'Corn Snack S4', 1)
+      expect(await stockOf(fx, parent)).toBe(10)
+      expect(await fieldsOf(fx, corn)).toMatchObject({ stock: 1, price: 0.99, unit: 'pcs' })
+      expect(separatedToast('Corn Snack S4', check.origin, result.stock, check.unit)).toBe('"Corn Snack S4" is its own item again · 1 pcs')
+    })
+
+    it('test 8: separate without origin (a name added at a purchase), 0 typed → a new item, minimum 0, the parent\'s category and unit, listed at 0 by the real rule; above the stock refused', async () => {
+      const parent = await addItem(fx, 'Crisp Shelf S4', 'pcs', 4, { category: 'snacks', sub: null })
+      const entry = await addEntry(fx, 'Crisp Shelf S4', { pantry: parent })
+      await shop(fx, next(), [nameLine(entry, parent, 'Lime Twist S4', 1, 1, { add_name: true })])
+      expect((await namesOf(fx, parent)).map((n) => n.name)).toEqual(['Lime Twist S4'])
+      const [item] = await appRows([parent])
+      expect(await fails(() => call(fx, 'separate_item_name', separatePayload(item, 'Lime Twist S4', 6)))).toBe('The stock to move must be between 0 and 5 pcs. Nothing was changed.')
+      const q = separateQuestion({ item, name: 'Lime Twist S4', place: 'Snacks', listsAtZero: restockReason })
+      expect(q.field.check('6', 6)).toBe("It can't be more than 5 pcs.")
+      const { result, check } = await separateApp(parent, 'Lime Twist S4', 0)
+      const [made] = await appRows([result.item_id])
+      expect(made).toMatchObject({ name: 'Lime Twist S4', current_stock: 0, min_stock: 0, unit: 'pcs', category_id: 'snacks' })
+      expect(restockReason(made)).toBe('out')
+      expect(q.field.help({ stock: '0' })[2]).toBe('With 0 pcs it goes on the SHOP list as out of stock.')
+      expect(separatedToast('Lime Twist S4', check.origin, result.stock, made.unit)).toBe('"Lime Twist S4" is now its own item · 0 pcs')
+    })
+
+    it('test 9 (K75): 1 pack into pcs with a usual pack × 3 → 3 pcs; 3 separated → back as 1 pack, as the app predicts', async () => {
+      const parent = await addItem(fx, 'Wet Food S4', 'pcs', 0, { packaging_unit: 'pack', quantity_per_pack: 3 })
+      const tray = await addItem(fx, 'Tray Pack S4', 'pack', 1)
+      expect((await mergeApp(parent, [tray])).result.stock).toBe(3)
+      const [item] = await appRows([parent])
+      expect(separateQuestion({ item, name: 'Tray Pack S4', place: '', listsAtZero: restockReason }).field.help({ stock: '' })[0]).toBe('When it was merged it brought 3 pcs.')
+      const { result, check } = await separateApp(parent, 'Tray Pack S4', 3)
+      expect([check.unit, check.stock]).toEqual(['pack', 1])
+      expect(await fieldsOf(fx, tray)).toMatchObject({ unit: 'pack', stock: 1 })
+      expect(separatedToast('Tray Pack S4', check.origin, result.stock, check.unit)).toBe('"Tray Pack S4" is its own item again · 1 pack')
+    })
+
+    it('test 12: a backup from before the merge, restored after it as the app writes it: A and B skipped, their history on T; T keeps 6 pcs and its names, no group; its price back to €1.00', async () => {
+      const t = await addItem(fx, 'T R4', 'pcs', 1, { price: 1, price_qty: 1, price_unit: 'pcs' })
+      const a = await addItem(fx, 'A R4', 'pcs', 2)
+      const b = await addItem(fx, 'B R4', 'pcs', 3)
+      for (const [id, name, n] of [[a, 'A R4', 2], [b, 'B R4', 3]]) await fx.query(`insert into stock_logs (item_id, item_name, change, new_stock, unit, reason) values ($1, $2, $3, $3, 'pcs', 'added')`, [id, name, n])
+      const ids = [t, a, b]
+      const backup = {
+        app: 'nutrihub-inventory',
+        items: await appRows(ids),
+        stock_logs: (await rows(`select to_jsonb(l) as r from stock_logs l where item_id = any($1::uuid[])`, [uuids(ids)])).map((g) => g.r),
+      }
+      await fx.query(`update pantry_items set price = 1.2 where id = $1`, [t])
+      await mergeApp(t, [a, b])
+      const plan = restorePlan(backup, await all())
+      expect(restoredText(plan)).toBe('Restored 1 items. 2 skipped: merged into another item. 1 item kept its merged names and stock: T R4.')
+      // importItems (pickFields, upsert by id) and restoreLogs (upsert), as the app sends them.
+      for (const r of plan.backup.items) {
+        const fields = { id: r.id, ...pickFields(r) }
+        const cols = Object.keys(fields)
+        await fx.query(
+          `insert into pantry_items (${cols.join(', ')}) select ${cols.join(', ')} from jsonb_populate_record(null::pantry_items, $1) on conflict (id) do update set ${cols.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ')}`,
+          [fields]
+        )
+      }
+      for (const l of plan.backup.stock_logs) {
+        const cols = Object.keys(l)
+        await fx.query(`insert into stock_logs (${cols.join(', ')}) select ${cols.join(', ')} from jsonb_populate_record(null::stock_logs, $1) on conflict (id) do update set ${cols.filter((c) => c !== 'id').map((c) => `${c} = excluded.${c}`).join(', ')}`, [l])
+      }
+      expect(await count(fx, 'pantry_items', 'id = any($1::uuid[])', [uuids([a, b])])).toBe(0)
+      expect(await fieldsOf(fx, t)).toMatchObject({ stock: 6, price: 1, is_group: false, group_id: null })
+      expect((await namesOf(fx, t)).map((n) => [n.name, n.from_item_id])).toEqual([['A R4', a], ['B R4', b]])
+      expect((await logsOf(fx, t)).filter((l) => l.reason === 'added').map((l) => l.item_name)).toEqual(['A R4', 'B R4'])
     })
   })
 })

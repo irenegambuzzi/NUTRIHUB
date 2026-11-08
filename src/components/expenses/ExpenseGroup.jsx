@@ -8,7 +8,7 @@ import { cn } from '../../lib/cn'
 import { purchaseSections } from '../../lib/moneyList'
 import { purchaseUndo } from '../../lib/trips'
 import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
-import { purchasedPackLabel } from '../../lib/packSize'
+import { purchasedQuantityLabel } from '../../lib/packSize'
 import { wholeAmount } from '../../lib/sharedParts'
 import { PartAmount, SharedPartsNote } from './SharedParts'
 
@@ -135,9 +135,6 @@ export function ExpenseGroup({ group, color, styleFor, subName, shopOf, noteOf =
 }
 
 const shortDate = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
-// What was bought: "2 box · 30 pcs each · 60 pcs" for a line bought in
-// packages (plan 9H, from what really went into HOME), else "2 pcs".
-const quantityLabel = (line, item) => purchasedPackLabel(line, item) ?? (line && Number(line.quantity) > 0 ? `${Math.round(Number(line.quantity) * 100) / 100} ${line.unit || 'pcs'}` : null)
 
 // One purchase (a SHOP trip, a MONEY purchase or merged expenses — they
 // look and work the same). Collapsed: store · date · total, one dot per
@@ -230,7 +227,7 @@ export function PurchaseGroup({
               {section.items.map((e) => {
                 const sub = subName(e.category_id)
                 const line = lineOf(e)
-                const quantity = quantityLabel(line, line ? itemOf(line) : null)
+                const quantity = purchasedQuantityLabel(line, line ? itemOf(line) : null)
                 const history = noteOf ? noteOf(e) : lineHistory(line)
                 return (
                   <div key={e.id} className="flex justify-between items-center gap-2 py-1 pl-2 border-l-2 border-[var(--color-border)]">

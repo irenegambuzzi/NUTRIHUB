@@ -1,10 +1,25 @@
 import { supabase } from '../lib/supabaseClient'
-import { attempt, must } from '../lib/db'
-import { showToast, toastSaveError } from '../lib/feedback'
+import { OFFLINE_MESSAGE, attempt, followUp, must } from '../lib/db'
+import { askDialog, confirmDialog, showToast, toastSaveError } from '../lib/feedback'
 import { isOffline } from '../lib/connection'
-import { normalizeItem } from '../lib/inventory'
-import { canHaveNames, hasName, itemForName, nameElement, nameTakenBy, namesColumnReady } from '../lib/itemNames'
-import { pantryStore } from '../lib/stores'
+import { normalizeItem, restockReason, syncShoppingForItem } from '../lib/inventory'
+import {
+  canHaveNames,
+  hasName,
+  itemForName,
+  mergeCheck,
+  mergePayload,
+  mergeQuestion,
+  mergedToast,
+  nameElement,
+  nameTakenBy,
+  namesColumnReady,
+  separatePayload,
+  separateQuestion,
+  separatedToast,
+  separationCheck,
+} from '../lib/itemNames'
+import { groceryStore, orderStore, pantryStore, stockLogStore, tripItemStore } from '../lib/stores'
 import { checkItemNames } from './useItemNamesReady'
 
 // Writing the other names of an item (plan 9N): only through save_item_names
@@ -70,5 +85,100 @@ export async function setNamePack(itemId, name, fields, allowed) {
   const element = row ? nameElement(row, name) : null
   if (!element || !allowed(element)) return false
   await writeNames({ item_id: itemId, edit: [{ name: element.name, packaging_unit: fields.packaging_unit ?? null, quantity_per_pack: fields.quantity_per_pack ?? null }], was: { names: row.names ?? [] } })
+  return true
+}
+
+// ── Merge and separate (plan 9N stage 4, K111, K115) ──
+// No Undo for either (K48, K69): each asks first and says so. Refused
+// offline before anything is asked; a refusal of the database is shown as
+// it says it, and nothing changed.
+
+const refuseOffline = () => {
+  showToast({ message: OFFLINE_MESSAGE, key: 'offline' })
+  return false
+}
+
+// Every list the moved rows live in (items, SHOP entries, orders, history,
+// purchase lines), read again; the ones not opened yet load when opened.
+async function refreshMoved() {
+  await pantryStore.refresh()
+  await groceryStore.refresh()
+  for (const store of [orderStore, stockLogStore, tripItemStore]) if (store.isStarted?.()) await store.refresh()
+}
+
+// The SHOP list judged again for these items, as stored now.
+async function judgeShop(ids) {
+  for (const id of ids) {
+    const row = rowOf(id)
+    if (row) await followUp('the shopping list', () => syncShoppingForItem(row))
+  }
+  await groceryStore.refresh()
+}
+
+const errorToast = (message) => showToast({ message, tone: 'error' })
+
+// K111: merges `sourceIds` into `targetId` after the question; every row is
+// taken as stored (a group row with its own 0, never the total of its
+// variants, so `was` matches). → true when the editor can close.
+export async function mergeItems(targetId, sourceIds) {
+  if (isOffline()) return refuseOffline()
+  const { rows } = pantryStore.getSnapshot()
+  const target = rows.find((row) => row.id === targetId)
+  const sources = sourceIds.map((id) => rows.find((row) => row.id === id)).filter(Boolean)
+  if (!target || sources.length !== sourceIds.length) {
+    errorToast('An item to merge was deleted meanwhile — open it again. Nothing was changed.')
+    await refreshMoved()
+    return false
+  }
+  // The same rules as 032, so a merge it would refuse is never asked.
+  const { problem } = mergeCheck({ target, sources, items: rows })
+  if (problem) {
+    errorToast(problem)
+    return false
+  }
+  if (!(await confirmDialog({ ...mergeQuestion(target, sources), confirmLabel: 'Merge' }))) return false
+  const { data, error } = await attempt(async () => must(await supabase.rpc('merge_pantry_items', { payload: mergePayload(target, sources) })), {
+    retry: false,
+    messageOf: refusalOf,
+    onFail: refreshMoved,
+  })
+  if (error) return false
+  await refreshMoved()
+  // Sent twice (the other phone was first): nothing was written.
+  if (data?.already_merged) return true
+  await judgeShop([targetId])
+  showToast({ message: mergedToast(sources.length, rowOf(targetId) ?? target, data) })
+  return true
+}
+
+// K115: `name` of `itemId` becomes an item of its own, with the stock typed
+// in the question. `place`: "Snacks › Savory", where a name without origin
+// goes. → true when the editor can close.
+export async function separateName(itemId, name, { place = '' } = {}) {
+  if (isOffline()) return refuseOffline()
+  const item = rowOf(itemId)
+  const element = item ? nameElement(item, name) : null
+  if (!element) {
+    errorToast(`"${String(name ?? '').trim()}" is not a name of "${item?.name ?? ''}". Nothing was changed.`)
+    await refreshMoved()
+    return false
+  }
+  const { field, note, ...question } = separateQuestion({ item, name, place, listsAtZero: restockReason })
+  const answer = await askDialog({ title: question.title, message: question.message, fields: [field], note, confirmLabel: 'Separate' })
+  if (!answer) return false
+  const check = separationCheck({ item, name, stockMoved: answer.stock, items: pantryStore.getSnapshot().rows })
+  if (check.problem) {
+    errorToast(check.problem)
+    return false
+  }
+  const { data, error } = await attempt(async () => must(await supabase.rpc('separate_item_name', { payload: separatePayload(item, element.name, answer.stock) })), {
+    retry: false,
+    messageOf: refusalOf,
+    onFail: refreshMoved,
+  })
+  if (error) return false
+  await refreshMoved()
+  await judgeShop([itemId, data?.item_id].filter(Boolean))
+  showToast({ message: separatedToast(element.name, element.origin, data?.stock ?? check.stock, rowOf(data?.item_id)?.unit ?? check.unit) })
   return true
 }

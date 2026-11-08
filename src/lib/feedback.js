@@ -122,17 +122,22 @@ export function toastLoadError(error, retry, source) {
 //   choice – options: [{ value, label, hint }], value: the default
 //   select – a drop-down: options [{ value, label }], required: true to insist
 //   date   – optional unless required: true
-//   number – min (exclusive lower bound), unit shown after the input
+//   number – min (exclusive lower bound), unit shown after the input;
+//            `check(text, number)` may say what's wrong instead (a text, or
+//            '' when fine)
 // Any field may have `shownWhen: { field, value }`: it is shown (and
 // checked) only while that other field has that value, else it answers null.
+// A field's `help` is a text, or a function of the values now giving one
+// text or several. `message` is one text or several (one paragraph each);
+// `note` is a last text under the fields.
 // Resolves to { name: value } when confirmed, or null when cancelled.
 // `opener`: what had the keyboard focus when it was asked (kept when one
 // question replaces another), so the focus can go back there afterwards.
-export function askDialog({ title, message, fields = [], confirmLabel = 'Save' }) {
+export function askDialog({ title, message, fields = [], confirmLabel = 'Save', note = null }) {
   return new Promise((resolve) => {
     const opener = dialog ? dialog.opener : typeof document === 'undefined' ? null : document.activeElement
     dialog?.resolve(null)
-    dialog = { id: nextId++, title, message, fields, confirmLabel, resolve, opener }
+    dialog = { id: nextId++, title, message, fields, confirmLabel, note, resolve, opener }
     emit()
   })
 }
@@ -141,6 +146,9 @@ export function askDialog({ title, message, fields = [], confirmLabel = 'Save' }
 export async function confirmDialog({ title, message, confirmLabel = 'Confirm' }) {
   return (await askDialog({ title, message, confirmLabel })) !== null
 }
+
+// The texts of a message or a help: always a list, without empty ones.
+export const dialogTexts = (text, values) => [typeof text === 'function' ? text(values) : text].flat().filter(Boolean)
 
 export function initialDialogValues(fields) {
   return Object.fromEntries(fields.map((f) => [f.name, f.value ?? '']))
@@ -157,7 +165,9 @@ export function dialogErrors(fields, values) {
     const raw = String(values[f.name] ?? '').trim()
     if (f.type === 'number' && (raw || f.required)) {
       const n = parseNumber(raw)
-      if (!(n > (f.min ?? -Infinity))) errors[f.name] = f.min === 0 ? 'Enter a number above 0.' : 'Enter a valid number.'
+      const own = f.check?.(raw, n)
+      if (own) errors[f.name] = own
+      else if (!(n > (f.min ?? -Infinity))) errors[f.name] = f.min === 0 ? 'Enter a number above 0.' : 'Enter a valid number.'
     }
     if (f.type === 'date' && f.required && !raw) errors[f.name] = 'Pick a date.'
     if (f.type === 'choice' && !f.options.some((o) => o.value === values[f.name])) errors[f.name] = 'Pick one.'

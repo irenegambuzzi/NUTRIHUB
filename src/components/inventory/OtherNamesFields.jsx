@@ -6,8 +6,10 @@ import { purchaseUnitOptions } from '../../lib/units'
 // "Other names" in "Edit item" (plan 9N): each name with its own pack field
 // in the style of the item's ("pcs per pack"), and × to remove it. A name
 // that came from a merge has no ×: it leaves by being separated (K74).
+// Every saved name has "Separate" (K114, `onSeparate(name)`), waiting while
+// the form has unsaved changes (`locked`, K113).
 // `drafts`: lib/itemNames.js nameDrafts; `problems`: draft key → note.
-export function OtherNamesFields({ drafts, problems, stockUnit, onChange, onRemove, onAdd }) {
+export function OtherNamesFields({ drafts, problems, stockUnit, onChange, onRemove, onAdd, onSeparate = null, locked = false }) {
   return (
     <div className="rounded-2xl border border-[var(--color-border)] p-3 space-y-3">
       <p className="text-xs font-bold text-[var(--color-primary)]">Other names</p>
@@ -22,6 +24,17 @@ export function OtherNamesFields({ drafts, problems, stockUnit, onChange, onRemo
                 <p className="flex-1 min-w-0 break-words text-xs font-semibold text-[var(--color-text)]">{draft.name}</p>
               ) : (
                 <Input autoFocus aria-label="New name" placeholder="e.g. Corn Snack" value={draft.name} onChange={(e) => onChange(draft.key, { name: e.target.value })} className="flex-1 min-w-0" />
+              )}
+              {onSeparate && draft.saved && (
+                <button
+                  type="button"
+                  onClick={() => onSeparate(draft.name)}
+                  disabled={locked}
+                  aria-label={`Separate ${draft.name} into its own item`}
+                  className="min-h-9 px-2 text-[11px] font-bold text-[var(--color-accent)] disabled:text-[var(--color-text-muted)] disabled:cursor-default shrink-0"
+                >
+                  Separate
+                </button>
               )}
               {!draft.merged && (
                 <button type="button" onClick={() => onRemove(draft.key)} aria-label={`Remove ${title}`} className="w-9 h-9 flex items-center justify-center text-[var(--color-icon-muted)] hover:text-rose-400 shrink-0">
@@ -50,6 +63,7 @@ export function OtherNamesFields({ drafts, problems, stockUnit, onChange, onRemo
           </div>
         )
       })}
+      {onSeparate && locked && drafts.some((draft) => draft.saved) && <p className="text-[11px] text-[var(--color-text-muted)]">Save changes first.</p>}
       <button type="button" onClick={onAdd} className="min-h-9 text-xs font-bold text-[var(--color-accent)]">
         + Add a name
       </button>

@@ -10,7 +10,7 @@ import { cardCount, goneSummary, purchaseUndo, tripState } from '../../lib/trips
 import { askDialog, confirmDialog } from '../../lib/feedback'
 import { groupByDate, normName } from '../../lib/grocery'
 import { lineHistory, purchaseCouponNote } from '../../lib/discounts'
-import { purchasedPackLabel } from '../../lib/packSize'
+import { purchasedQuantityLabel } from '../../lib/packSize'
 import { localDateString, parseLocalDate } from '../../lib/week'
 import { groceryStore, pantryStore, tripExpenseStore, tripItemStore, tripStore } from '../../lib/stores'
 
@@ -55,10 +55,11 @@ export function ReceiptsView() {
   // The grocery entry a receipt line came from (if still there), and its
   // pantry item for unit conversions.
   const linkFor = (expense) => groceryItems.find((g) => g.expense_id === expense.id) ?? null
-  // A line bought in packages shows "1 box · 30 pcs" (plan 9H), with its
-  // HOME item's stock unit.
+  // Every line says what was bought, as Money's opened purchase row does
+  // (K107): "2 pcs", or "1 box · 30 pcs" for a line bought in packages
+  // (plan 9H), with its HOME item's stock unit.
   const pantryById = useMemo(() => new Map(pantryItems.map((p) => [p.id, p])), [pantryItems])
-  const packLabelOf = (line) => purchasedPackLabel(line, pantryById.get(line.pantry_item_id))
+  const quantityOf = (line) => purchasedQuantityLabel(line, pantryById.get(line.pantry_item_id))
   const packFor = (item) => pantryItems.find((p) => p.id === item.pantry_item_id) ?? pantryItems.find((p) => !p.is_group && normName(p.name) === normName(item.name)) ?? null
 
   const askDate = (title, value) =>
@@ -166,7 +167,7 @@ export function ReceiptsView() {
                       <div key={i.id} className="flex justify-between gap-2 text-xs text-[var(--color-text-soft)]">
                         <span className="min-w-0">
                           {i.name}
-                          {packLabelOf(i) && <span className="block text-[10px] text-[var(--color-text-muted)]">{packLabelOf(i)}</span>}
+                          {quantityOf(i) && <span className="block text-[10px] text-[var(--color-text-muted)]">{quantityOf(i)}</span>}
                           {lineHistory(i) && <span className="block text-[10px] font-bold text-emerald-300 break-words">{lineHistory(i)}</span>}
                           {(expenseGone || pantryGone) && (
                             <span className="block text-[10px] text-amber-300">
