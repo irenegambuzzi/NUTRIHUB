@@ -7131,5 +7131,42 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       expect(await batchOf(t)).toBe('L-NEW')
       expect(await namesOf(fx, t)).toHaveLength(2)
     })
+
+    const boughtOf = async (item) => (await row(`select last_purchased_at::date::text as d from pantry_items where id = $1`, [item])).d
+
+    it('second follow-up K126 + K128: restore after X renamed and a "Corn R6" merged into T: X keeps its current name, its note from the file; T keeps 12/11, C gets the file\'s date', async () => {
+      const x = await addItem(fx, 'Corn R6', 'pcs', 2, { notes: 'file note' })
+      const t = await addItem(fx, 'T R6', 'pcs', 1, { bought: '2026-10-28' })
+      const c = await addItem(fx, 'C R6', 'pcs', 3, { bought: '2026-10-20' })
+      const backup = { app: 'nutrihub-inventory', items: await appRows([x, t, c]) }
+      await fx.query(`update pantry_items set name = 'Lime R6', notes = 'new note' where id = $1`, [x])
+      await mergeApp(t, [await addItem(fx, 'Corn R6', 'pcs', 1)])
+      await fx.query(`update pantry_items set last_purchased_at = '2026-11-12' where id = $1`, [t])
+      await fx.query(`update pantry_items set last_purchased_at = '2026-11-05' where id = $1`, [c])
+      const plan = restorePlan(backup, await all())
+      expect(restoredText(plan)).toBe(
+        'Restored 3 items. 1 item kept its merged names and stock: T R6. 1 item kept its current name: the name in the file belongs to another item.'
+      )
+      await writeItems(plan.backup.items)
+      expect(await fieldsOf(fx, x)).toMatchObject({ name: 'Lime R6', notes: 'file note', stock: 2 })
+      expect(await fieldsOf(fx, t)).toMatchObject({ name: 'T R6', stock: 2 })
+      expect((await namesOf(fx, t)).map((n) => n.name)).toEqual(['Corn R6'])
+      expect(await boughtOf(t)).toBe('2026-11-12')
+      expect(await boughtOf(c)).toBe('2026-10-20')
+    })
+
+    it('second follow-up K126: a CSV made before X was renamed, imported after a "Corn C6" was merged into T: X keeps its current name, its note from the file', async () => {
+      const x = await addItem(fx, 'Corn C6', 'pcs', 2, { notes: 'file note' })
+      const t = await addItem(fx, 'T C6', 'pcs', 1)
+      const categories = [{ id: 'snacks', name: 'Snacks', type: 'parent', parent_id: null }]
+      const csv = itemsToCsv(await appRows([x]), () => 'Snacks')
+      await fx.query(`update pantry_items set name = 'Lime C6', notes = 'new note' where id = $1`, [x])
+      await mergeApp(t, [await addItem(fx, 'Corn C6', 'pcs', 1)])
+      const plan = importPlan(csvRowsToItems(parseCsv(csv), categories), await all())
+      expect(importedText(plan)).toBe('Imported 1 item. 1 item kept its current name: the name in the file belongs to another item.')
+      await writeItems(plan.items)
+      expect(await fieldsOf(fx, x)).toMatchObject({ name: 'Lime C6', notes: 'file note', stock: 2 })
+      expect((await namesOf(fx, t)).map((n) => n.name)).toEqual(['Corn C6'])
+    })
   })
 })

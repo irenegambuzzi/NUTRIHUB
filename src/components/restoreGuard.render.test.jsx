@@ -137,3 +137,45 @@ describe('Import CSV / Excel after a merge (K119, K124, K125)', () => {
     expect(db.row('pantry_items', 'a')).toMatchObject({ current_stock: 2 })
   })
 })
+
+// K126: the name in the file belongs to another item now. File of 1 Nov: X
+// "TEST Corn Bites"; X renamed "TEST Lime Soda" on 3 Nov; another "TEST Corn
+// Bites" merged into T on 5 Nov. K128: T keeps its last bought date.
+describe('a name in the file that belongs to another item (K126, K128)', () => {
+  const fileX = item('x', 'TEST Corn Bites', { current_stock: 2, notes: 'file note' })
+  const fileT = item('t', 'TEST Nacho Tray', { current_stock: 1, last_purchased_at: '2026-10-28T09:00:00+00:00' })
+  const now = () => {
+    db.add('pantry_items', item('x', 'TEST Lime Soda', { current_stock: 5, notes: 'new note' }))
+    db.add('pantry_items', {
+      ...item('t', 'TEST Nacho Tray', { current_stock: 6, last_purchased_at: '2026-11-12T09:00:00+00:00' }),
+      names: [{ name: 'TEST Corn Bites', origin: { id: 'a' }, from_item_id: 'a' }],
+    })
+  }
+
+  it('test 1 on the screen, CSV: X stays "TEST Lime Soda", its note from the file; the question as before, the line in the result', async () => {
+    now()
+    render(<Restore />)
+    importFile([fileX])
+    await waitFor(() => expect(screen.getByText('Import 1 item?')).toBeTruthy())
+    expect(screen.getByText('Rows with an existing id overwrite that item; the others are added as new items.')).toBeTruthy()
+    expect(screen.queryByText(/current name|merged into another item/)).toBeNull()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Import' })))
+    await waitFor(() => expect(screen.getByText('Imported 1 item. 1 item kept its current name: the name in the file belongs to another item.')).toBeTruthy())
+    expect(db.row('pantry_items', 'x')).toMatchObject({ name: 'TEST Lime Soda', notes: 'file note', current_stock: 2 })
+  })
+
+  it('test 2 + 7 on the screen, JSON: X the same; T keeps 12/11', async () => {
+    now()
+    render(<Restore />)
+    choose({ ...backup, items: [fileX, fileT], stock_logs: [] })
+    await waitFor(() => expect(screen.getByText('Restore 2 items?')).toBeTruthy())
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Restore' })))
+    await waitFor(() =>
+      expect(
+        screen.getByText('Restored 2 items. 1 item kept its merged names and stock: TEST Nacho Tray. 1 item kept its current name: the name in the file belongs to another item.')
+      ).toBeTruthy()
+    )
+    expect(db.row('pantry_items', 'x')).toMatchObject({ name: 'TEST Lime Soda', notes: 'file note', current_stock: 2 })
+    expect(db.row('pantry_items', 't')).toMatchObject({ current_stock: 6, last_purchased_at: '2026-11-12T09:00:00+00:00' })
+  })
+})
