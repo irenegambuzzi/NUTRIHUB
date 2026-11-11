@@ -35,6 +35,10 @@ Contents
    - 9L. Units for new items (decided 01/11, as built; NEW NOTE 1, SQL 030)
    - 9M. Reopen of items a purchase created (decided 01/11, as built; SQL
      031): K25–K31
+   - 9N. One item, many names (round 6D, decided 04–09/11, stages 1–5 as
+     built; SQL 032): up to K145
+   - 9O. MONEY display round (decided 10–11/11; no SQL): K146–K176, prompt 1
+     as built
 10. Risks and decisions
 
 ---
@@ -3884,6 +3888,10 @@ allows 029 (it doesn't touch `arrive_order` / `unarrive_order`).
   the amount was changed elsewhere (K9), one button would put the scaled
   parts in the two fields. Not built; today they are typed again or fixed
   with "Put the difference on {label}". With phase 2.
+- **A Telegram bot** (K176, 11/11; after the AI round): messages and
+  receipt photos in English, Indonesian or Italian go to a Supabase Edge
+  Function that calls the Claude API and records expenses and income in the
+  app's tables. See 9O K176.
 
 ### Follow-up 01/11 to 9K (as built; code and tests only, no SQL)
 
@@ -4003,9 +4011,9 @@ fake database that can't answer now means "not known".
    after a purchase or an arrival (seen in the iPhone test of 9L).~~
    **Analysed 01/11 (`tmp-export/reopen-history-readonly-report.md`), built
    01/11 — section 9M** (SQL 031 written, not run yet).
-3. Round 6D (one item, many names; section 9D). **Next, after 9M.** Started
-   06/11: section 9N.
-4. **MONEY display round**: notes 4 + 5 (in the plan's "Later" / 9F
+3. ~~Round 6D (one item, many names; section 9D). **Next, after 9M.** Started
+   06/11: section 9N.~~ **Done — section 9N.**
+4. **MONEY display round** (**started 10/11 — section 9O**): notes 4 + 5 (in the plan's "Later" / 9F
    notes) plus NEW NOTES 2 + 3: in Money, the charts first; then "Totals
    per category" as a closed bar that opens on tap (like "History (N)" in
    Orders); then the expenses history (with Sort by) as a closed bar in
@@ -5081,6 +5089,13 @@ update, also after stage 2.
   "Edit item" of the group row has "Merge other items into this one…" with
   the K112 rule (all variants chosen and locked); the 1× toggle stays hidden.
   Edge cases (a)–(d) built the safe way (see "Stage 5 as built", Kata ragu).
+- **K139** (09/11, keep as built) A group row from an older app version with 0 variants keeps the note that mentions variants.
+- **K140** (keep as built) A SHOP card linked to an old group row is locked in "Confirm purchase" with the K138 text.
+- **K141** (keep as built) Deleting an old group row that still has variants is refused with the K138 text.
+- **K142** (keep as built) Old group rows are left out of every picker; the same name can then become two items (fixed by a merge).
+- **K143** (keep as built) Variants of an old group get no names features until the group is merged.
+- **K144** (keep as built) The old group row's tile: no status badge, green, "min …"; its minimum field stays in "Edit item".
+- **K145** (keep as built) The CSV/Excel "names" column and the "It arrived!" toast with the other name ("(Corn Snack)") are not built; they are under "Later".
 
 iPhone test of stage 4 done 08/11/2026: all OK.
 
@@ -6192,6 +6207,10 @@ answered.
    has them); the toast says `Added 1 pcs to "Snack Box TEST"`. Options: (a)
    leave; (b) build in a later round. Suggestion: (a) for now.
 
+(Answered 09/11: 1 → K139, 2 → K140, 3 → K141, 4 → K142, 5 → K143, 6 → K144, 7 → K145.)
+
+iPhone test of stage 5 done 09/11/2026: all OK.
+
 **Notes for later stages.**
 
 - **Stage 3:** built (above).
@@ -6206,6 +6225,171 @@ answered.
   group still has no name pack" is no longer relevant: there are no groups in
   the app, and an order linked to a group row from an older app version opens
   "It arrived!" instead of the linked dialog (K138).
+
+### 9O. MONEY display round (decided 10–11/11)
+
+Analysis: `tmp-export/money-display-readonly-report.md` (09/11, read only,
+A–I; Kata ragu M1–M26). The household's decisions below win where they
+differ from the report. **No SQL in any prompt of this round** (K163): no
+file in `supabase/` changes; no new browser storage (the keys
+`money.incomePerson`, `money.expensePerson` and the Trend bars/line choice
+keep working as before), no new offline queue.
+
+**Decisions.**
+
+- **K146** Bar texts: "Totals per category (N)", "Expenses (N)", "Income (N)".
+  - N for "Totals per category" = main categories with spending in the period for the "Paid by" pill.
+  - N for "Expenses" = expenses in the period for the "Paid by" pill (the same rows the € chip next to "Expenses" adds up).
+  - N for "Income" = income entries in the period for the "Received by" pill.
+  - With a chart filter on: "Expenses (n of N)" / "Income (n of N)" (n = what the list shows).
+  - The € total is shown only on the "Totals per category" bar (right side, as the card shows it today).
+  - Empty period: "(0)"; the bar can still be tapped and opens to today's empty text (like "History (0)" in Orders).
+- **K147** A chart tap (pie slice, legend entry, TREND bar, store row) while the list bar of that section is closed: the filter is applied AND the bar opens by itself. No scrolling.
+- **K148** The filter chips, "Clear filters" and "{n} · €{x}" sit directly under the charts of their section, always visible (never inside a bar). "Clear filters" never closes a bar.
+- **K149** "Select" opens "Expenses (N)" by itself. While selecting, the charts and the filter chips are hidden as today; the "Select expenses" card and the tick list are shown inside the open "Expenses (N)" bar, in place of "Sort by" and the list. "Totals per category (N)" stays where it is, open or closed as it was. Leaving Select: keep today's behaviour exactly (today leaving Select clears the sort, the chart filters and the By category/By store toggle).
+- **K150** After "Add expense" saves, every bar stays as it was (a closed bar stays closed); the existing toast is enough.
+- **K151** An opened bar stays open while the period, the period pill or a person pill changes, until the user leaves Money. Every time the Money page mounts (menu, reload, app update, back from Plan/Shop/Home), all bars start closed. Page state only (useState), no browser storage. A period or pill change must not remount the bars.
+- **K152** Order of the Money page, top to bottom:
+  1. period pills + "‹ … ›" bar + top card (unchanged)
+  2. Income: title "Income", € chip, "Add income", "Received by" pills (K174), today's notices, the Add income card when open, the charts "By category" + "Trend", the filter chips row (K148), then the closed bar "Income (N)" holding "Sort by" + the income list.
+  3. Orders: exactly as today ("History (N)" stays closed, "Where do I record a purchase?" stays closed).
+  4. Expenses: title "Expenses", € chip, "Select", "Add expense", "Paid by" pills, "Set the store of several expenses…", the Add expense form when open, the charts ("By category" / "By store" + "Trend") FIRST, the filter chips row (K148), then the closed bar "Totals per category (N)" (inside: today's Totals card content), then the closed bar "Expenses (N)" (inside: "Sort by" + the expenses list, unchanged).
+
+  The € chips next to the titles "Income" and "Expenses" stay ALWAYS visible and keep following their pills exactly as today. Real October 2026 data: Expenses chip Everyone €2575.40, Irene €952.15, Akbar €1623.25, Shared €268.58; Income chip Everyone €4920.17, Irene €2858.51, Akbar €2061.66.
+- **K153 + K162** Weeks of a month = calendar rows Monday–Sunday, cut to the month. The Month pill's TREND has one bar per row, labelled "Week 1", "Week 2", …; every day of the month is in exactly one bar. This fixes the defect where the last days of some months were in no bar (Nov 2026: 30/11; Feb 2026: 23–28/02; Mar 2026: 30–31/03; Aug 2026: 31/08). Filter chip of a week bar: "Week {n} · {first}–{last} {Mon}", or "Week {n} · {day} {Mon}" for a one-day week (e.g. "Week 1 · 1 Nov", "Week 2 · 2–8 Nov", "Week 6 · 30 Nov"). Tapping a week bar filters exactly those days. Verified examples:
+  - Oct 2026 (1 Oct = Thursday): 1–4, 5–11, 12–18, 19–25, 26–31 → 5 bars
+  - Nov 2026 (1 Nov = Sunday): 1, 2–8, 9–15, 16–22, 23–29, 30 → 6 bars
+  - Feb 2026 (1 Feb = Sunday): 1, 2–8, 9–15, 16–22, 23–28 → 5 bars
+  - Mar 2026 (1 Mar = Sunday): 1, 2–8, 9–15, 16–22, 23–29, 30–31 → 6 bars
+  - Aug 2026 (1 Aug = Saturday): 1–2, 3–9, 10–16, 17–23, 24–30, 31 → 6 bars
+  - Feb 2027 (1 Feb = Monday): 1–7, 8–14, 15–21, 22–28 → 4 bars
+
+  The Week pill (7 day bars), 3 Months, 6 Months and Year (month bars) don't change. The existing "Sort by" options ("By category", "By week", "Category & week", "✕ Clear sort") are NOT changed in this prompt (prompt 2 replaces them). Check every other user of the month buckets.
+- **K154** Period filter: period chips OR dates (choosing one clears the other).
+- **K155** Dates: "From" + "To"; an empty "To" = one day.
+- **K156** List filters work only inside the period on screen; a date outside it → a short message. (Period chips: see K175.)
+- **K157** (Version 1) Inside the open list bar: two buttons "Sort by category ▾" and "Sort by period ▾", then the list. "Sort by category": chips of the main categories with spending in the period, several at once. "Sort by period": the period chips (K175) or "From"/"To". AND between the two buttons, OR inside one. The list arrangement is automatic: nothing chosen → the plain list as today; only categories → one card per category with its subtotal; only period chips → one card per chosen chip period; only dates → the plain list; categories + period → one card per category. A total "{n} · €{x}". "Category & week", "By category", "By week" and "✕ Clear sort" are removed. Example (made-up October data): Week 1 + Week 2 AND Going out + Cigarettes & Vape → 5 expenses, €86.60; Going out €74.90, Cigarettes & Vape €11.70.
+- **K157a** Several period chips at once show the expenses of all chosen periods (Week 1 only: 2 · €31.70; Week 2 only: 3 · €54.90; both: 5 · €86.60, with the two categories of K157's example).
+- **K157b** A chart tap turns on the same chip (pie or legend → category chip; TREND bar → period chip).
+- **K157c** A closed button shows how many are chosen: "Sort by category · 2".
+- **K157d** The store filter (from "By store") stays a chip under the charts, not a third button.
+- **K158** Income gets the same two buttons (no store filter).
+- **K159** The pills stay "Week", "Month", "3 Months", "6 Months", "Year".
+- **K160a** 3 Months / 6 Months: tapping the period text opens an inline row with "Month", "Year", "Ending in" / "Starting in" (default "Ending in") and "Show"; quick buttons "Q1"–"Q4" (3 Months) and "H1", "H2" (6 Months), always inside one calendar year. Opening the pill shows the span ending in the current month. Examples on 11/11/2026: 3 Months → Sep–Nov 2026; September 2026 + Ending in → Jul–Sep 2026; September 2026 + Starting in → Sep–Nov 2026; December 2025 + Starting in → Dec 2025 – Feb 2026; Q3 2026 → Jul–Sep 2026; 6 Months → Jun–Nov 2026; H2 2026 → Jul–Dec 2026.
+- **K160b** "‹ ›" only on Week and Month; removed on 3 Months, 6 Months and Year.
+- **K160c** Year pill: a "Year" select with the calendar years that have data (now 2026), plus span buttons "Last 12 months", "3 years", "5 years", "10 years", "All", each shown only when its result differs from every other choice (Nov 2026: 2026 only; Jan 2027: 2026, 2027, All; Nov 2027: + Last 12 months; Nov 2029: + 3 years). K160c-1: "Last 12 months" = the 12 whole months ending in the current month (Dec 2025 – Nov 2026). K160c-2: spans longer than 12 months → one TREND bar per year.
+- **K160d** Months after the current month can't be picked. A running period (the current month, Q4 2026, H2 2026, Year 2026) is allowed and shows data up to today. TREND draws no bar for months after the current month. "Starting in" the current month is not offered for 3 / 6 Months.
+- **K161** Tapping the period text opens the inline pickers (no popup) with "Show", and a small "This month" button to go back to the current period.
+- **K163** Four build prompts, each followed by an iPhone test: (1) closed bars + order + Month TREND weeks + K174 + plan; (2) the two "Sort by" buttons (K154–K158, K175), Expenses and Income; (3) periods (K159–K161, K160a–d, K173); (4) leftover (K164–K172). No SQL in any of them.
+- **K164** (B) The leftover is computed and only shown, never saved (no SQL). It is always right after late edits and the same on every device.
+- **K165** (B) Carried on: the leftover = the household's money at the end of the previous month, counting every month since the first month with data (October 2026). Example: Oct leftover €500, salaries on 5 Nov €1500 + €1400, €1000 left on 30 Nov → "Leftover from November 2026 · +€1000.00" in December.
+- **K166** (C) No leftover line when the leftover is ≤ 0 (the month's own minus still shows in "This month").
+- **K167** (A) Top card: the line "Leftover from October 2026 · +€2344.77" (real October 2026) above the tiles; INCOME = only the income of the period; EXPENSES unchanged; BALANCE = leftover + income − expenses (the money really there); under BALANCE a grey "This month +€…" (the period's own result). Example November (made-up income €2900.00, expenses €2400.00): BALANCE +€2844.77, "This month +€500.00". The app doesn't track which money is spent first: leftover and income are one sum, and every expense reduces it.
+- **K168** (B) Both pills "Everyone": the household line + a grey breakdown per person, e.g. "Irene +€1906.36 · Akbar +€438.41" (real October; labels from PAID_BY_OPTIONS). Both pills on the same person: that person's leftover. Any other combination (different persons, or a Shared pill): no line. K168a: in the grey breakdown each person's amount is shown as it is, minus included; the main line follows K166.
+- **K169** (B) The leftover also shows in 3 Months, 6 Months, Year and the spans: the money at the end of the month before the span, always with its amount ("Leftover from October 2026 · +€2344.77"); BALANCE includes it; a grey "This range +€…" under it. Week: no leftover. A span starting in or before the first month with data: no leftover. Never add the leftover of each month inside a range (that counts the same money again).
+- **K170** (A) No leftover line in the first month with data (October 2026).
+- **K171** (A) Text "Leftover from {Month YYYY}".
+- **K172** (C) The leftover is never in any chart (each chart equals its own tile). A thin bar in the top card: "Available €{leftover + income} · spent {p}%" (example: €5244.77, 46%).
+- **K173** (A) TREND follows the period on top: Week → days, Month → weeks (K153), 3 Months / 6 Months / Year / Last 12 months → months, longer → years.
+- **K174** Income "Received by" pills: the "Shared" pill is shown only when the period on screen (before the pill filter) has at least one income entry with received_by = 'shared'. If the "Shared" pill is selected (or remembered on the phone) and it is not shown, the pill becomes "Everyone" (the same way a tap on "Everyone" works, so the remembered value follows). The "Add income" form keeps "Shared" in "Received by". The Expenses / Orders "Paid by" pills don't change.
+- **K175** (A) The "Sort by period" chips are always the TREND bars of the period: Week → days, Month → weeks, 3/6 Months and Year → months, longer spans → years; plus "From"/"To" (this extends K156).
+- **K176** Later (not scheduled, after the AI round): a Telegram bot. Messages and receipt photos in English, Indonesian or Italian, with past dates understood ("yesterday"), go to a Supabase Edge Function, which calls the Claude API and records expenses and income in the same tables as the app. Only the household's two Telegram accounts. A confirmation or an Undo before or after saving. Rough cost estimate of 11/11/2026: about $2–6 a month. Also listed in the "Later (not scheduled)" list of 9K.
+
+### Prompt 1 as built (11/11; code and tests only, no SQL)
+
+Built: K146–K153, K162, K174 (and the plan). No file in `supabase/`
+changed; no new browser storage, no new offline queue. Orders, the top
+card, the K4 note, colours, toasts and forms are unchanged.
+
+**Files.** New: `components/ui/ClosedBar.jsx` (the bar: full-width button,
+`aria-expanded`, icon + label on the left, an optional value on the right,
+a chevron that turns, `min-h-10` = 40 px; exactly the classes of the old
+"History (N)" button), `hooks/useMoneyExplorer.js` (the one filter state of
+a section: chart filters, sort, buckets, pie, stores, what the list shows,
+`count` "(6)" / "(3 of 6)", `clearFilters`, `reset`),
+`lib/expensePeriods.test.js`, `components/moneyBars.render.test.jsx`.
+Changed: `components/expenses/MoneyExplorer.jsx` (now `ExplorerCharts` =
+the charts + the chips row, and `ExplorerList` = "Sort by" + the list; both
+read the same `explorer`), `IncomeSection.jsx` (charts, chips, the bar
+"Income (N)"; `personOptions` for K174), `pages/ExpensesPage.jsx` (the
+order of K152, the two bars, Select, K174), `CategoryTotals.jsx` (only the
+rows: its title and € total are on the bar; a `region` named "Totals per
+category"), `OrdersSection.jsx` ("History (N)" through `ClosedBar`, same
+markup), `PersonSelector.jsx` (optional `options`),
+`lib/expensePeriods.js` (`monthWeeks`; the Month buckets come from it),
+`lib/moneyList.js` (`formatMonthWeek`; `bucketChipLabel(period, bucket)`),
+`components/sharedParts.render.test.jsx` (opens the bars).
+
+**The bars and where they are** (icons from lucide-react, already in the
+project):
+
+| Bar | Icon | Right side | Inside when open | Empty |
+|---|---|---|---|---|
+| Money → section Income → under the charts and the chips row: "Income (N)" / "Income (n of N)" | `Wallet` | — | "Sort by" + the income list | "Income (0)" → "No income entries match this filter." |
+| Money → section Orders → under the orders on the way: "History (N)" | `History` | — | as before | as before |
+| Money → section Expenses → under the charts and the chips row: "Totals per category (N)" | `PieChart` | the € total of the pill, e.g. "€135.50" | today's rows (dot, name, €, share, bar) | "Totals per category (0)" → "No expenses in this period." |
+| Money → section Expenses → under "Totals per category (N)": "Expenses (N)" / "Expenses (n of N)" | `Receipt` | — | "Sort by" + the list; while selecting, the "Select expenses" card + the tick list | "Expenses (0)" → "No expenses match this filter." |
+
+N of "Totals per category" is the number of rows of the card (an
+"Uncategorized" row counts as one). The bars are page state
+(`useState(false)`): "Income (N)" in `IncomeSection`, the other two in
+`ExpensesPage`, all closed at every mount and kept through a new period,
+pill or saved expense. A chart tap that turns a filter **on** (legend /
+slice, TREND bar, store row) opens its section's list bar; a tap that lets
+a filter go opens nothing. "Select" calls `reset()` (no sort, no chart
+filter) and opens "Expenses (N)"; "Stop selecting" calls `reset()` again;
+the charts are not mounted while selecting, so "By category / By store"
+starts again at "By category" — exactly as before.
+
+**Month weeks.** `monthWeeks(year, month)` gives the calendar rows cut to
+the month: `{ key: the Monday of the row, label: "Week n", first, last }`.
+The key stays the row's Monday, so `bucketKeyForDate` and
+`applyChartFilters` are unchanged (the list only holds the month's days).
+Other users of the month buckets: only `useMoneyExplorer` (TREND and its
+filter) and the chip text. "By week" / "Category & week" in "Sort by" keep
+their full Monday–Sunday labels ("26 Oct – 1 Nov 2026"; prompt 2 replaces
+them).
+
+**K174.** `ExpensesPage` passes the "Received by" options without
+"Shared" when the period (before the pill) has no Shared income; while the
+income is still loading, a chosen "Shared" stays on offer. When it goes
+while chosen, the page calls the pill's own setter with "Everyone" (which
+saves `money.incomePerson` = all, as a tap does).
+
+**Tests: 2477 → 2504 (133 → 135 files).** `lib/expensePeriods.test.js`
+(10: the six months of K153, every day Jan 2025 – Dec 2027 in exactly one
+Month bar, the Month keys, the other pills unchanged, the chip texts).
+`components/moneyBars.render.test.jsx` (17: the October list of the
+prompt — Everyone "Expenses (6)", "Totals per category (3)" €135.50; a
+chart tap opens "Expenses (3 of 6)", "3 · €74.90", Totals and top card
+€135.50; the store row; the four pills (€59.90 "Expenses (2 of 4)" €33.70,
+€75.60, Shared €80.30 "Totals per category (2)"); an empty month; K4 note
+and top card ignore filters; TREND October €80.60 / €54.90 / 0 / 0 / 0 and
+"Week 2 · 5–11 Oct"; November six weeks, "Week 1 · 1 Nov", "Week 6 · 30
+Nov"; Income (2) €2000.00 without "Shared", (3) €2050.00 with it; Shared →
+a month without → "Everyone" remembered; remembered Shared; bars kept
+through ‹ › / pills; closed after unmount; Select; Add expense).
+`components/sharedParts.render.test.jsx`: the same checks, with the step
+that opens the bars (and "before 029" now opens the list too, so its "no
+Housing & Utilities" check still means something). Orders tests unchanged.
+
+**Kata ragu (11/11 prompt 1, tanya Zidane).** Built the safe way until
+answered.
+
+1. A chart tap that **removes** a filter while the bar is closed (e.g.
+   "Going out" tapped → bar opens; the bar closed by hand; "Going out"
+   tapped again → filter off). Built: the bar stays closed (only a tap that
+   applies a filter opens it). Options: (a) as built; (b) every chart tap
+   opens it. Suggestion: (a).
+2. Closing "Expenses (N)" while selecting. Built: the bar closes like any
+   other; Select stays on (charts still hidden, "Select" still not shown),
+   the ticks are lost, reopening the bar shows the tick list again.
+   Options: (a) as built; (b) closing the bar also leaves Select; (c) the
+   bar can't be closed while selecting. Suggestion: (b).
+3. K145 says the CSV/Excel "names" column and the toast "(Corn Snack)" "are
+   under Later", but no "Later" list holds them yet; not added (rule: change
+   nothing else in the plan). Options: (a) leave; (b) add them to the 9K
+   "Later (not scheduled)" list. Suggestion: (b).
 
 ---
 

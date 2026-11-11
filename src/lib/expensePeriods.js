@@ -63,10 +63,32 @@ export function formatPeriodRange(period, referenceDate = new Date(), offset = 0
   return `${from} – ${MONTH_LABELS[last.getMonth()]} ${last.getFullYear()}`
 }
 
+// The weeks of a month (plan 9O, K153 / K162): the calendar rows Monday–
+// Sunday, cut to the month, so every day of the month is in exactly one
+// week. `month` is 0–11. Each week: { key: the Monday of its row (it may be
+// in the month before), label: "Week 1", first, last: its first and last
+// day inside the month (YYYY-MM-DD) }. November 2026 (the 1st a Sunday):
+// 1, 2–8, 9–15, 16–22, 23–29, 30 → six weeks.
+export function monthWeeks(year, month) {
+  const weeks = []
+  const lastDay = new Date(year, month + 1, 0)
+  const day = new Date(year, month, 1)
+  while (day <= lastDay) {
+    const first = new Date(day)
+    // The row ends on its Sunday, or on the last day of the month.
+    const sunday = new Date(day)
+    sunday.setDate(day.getDate() + ((7 - day.getDay()) % 7))
+    const last = sunday < lastDay ? sunday : new Date(lastDay)
+    weeks.push({ key: getWeekStart(first), label: `Week ${weeks.length + 1}`, first: localDateString(first), last: localDateString(last) })
+    day.setDate(last.getDate() + 1)
+  }
+  return weeks
+}
+
 // Sub-buckets for the chart x-axis: days within a week, weeks within a
 // month, months within longer spans.
 export function getPeriodBuckets(period, referenceDate = new Date(), offset = 0) {
-  const { start, end } = getPeriodRange(period, referenceDate, offset)
+  const { start } = getPeriodRange(period, referenceDate, offset)
 
   if (period === 'week') {
     return Array.from({ length: 7 }, (_, i) => {
@@ -76,17 +98,7 @@ export function getPeriodBuckets(period, referenceDate = new Date(), offset = 0)
     })
   }
 
-  if (period === 'month') {
-    const buckets = []
-    const cursor = new Date(start)
-    let i = 1
-    while (cursor < end) {
-      buckets.push({ key: getWeekStart(cursor), label: `Week ${i}` })
-      cursor.setDate(cursor.getDate() + 7)
-      i++
-    }
-    return buckets.filter((b, idx, arr) => arr.findIndex((x) => x.key === b.key) === idx)
-  }
+  if (period === 'month') return monthWeeks(start.getFullYear(), start.getMonth())
 
   // Months: 12 for a year, 3 or 6 for those spans.
   const count = MONTHS_IN[period] ?? 12

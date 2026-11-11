@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, ChevronDown, History, Layers, Plus, X } from 'lucide-react'
+import { AlertTriangle, History, Layers, Plus, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { OrderForm } from './OrderForm'
@@ -10,6 +10,7 @@ import { PersonSelector } from './PersonSelector'
 import { LinkedArrivedDialog } from './LinkedArrivedDialog'
 import { OrderGroupSheet } from './OrderGroupSheet'
 import { WhereToRecord } from '../ui/WhereToRecord'
+import { ClosedBar } from '../ui/ClosedBar'
 import { useOrders, createOrder, editOrder, linkedItemOf, markDurableArrived } from '../../hooks/useOrders'
 import { askBackOnTheWay, askCancelOrder, askRemoveOrder } from '../../hooks/orderActions'
 import { groupOrders, useOrderGroups } from '../../hooks/useOrderGroups'
@@ -20,7 +21,6 @@ import { localDateString } from '../../lib/expensePeriods'
 import { linkedOrderUnits, splitOrders } from '../../lib/orders'
 import { groupLabel, groupMembers, groupingPlan, itemNames, respreadNote } from '../../lib/orderGroups'
 import { personLabel } from '../../lib/personFilter'
-import { cn } from '../../lib/cn'
 
 export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/019_stores_and_orders.sql). Until then everything else works as before.'
 
@@ -233,17 +233,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
           </div>
 
           <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setHistoryOpen((v) => !v)}
-              aria-expanded={historyOpen}
-              className="w-full min-h-10 px-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] flex justify-between items-center text-xs font-bold text-[var(--color-text-soft)]"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <History size={14} /> History ({history.length})
-              </span>
-              <ChevronDown size={14} className={cn('transition-transform', historyOpen && 'rotate-180')} />
-            </button>
+            <ClosedBar icon={History} label={`History (${history.length})`} open={historyOpen} onToggle={() => setHistoryOpen((v) => !v)} />
             {historyOpen &&
               (history.length > 0 ? (
                 history.map(card)

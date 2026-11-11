@@ -466,6 +466,9 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
       { id: 'dinner', amount: 17.39, description: 'Dinner', category_id: 'groceries', expense_date: day(12), paid_by: 'shared', trip_id: 'trip1', [`part_${p100}`]: 10.41, [`part_${p168}`]: 6.98 },
     ])
   const page = () => render(<ExpensesPage />)
+  // The list and "Totals per category" are closed bars (plan 9O): opened first.
+  const openBar = (name) => fireEvent.click(screen.getByRole('button', { name }))
+  const openList = () => openBar(/^Expenses \(/)
   const pill = (name) => fireEvent.click(within(screen.getByRole('group', { name: 'Paid by' })).getByRole('button', { name }))
   const summary = () => screen.getByText('Balance').closest('div').parentElement
   const chip = () => screen.getByRole('heading', { name: 'Expenses' }).parentElement
@@ -475,6 +478,8 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
     data.expenses = month(p100, p168)
     data.trips = [{ id: 'trip1', trip_date: day(12), source: 'money', shop_id: null }]
     page()
+    openList()
+    openBar(/^Totals per category \(/)
     // Everyone: whole amounts, no note.
     expect(within(summary()).getByText('€345.59')).toBeTruthy()
     expect(within(chip()).getByText('€345.59')).toBeTruthy()
@@ -501,7 +506,7 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
     expect(within(purchase).getByText('€15.62')).toBeTruthy()
     expect(within(purchase).getByText('of total €26.09')).toBeTruthy()
     // Totals per category and the "By category" chart.
-    const totals = screen.getByText('Totals per category').closest('div').parentElement
+    const totals = screen.getByRole('region', { name: 'Totals per category' })
     expect(within(totals).getByText('€100.00')).toBeTruthy()
     expect(charts.last.pieData.find((p) => p.name === 'Housing & Utilities').value).toBe(100)
 
@@ -520,6 +525,7 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
   it('Edit from a personal view opens the expense itself (the whole €268.58)', () => {
     data.expenses = month(P1, P2)
     page()
+    openList()
     pill(L2)
     const bill = groupOf('Housing & Utilities')
     fireEvent.click(bill)
@@ -531,6 +537,7 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
   it('K9: an amount changed elsewhere shows the parts scaled, with the amber note', () => {
     data.expenses = month(P1, P2, { bill: { amount: 260 } })
     page()
+    openList()
     pill(L1)
     const bill = groupOf('Housing & Utilities')
     expect(within(bill).getByText('€96.81')).toBeTruthy()
@@ -550,9 +557,11 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
   it('before 029 (no part columns): a person sees only their own expenses, no note, no fields — exactly as before', () => {
     data.expenses = month(P1, P2).map(({ [`part_${P1}`]: _a, [`part_${P2}`]: _b, ...e }) => e)
     page()
+    openList()
     pill(L1)
     expect(within(summary()).getByText('€12.50')).toBeTruthy()
     expect(screen.queryByText(/without parts/)).toBeNull()
+    expect(screen.getByText('Groceries', { selector: 'p' })).toBeTruthy()
     expect(screen.queryByText('Housing & Utilities', { selector: 'p' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add expense' }))
     expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
@@ -578,6 +587,7 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
     data.expenses = zeroMonth()
     data.trips = zeroTrips()
     page()
+    openList()
     expect(within(summary()).getByText('€148.73')).toBeTruthy()
     expect(screen.getAllByText(/^Purchase · /)).toHaveLength(2)
 

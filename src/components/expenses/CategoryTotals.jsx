@@ -1,19 +1,13 @@
-import { PieChart } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { formatShare } from '../../lib/moneySummary'
 
 // What was spent in each category over the period on screen: biggest
 // first, with its share of the total. Categories with nothing spent are
-// left out.
-export function CategoryTotals({ totals, total, styleFor }) {
+// left out. Its title and € total are on the closed bar "Totals per
+// category (N)" that holds it (plan 9O K146, ExpensesPage).
+export function CategoryTotals({ totals, styleFor }) {
   return (
-    <Card>
-      <div className="flex justify-between items-center mb-3">
-        <p className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1.5">
-          <PieChart size={14} /> Totals per category
-        </p>
-        <span className="text-xs font-mono font-bold text-[var(--color-accent)]">€{total.toFixed(2)}</span>
-      </div>
+    <Card role="region" aria-label="Totals per category">
       {totals.length === 0 ? (
         <p className="text-xs text-[var(--color-text-muted)] py-4 text-center">No expenses in this period.</p>
       ) : (

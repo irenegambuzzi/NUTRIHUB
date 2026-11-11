@@ -77,11 +77,23 @@ export function groupEntries(entries, mode, accessors) {
 
 export const entriesTotal = sum
 
-// What the chip for a clicked time bucket says. `key` is the bucket key
-// (a day, a Monday, or YYYY-MM), `label` the chart's own label.
-export function bucketChipLabel(period, key, label) {
+// The days of a week of a month (plan 9O, K153): "2–8 Nov", or "30 Nov"
+// for a week of one day. `first` and `last` (YYYY-MM-DD) are in one month.
+export function formatMonthWeek(first, last) {
+  const a = parseLocalDate(first)
+  const b = parseLocalDate(last)
+  const month = MONTHS[b.getMonth()]
+  return first === last ? `${b.getDate()} ${month}` : `${a.getDate()}–${b.getDate()} ${month}`
+}
+
+// What the chip for a clicked time bucket says. `bucket` is the chart's
+// bucket ({ key, label }, and for a Month its `first` and `last` day):
+// a day ("Mon 5 Oct"), a week of the month ("Week 2 · 2–8 Nov",
+// "Week 6 · 30 Nov") or a month ("Oct 2026").
+export function bucketChipLabel(period, bucket) {
+  const { key, label } = bucket
   if (period === 'week') return parseLocalDate(key).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-  if (period === 'month') return `${label} · ${formatWeekRange(key)}`
+  if (period === 'month') return `${label} · ${formatMonthWeek(bucket.first, bucket.last)}`
   const [y, m] = key.split('-').map(Number)
   return `${MONTHS[m - 1]} ${y}`
 }

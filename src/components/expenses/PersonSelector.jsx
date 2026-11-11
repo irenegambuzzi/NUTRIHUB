@@ -1,11 +1,13 @@
 import { PERSON_OPTIONS } from '../../lib/personFilter'
 import { cn } from '../../lib/cn'
 
-// "Everyone / Irene / Akbar / Shared": whose entries a section shows.
-export function PersonSelector({ value, onChange, label }) {
+// "Everyone / {label} / {label} / Shared": whose entries a section shows.
+// `options` leaves some out (Income hides "Shared" in a period without
+// Shared income, plan 9O K174).
+export function PersonSelector({ value, onChange, label, options = PERSON_OPTIONS }) {
   return (
     <div role="group" aria-label={label} className="flex gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full p-1 self-start w-fit">
-      {PERSON_OPTIONS.map((o) => (
+      {options.map((o) => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}

@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ExpenseForm } from '../components/expenses/ExpenseForm'
 import { cardCount } from '../lib/trips'
 import { useItemNamesReady } from '../hooks/useItemNamesReady'
 import { PurchaseForm } from '../components/expenses/PurchaseForm'
 import { SelectExpenses } from '../components/expenses/MergeDialog'
-import { MoneyExplorer } from '../components/expenses/MoneyExplorer'
+import { ExplorerCharts, ExplorerList } from '../components/expenses/MoneyExplorer'
+import { useMoneyExplorer } from '../hooks/useMoneyExplorer'
+import { ClosedBar } from '../components/ui/ClosedBar'
 import { ExpenseRow, TripRow } from '../components/expenses/EntryRows'
 import { BulkStoreDialog, TripStoreDialog } from '../components/expenses/StoreDialogs'
 import { useFlow } from '../hooks/useFlow'
@@ -29,13 +31,13 @@ import { expenseDiscountNote, ordersByExpense } from '../lib/orders'
 import { groupDiscountNote, groupMembers } from '../lib/orderGroups'
 import { PersonSelector } from '../components/expenses/PersonSelector'
 import { Button } from '../components/ui/Button'
-import { usePersonFilter } from '../lib/personFilter'
+import { PERSON_OPTIONS, usePersonFilter } from '../lib/personFilter'
 import { getPeriodRange, localDateString } from '../lib/expensePeriods'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
 import { PEOPLE, personalExpenses, realExpense, withoutPartsNote } from '../lib/sharedParts'
-import { Layers, ListChecks, Plus, Store, X } from 'lucide-react'
+import { Layers, ListChecks, PieChart, Plus, Receipt, Store, X } from 'lucide-react'
 
 const expenseDate = (expense) => expense.expense_date
 
@@ -49,6 +51,7 @@ export function ExpensesPage() {
   const partsReady = useExpensePartsReady(expenses.length ? expenses : undefined)
   const {
     income,
+    loaded: incomeLoaded,
     missing: incomeMissing,
     categories: incomeCategories,
     categoriesMissing: incomeCategoriesMissing,
@@ -190,15 +193,45 @@ export function ExpensesPage() {
   // What a person's total leaves out: the Shared expenses without parts.
   const partsNote = partsReady && PEOPLE.includes(paidByFilter) ? withoutPartsNote(periodExpenses) : ''
 
+  const periodIncome = useMemo(() => income.filter((i) => i.income_date >= startDate && i.income_date < endDate), [income, startDate, endDate])
   const filteredIncome = useMemo(
-    () => income.filter((i) => i.income_date >= startDate && i.income_date < endDate && (receivedByFilter === 'all' || i.received_by === receivedByFilter)),
-    [income, startDate, endDate, receivedByFilter]
+    () => periodIncome.filter((i) => receivedByFilter === 'all' || i.received_by === receivedByFilter),
+    [periodIncome, receivedByFilter]
   )
+  // Income's "Shared" pill only in a period with Shared income (plan 9O
+  // K174); while the income is still loading a chosen "Shared" stays on
+  // offer. When it goes while chosen, the pill becomes "Everyone" exactly
+  // as a tap on "Everyone" does (so the phone remembers that too).
+  const sharedIncomeShown = periodIncome.some((i) => i.received_by === 'shared') || (!incomeLoaded && receivedByFilter === 'shared')
+  const incomePersonOptions = useMemo(() => (sharedIncomeShown ? PERSON_OPTIONS : PERSON_OPTIONS.filter((o) => o.value !== 'shared')), [sharedIncomeShown])
+  useEffect(() => {
+    if (!sharedIncomeShown && receivedByFilter === 'shared') setReceivedByFilter('all')
+  }, [sharedIncomeShown, receivedByFilter, setReceivedByFilter])
 
   const total = sumAmounts(filteredExpenses)
   const incomeTotal = sumAmounts(filteredIncome)
 
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
+
+  // The expense charts and list share one filter state (plan 9O K148): the
+  // charts and their chips stay visible, the list is inside "Expenses (N)".
+  const explorer = useMoneyExplorer({ entries: filteredExpenses, dateOf: expenseDate, categoryOf: mainOf, period, offset, scope: paidByFilter, styleFor, shopById })
+  // The closed bars (K146–K151): closed each time Money opens (page state
+  // only, nothing remembered), kept as they are through a new period, a
+  // new pill or a saved expense; a chart tap opens "Expenses (N)" (K147).
+  const [totalsOpen, setTotalsOpen] = useState(false)
+  const [expensesOpen, setExpensesOpen] = useState(false)
+  // "Select" opens "Expenses (N)" (K149) and starts, like it leaves, with
+  // no sort and no chart filter — as when the list was built again.
+  const startSelecting = () => {
+    explorer.reset()
+    setExpensesOpen(true)
+    setSelecting(true)
+  }
+  const stopSelecting = () => {
+    explorer.reset()
+    setSelecting(false)
+  }
   // One row per purchase (SHOP trip, MONEY purchase or merged expenses,
   // with supabase/021), and the other expenses one row per main category
   // per day. The group with the most recent entry comes first (the newest
@@ -286,6 +319,7 @@ export function ExpensesPage() {
         offset={offset}
         person={receivedByFilter}
         onPerson={setReceivedByFilter}
+        personOptions={incomePersonOptions}
         addIncome={addIncome}
         updateIncome={updateIncome}
         deleteIncome={deleteIncome}
@@ -318,7 +352,7 @@ export function ExpensesPage() {
               €{total.toFixed(2)}
             </span>
             {!addingExpense && !selecting && flow.ready && (
-              <Button variant="ghost" onClick={() => setSelecting(true)} className="px-3 py-1.5 text-xs">
+              <Button variant="ghost" onClick={startSelecting} className="px-3 py-1.5 text-xs">
                 <ListChecks size={14} /> Select
               </Button>
             )}
@@ -354,68 +388,72 @@ export function ExpensesPage() {
           />
         )}
 
-        <CategoryTotals totals={totals} total={total} styleFor={styleFor} />
+        {/* While selecting, the charts and their chips are hidden (round 4). */}
+        {!selecting && <ExplorerCharts explorer={explorer} plural="expenses" shopsMissing={shopsMissing} onPick={() => setExpensesOpen(true)} />}
 
-        {selecting ? (
-          // A person's pill lists only their own expenses to merge (K20),
-          // as before 9K; Shared ones are merged from Everyone or Shared.
-          <SelectExpenses
-            expenses={sortNewestFirst(filteredExpenses.filter((e) => !e.sharedPart), expenseDate)}
-            orderExpenseIds={orderExpenseIds}
-            names={namesOf}
-            shopOf={shopOf}
-            trips={trips}
-            allExpenses={expenses}
-            onDone={() => setSelecting(false)}
-          />
-        ) : (
-          <MoneyExplorer
-            entries={filteredExpenses}
-            dateOf={expenseDate}
-            categoryOf={mainOf}
-            period={period}
-            offset={offset}
-            scope={paidByFilter}
-            styleFor={styleFor}
-            plural="expenses"
-            shopById={shopById}
-            shopsMissing={shopsMissing}
-            renderDefault={expenseGroups}
-            renderEntry={renderExpense}
-            renderEntries={
-              flow.ready
-                ? (items) =>
-                    bundleTrips(items, orderGroupOf).map((part) =>
-                      part.entry ? (
-                        renderExpense(part.entry)
-                      ) : part.orderGroupId ? (
-                        <TripRow
-                          key={part.key}
-                          part={part}
-                          trip={null}
-                          shop={shopOf(groupMembers(part.orderGroupId, orders)[0]?.shop_id ?? part.items[0].shop_id)}
-                          fullTotal={purchasePart(part.items, orderGroupExpenses(part.orderGroupId)).fullTotal}
-                          renderEntry={renderExpense}
-                          icon={Layers}
-                          note={groupDiscountNote(groupMembers(part.orderGroupId, orders)) || null}
-                          extra={openGroupButton(part.orderGroupId)}
-                        />
-                      ) : (
-                        <TripRow
-                          key={part.key}
-                          part={part}
-                          trip={tripOf(part.tripId, part.items)}
-                          shop={shopOf(tripShopId(part.items, tripById.get(part.tripId)))}
-                          fullTotal={purchasePart(part.items, tripExpenses(part.tripId)).fullTotal}
-                          renderEntry={renderExpense}
-                          onChangeTripStore={setTripStoreFor}
-                        />
-                      )
-                    )
-                : null
-            }
-          />
-        )}
+        <div className="space-y-2">
+          <ClosedBar icon={PieChart} label={`Totals per category (${totals.length})`} value={`€${total.toFixed(2)}`} open={totalsOpen} onToggle={() => setTotalsOpen((v) => !v)} />
+          {totalsOpen && <CategoryTotals totals={totals} styleFor={styleFor} />}
+        </div>
+
+        <div className="space-y-2">
+          <ClosedBar icon={Receipt} label={`Expenses ${explorer.count}`} open={expensesOpen} onToggle={() => setExpensesOpen((v) => !v)} />
+          {expensesOpen &&
+            (selecting ? (
+              // In place of "Sort by" and the list (K149). A person's pill
+              // lists only their own expenses to merge (K20), as before 9K;
+              // Shared ones are merged from Everyone or Shared.
+              <SelectExpenses
+                expenses={sortNewestFirst(filteredExpenses.filter((e) => !e.sharedPart), expenseDate)}
+                orderExpenseIds={orderExpenseIds}
+                names={namesOf}
+                shopOf={shopOf}
+                trips={trips}
+                allExpenses={expenses}
+                onDone={stopSelecting}
+              />
+            ) : (
+              <ExplorerList
+                explorer={explorer}
+                plural="expenses"
+                styleFor={styleFor}
+                renderDefault={expenseGroups}
+                renderEntry={renderExpense}
+                renderEntries={
+                  flow.ready
+                    ? (items) =>
+                        bundleTrips(items, orderGroupOf).map((part) =>
+                          part.entry ? (
+                            renderExpense(part.entry)
+                          ) : part.orderGroupId ? (
+                            <TripRow
+                              key={part.key}
+                              part={part}
+                              trip={null}
+                              shop={shopOf(groupMembers(part.orderGroupId, orders)[0]?.shop_id ?? part.items[0].shop_id)}
+                              fullTotal={purchasePart(part.items, orderGroupExpenses(part.orderGroupId)).fullTotal}
+                              renderEntry={renderExpense}
+                              icon={Layers}
+                              note={groupDiscountNote(groupMembers(part.orderGroupId, orders)) || null}
+                              extra={openGroupButton(part.orderGroupId)}
+                            />
+                          ) : (
+                            <TripRow
+                              key={part.key}
+                              part={part}
+                              trip={tripOf(part.tripId, part.items)}
+                              shop={shopOf(tripShopId(part.items, tripById.get(part.tripId)))}
+                              fullTotal={purchasePart(part.items, tripExpenses(part.tripId)).fullTotal}
+                              renderEntry={renderExpense}
+                              onChangeTripStore={setTripStoreFor}
+                            />
+                          )
+                        )
+                    : null
+                }
+              />
+            ))}
+        </div>
 
         {tripStoreFor && (
           <TripStoreDialog

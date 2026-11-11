@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Wallet, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { IncomeForm } from './IncomeForm'
 import { CategoryManager } from './CategoryManager'
-import { MoneyExplorer } from './MoneyExplorer'
+import { ExplorerCharts, ExplorerList } from './MoneyExplorer'
+import { ClosedBar } from '../ui/ClosedBar'
+import { useMoneyExplorer } from '../../hooks/useMoneyExplorer'
 import { IncomeRow } from './EntryRows'
 import { PersonSelector } from './PersonSelector'
 import { PAID_BY_OPTIONS } from '../../data/constants'
@@ -19,6 +21,9 @@ const incomeDate = (entry) => entry.income_date
 // Adding income (a card that opens on demand), its categories, and the
 // income received in the period on screen with the same charts, filters
 // and sorting as the expenses. Each entry is editable and deletable.
+// The charts and their filter chips stay visible; "Sort by" and the list
+// are in the closed bar "Income (N)" (plan 9O K146–K152), which a chart
+// tap opens. `personOptions`: the "Received by" pills on offer (K174).
 export function IncomeSection({
   entries,
   total,
@@ -30,6 +35,7 @@ export function IncomeSection({
   offset,
   person,
   onPerson,
+  personOptions,
   addIncome,
   updateIncome,
   deleteIncome,
@@ -43,6 +49,9 @@ export function IncomeSection({
   const [managing, setManaging] = useState(false)
   const tree = useMemo(() => categoryTree(categories), [categories])
   const onManage = categoriesMissing ? undefined : () => setManaging(true)
+  // Closed each time Money opens; kept open through a new period or pill.
+  const [listOpen, setListOpen] = useState(false)
+  const explorer = useMoneyExplorer({ entries, dateOf: incomeDate, categoryOf: tree.mainOf, period, offset, scope: person, styleFor })
 
   return (
     <section className="space-y-4">
@@ -60,7 +69,7 @@ export function IncomeSection({
         </div>
       </div>
 
-      <PersonSelector value={person} onChange={onPerson} label="Received by" />
+      <PersonSelector value={person} onChange={onPerson} label="Received by" options={personOptions} />
 
       {missing && (
         <Card className="text-xs text-yellow-300">Income needs a one-time database update (supabase/016_income_and_category_colors.sql) before it can be saved.</Card>
@@ -83,51 +92,53 @@ export function IncomeSection({
         </Card>
       )}
 
-      <MoneyExplorer
-        entries={entries}
-        dateOf={incomeDate}
-        categoryOf={tree.mainOf}
-        period={period}
-        offset={offset}
-        scope={person}
-        styleFor={styleFor}
-        plural="income entries"
-        renderDefault={(visible) =>
-          sortNewestFirst(visible, incomeDate).map((entry) => {
-            const { main, sub } = tree.namesOf(entry.category_id)
-            const style = styleFor(tree.mainOf(entry.category_id)?.id)
-            return (
-              <div
-                key={entry.id}
-                className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs p-3 flex justify-between items-center gap-3"
-              >
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0" style={{ background: style.tint, borderColor: style.border, color: style.text }}>
-                      {main || 'Uncategorized'}
-                      {sub ? ` › ${sub}` : ''}
-                    </span>
-                    {entry.source && <span className="font-bold text-[var(--color-text)] truncate">{entry.source}</span>}
-                  </p>
-                  <span className="text-[10px] text-[var(--color-text-muted)] block truncate mt-0.5">
-                    {parseLocalDate(entry.income_date).toLocaleDateString('en-GB')} · {receivedByLabel(entry.received_by)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="font-mono font-bold text-[#7FDB92] mr-1">+€{Number(entry.amount).toFixed(2)}</span>
-                  <button onClick={() => setEditing(entry)} className="text-[var(--color-icon-muted)] hover:text-[var(--color-primary)] transition w-9 h-9 flex items-center justify-center" title="Edit income" aria-label="Edit income">
-                    <Pencil size={13} />
-                  </button>
-                  <button onClick={() => deleteIncome(entry.id)} className="text-[var(--color-icon-muted)] hover:text-red-400 transition w-9 h-9 flex items-center justify-center" title="Delete income" aria-label="Delete income">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            )
-          })
-        }
-        renderEntry={(entry) => <IncomeRow key={entry.id} entry={entry} names={tree.namesOf} onEdit={setEditing} onDelete={deleteIncome} />}
-      />
+      <ExplorerCharts explorer={explorer} plural="income entries" onPick={() => setListOpen(true)} />
+
+      <div className="space-y-2">
+        <ClosedBar icon={Wallet} label={`Income ${explorer.count}`} open={listOpen} onToggle={() => setListOpen((v) => !v)} />
+        {listOpen && (
+          <ExplorerList
+            explorer={explorer}
+            plural="income entries"
+            styleFor={styleFor}
+            renderDefault={(visible) =>
+              sortNewestFirst(visible, incomeDate).map((entry) => {
+                const { main, sub } = tree.namesOf(entry.category_id)
+                const style = styleFor(tree.mainOf(entry.category_id)?.id)
+                return (
+                  <div
+                    key={entry.id}
+                    className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm text-xs p-3 flex justify-between items-center gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0" style={{ background: style.tint, borderColor: style.border, color: style.text }}>
+                          {main || 'Uncategorized'}
+                          {sub ? ` › ${sub}` : ''}
+                        </span>
+                        {entry.source && <span className="font-bold text-[var(--color-text)] truncate">{entry.source}</span>}
+                      </p>
+                      <span className="text-[10px] text-[var(--color-text-muted)] block truncate mt-0.5">
+                        {parseLocalDate(entry.income_date).toLocaleDateString('en-GB')} · {receivedByLabel(entry.received_by)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="font-mono font-bold text-[#7FDB92] mr-1">+€{Number(entry.amount).toFixed(2)}</span>
+                      <button onClick={() => setEditing(entry)} className="text-[var(--color-icon-muted)] hover:text-[var(--color-primary)] transition w-9 h-9 flex items-center justify-center" title="Edit income" aria-label="Edit income">
+                        <Pencil size={13} />
+                      </button>
+                      <button onClick={() => deleteIncome(entry.id)} className="text-[var(--color-icon-muted)] hover:text-red-400 transition w-9 h-9 flex items-center justify-center" title="Delete income" aria-label="Delete income">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })
+            }
+            renderEntry={(entry) => <IncomeRow key={entry.id} entry={entry} names={tree.namesOf} onEdit={setEditing} onDelete={deleteIncome} />}
+          />
+        )}
+      </div>
 
       {editing && (
         <div data-unsaved className="fixed inset-0 z-30 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setEditing(null)}>
