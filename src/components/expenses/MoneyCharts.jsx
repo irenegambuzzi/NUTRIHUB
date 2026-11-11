@@ -71,17 +71,19 @@ function TrendStyleToggle() {
 }
 
 // Spending (or income) by main category (pie) and over the period (bars
-// or a line). Clicking a slice, a legend entry or a column picks it as a
-// filter for the list; clicking it again lets go.
+// or a line). Clicking a slice, a legend entry or a column turns its chip
+// on or off (plan 9O K157b); several can be on.
 //   pieData: [{ key, name, value, hex }]   barData: [{ key, label, amount }]
+//   selectedCategories / selectedBuckets: the keys that are on
 // `stores` (expenses only) adds a "By store" view next to "By category":
 //   { missing, totals, split, selected, onSelect } (see StoreTotals).
-export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, selectedBucket, onCategory, onBucket, stores = null }) {
+export function MoneyCharts({ pieData, barData, emptyText, selectedCategories = [], selectedBuckets = [], onCategory, onBucket, stores = null }) {
   const trendStyle = useTrendStyle()
   const [breakdown, setBreakdown] = useState('category')
   const showStores = Boolean(stores) && breakdown === 'store'
-  const bucketIndex = barData.findIndex((b) => b.key === selectedBucket)
-  const selectedLabel = bucketIndex >= 0 ? barData[bucketIndex].label : null
+  const categoryOn = (key) => selectedCategories.includes(key)
+  const someCategory = selectedCategories.length > 0
+  const selectedLabels = barData.filter((b) => selectedBuckets.includes(b.key)).map((b) => b.label)
   const onTrendClick = (state) => {
     const i = indexOf(state)
     if (i !== null && barData[i]) onBucket(barData[i].key)
@@ -121,8 +123,8 @@ export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, sel
                     <Cell
                       key={entry.key}
                       fill={entry.hex}
-                      fillOpacity={selectedCategory && selectedCategory !== entry.key ? 0.3 : 1}
-                      stroke={selectedCategory === entry.key ? 'var(--color-text)' : 'var(--color-surface)'}
+                      fillOpacity={someCategory && !categoryOn(entry.key) ? 0.3 : 1}
+                      stroke={categoryOn(entry.key) ? 'var(--color-text)' : 'var(--color-surface)'}
                       strokeWidth={2}
                     />
                   ))}
@@ -135,11 +137,11 @@ export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, sel
                 <li key={entry.key}>
                   <button
                     onClick={() => onCategory(entry.key)}
-                    aria-pressed={selectedCategory === entry.key}
+                    aria-pressed={categoryOn(entry.key)}
                     className={cn(
                       'min-h-10 px-3 rounded-full inline-flex items-center gap-1.5 text-[11px] border transition-all duration-200',
-                      selectedCategory === entry.key ? 'border-[var(--color-text-soft)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]',
-                      selectedCategory && selectedCategory !== entry.key && 'opacity-60'
+                      categoryOn(entry.key) ? 'border-[var(--color-text-soft)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]',
+                      someCategory && !categoryOn(entry.key) && 'opacity-60'
                     )}
                   >
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: entry.hex }} />
@@ -164,7 +166,9 @@ export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, sel
               <XAxis dataKey="label" tick={{ fill: AXIS_COLOR, fontSize: 11 }} axisLine={{ stroke: 'var(--color-border)' }} tickLine={false} />
               <YAxis tick={{ fill: AXIS_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} width={36} />
               <Tooltip formatter={money} contentStyle={TOOLTIP_STYLE} />
-              {selectedLabel && <ReferenceLine x={selectedLabel} stroke="var(--color-text-soft)" strokeDasharray="4 3" />}
+              {selectedLabels.map((l) => (
+                <ReferenceLine key={l} x={l} stroke="var(--color-text-soft)" strokeDasharray="4 3" />
+              ))}
               <Line
                 type="monotone"
                 dataKey="amount"
@@ -182,7 +186,7 @@ export function MoneyCharts({ pieData, barData, emptyText, selectedCategory, sel
               <YAxis tick={{ fill: AXIS_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} width={36} />
               <Tooltip formatter={money} contentStyle={TOOLTIP_STYLE} />
               <Bar dataKey="amount" fill="var(--color-primary)" radius={[6, 6, 0, 0]}>
-                {selectedBucket && barData.map((b) => <Cell key={b.key} fill="var(--color-primary)" fillOpacity={b.key === selectedBucket ? 1 : 0.3} />)}
+                {selectedBuckets.length > 0 && barData.map((b) => <Cell key={b.key} fill="var(--color-primary)" fillOpacity={selectedBuckets.includes(b.key) ? 1 : 0.3} />)}
               </Bar>
             </BarChart>
           )}

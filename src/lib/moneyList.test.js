@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyChartFilters, categoryTree, formatWeekRange, groupEntries, groupPurchases, purchasePart, purchaseSections, splitCategory } from './moneyList'
+import { applyFilters, categoryChipOrder, categoryTree, checkDates, formatDatesChip, groupByBucket, groupByCategory, groupPurchases, listArrangement, purchasePart, purchaseSections, splitCategory } from './moneyList'
 
 const food = { id: 'food', name: 'Groceries' }
 const fun = { id: 'fun', name: 'Going out' }
@@ -16,54 +16,81 @@ const entries = [
   { id: 'e', date: '2026-10-06', category_id: 'food', amount: 3 },
 ]
 
-describe('chart filters', () => {
-  it('keeps only the time bucket clicked', () => {
-    const got = applyChartFilters(entries, { bucket: '2026-10-05' }, { ...acc, period: 'month' })
-    expect(got.map((e) => e.id)).toEqual(['b', 'c', 'e'])
+describe('list filters (plan 9O K157)', () => {
+  it('keeps the time buckets chosen, any of them (K157a)', () => {
+    expect(applyFilters(entries, { buckets: ['2026-10-05'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'c', 'e'])
+    expect(applyFilters(entries, { buckets: ['2026-10-05', '2026-10-12'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'c', 'd', 'e'])
   })
-  it('keeps only the category clicked, sub-categories included', () => {
-    expect(applyChartFilters(entries, { category: 'food' }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['a', 'b', 'e'])
-    expect(applyChartFilters(entries, { category: 'none' }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['d'])
+  it('keeps the categories chosen, any of them, sub-categories included', () => {
+    expect(applyFilters(entries, { categories: ['food'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['a', 'b', 'e'])
+    expect(applyFilters(entries, { categories: ['none'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['d'])
+    expect(applyFilters(entries, { categories: ['fun', 'none'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['c', 'd'])
   })
-  it('combines both, and does nothing without any', () => {
-    expect(applyChartFilters(entries, { bucket: '2026-10-05', category: 'food' }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'e'])
-    expect(applyChartFilters(entries, {}, { ...acc, period: 'month' })).toHaveLength(5)
+  it('AND between kinds, and nothing without any', () => {
+    expect(applyFilters(entries, { buckets: ['2026-10-05'], categories: ['food'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'e'])
+    expect(applyFilters(entries, {}, { ...acc, period: 'month' })).toHaveLength(5)
   })
   it('works with day buckets (week view) and month buckets', () => {
-    expect(applyChartFilters(entries, { bucket: '2026-10-05' }, { ...acc, period: 'week' }).map((e) => e.id)).toEqual(['b'])
-    expect(applyChartFilters(entries, { bucket: '2026-10' }, { ...acc, period: 'year' })).toHaveLength(5)
+    expect(applyFilters(entries, { buckets: ['2026-10-05'] }, { ...acc, period: 'week' }).map((e) => e.id)).toEqual(['b'])
+    expect(applyFilters(entries, { buckets: ['2026-10'] }, { ...acc, period: 'year' })).toHaveLength(5)
+  })
+  it('dates: both days included', () => {
+    expect(applyFilters(entries, { dates: { from: '2026-10-05', to: '2026-10-11' } }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'c', 'e'])
+    expect(applyFilters(entries, { dates: { from: '2026-10-12', to: '2026-10-12' } }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['d'])
   })
 })
 
 describe('store filter', () => {
-  const stored = [
-    { ...entries[0], shop_id: 'lidl' },
-    { ...entries[1], shop_id: 'zalando' },
-    { ...entries[2], shop_id: 'lidl' },
-    { ...entries[3], shop_id: null },
-    { ...entries[4], shop_id: 'lidl' },
-  ]
-  const shopKeyOf = (e) => e.shop_id ?? 'none'
-  const withShops = { ...acc, shopKeyOf, period: 'month' }
-
+  const shops = { a: 'lidl', b: 'zalando', c: 'lidl', d: null, e: 'lidl' }
+  const stored = entries.map((e) => ({ ...e, shop: shops[e.id] }))
+  const withShops = { ...acc, period: 'month', shopKeyOf: (e) => e.shop ?? 'none' }
   it('keeps only the store clicked, or the expenses with no store', () => {
-    expect(applyChartFilters(stored, { store: 'lidl' }, withShops).map((e) => e.id)).toEqual(['a', 'c', 'e'])
-    expect(applyChartFilters(stored, { store: 'none' }, withShops).map((e) => e.id)).toEqual(['d'])
+    expect(applyFilters(stored, { store: 'lidl' }, withShops).map((e) => e.id)).toEqual(['a', 'c', 'e'])
+    expect(applyFilters(stored, { store: 'none' }, withShops).map((e) => e.id)).toEqual(['d'])
   })
-  it('combines with the category and the time bucket, exactly like they combine with each other', () => {
-    expect(applyChartFilters(stored, { store: 'lidl', category: 'food' }, withShops).map((e) => e.id)).toEqual(['a', 'e'])
-    expect(applyChartFilters(stored, { store: 'lidl', category: 'food', bucket: '2026-10-05' }, withShops).map((e) => e.id)).toEqual(['e'])
-    expect(applyChartFilters(stored, { store: 'zalando', category: 'fun' }, withShops)).toEqual([])
+  it('combines with the categories and the period chips, AND', () => {
+    expect(applyFilters(stored, { store: 'lidl', categories: ['food'] }, withShops).map((e) => e.id)).toEqual(['a', 'e'])
+    expect(applyFilters(stored, { store: 'lidl', categories: ['food'], buckets: ['2026-10-05'] }, withShops).map((e) => e.id)).toEqual(['e'])
+    expect(applyFilters(stored, { store: 'zalando', categories: ['fun'] }, withShops)).toEqual([])
   })
   it('changes nothing when no store is picked, or the screen has no stores (income)', () => {
-    expect(applyChartFilters(stored, { store: null }, withShops)).toHaveLength(5)
-    expect(applyChartFilters(entries, { bucket: '2026-10-05', category: 'food' }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'e'])
+    expect(applyFilters(stored, { store: null }, withShops)).toHaveLength(5)
+    expect(applyFilters(entries, { buckets: ['2026-10-05'], categories: ['food'] }, { ...acc, period: 'month' }).map((e) => e.id)).toEqual(['b', 'e'])
   })
 })
 
-describe('grouping', () => {
+describe('"From" / "To" (K155, K156)', () => {
+  const october = { start: '2026-10-01', end: '2026-11-01', periodText: 'October 2026' }
+  it('an empty "To" is that one day; nothing without a "From"', () => {
+    expect(checkDates({ from: '2026-10-03', to: '' }, october)).toEqual({ dates: { from: '2026-10-03', to: '2026-10-03' }, problem: '' })
+    expect(checkDates({ from: '2026-10-03', to: '2026-10-06' }, october)).toEqual({ dates: { from: '2026-10-03', to: '2026-10-06' }, problem: '' })
+    expect(checkDates({ from: '', to: '' }, october)).toEqual({ dates: null, problem: '' })
+    expect(checkDates({ from: '', to: '2026-10-06' }, october)).toEqual({ dates: null, problem: '' })
+  })
+  it('a date outside the period: nothing applied, "Choose a date in October 2026."', () => {
+    expect(checkDates({ from: '2026-09-28', to: '' }, october)).toEqual({ dates: null, problem: 'Choose a date in October 2026.' })
+    expect(checkDates({ from: '2026-10-03', to: '2026-11-01' }, october)).toEqual({ dates: null, problem: 'Choose a date in October 2026.' })
+    expect(checkDates({ from: '2026-10-31', to: '' }, october).dates).toEqual({ from: '2026-10-31', to: '2026-10-31' })
+  })
+  it('"From" after "To": nothing applied', () => {
+    expect(checkDates({ from: '2026-10-06', to: '2026-10-03' }, october)).toEqual({ dates: null, problem: '"From" is after "To".' })
+  })
+  it('the chip: "03/10 – 06/10", or "03/10" for one day', () => {
+    expect(formatDatesChip({ from: '2026-10-03', to: '2026-10-06' })).toBe('03/10 – 06/10')
+    expect(formatDatesChip({ from: '2026-10-03', to: '2026-10-03' })).toBe('03/10')
+  })
+})
+
+describe('the list layout (K157)', () => {
+  it('nothing or only dates → plain; any category → by category; only period chips → by period', () => {
+    expect(listArrangement({})).toBe('plain')
+    expect(listArrangement({ categories: [], buckets: [] })).toBe('plain')
+    expect(listArrangement({ categories: ['food'] })).toBe('category')
+    expect(listArrangement({ categories: ['food'], buckets: ['2026-10-05'] })).toBe('category')
+    expect(listArrangement({ buckets: ['2026-10-05'] })).toBe('period')
+  })
   it('by category: subtotals, the category with the newest entry first, newest entries first inside', () => {
-    const g = groupEntries(entries, 'category', acc)
+    const g = groupByCategory(entries, acc)
     expect(g.map((x) => [x.name, x.total])).toEqual([['Uncategorized', 7], ['Going out', 5], ['Groceries', 33]])
     expect(g[2].items.map((e) => e.id)).toEqual(['e', 'b', 'a'])
   })
@@ -74,29 +101,32 @@ describe('grouping', () => {
       { id: 'z', date: '2026-10-12', category_id: 'food', amount: 1, created_at: '2026-10-12T21:00:00+00:00' },
       { id: 'w', date: '2026-10-12', category_id: 'food', amount: 1, created_at: null },
     ]
-    const g = groupEntries(sameDay, 'category', acc)
+    const g = groupByCategory(sameDay, acc)
     expect(g.map((x) => x.name)).toEqual(['Groceries', 'Going out'])
     expect(g[0].items.map((e) => e.id)).toEqual(['z', 'x', 'w'])
   })
-  it('by week (Monday start): date range, subtotal, newest week first', () => {
-    const g = groupEntries(entries, 'week', acc)
+  it('by period: one card per chosen chip with entries, the newest period first, newest entries first inside', () => {
+    const chosen = [
+      { key: '2026-09-28', label: 'Week 1' },
+      { key: '2026-10-05', label: 'Week 2' },
+      { key: '2026-10-19', label: 'Week 4' },
+    ]
+    const g = groupByBucket(entries, chosen, { dateOf, period: 'month', labelOf: (b) => `${b.label} card` })
     expect(g.map((x) => [x.key, x.label, x.total])).toEqual([
-      ['2026-10-12', '12 Oct – 18 Oct 2026', 7],
-      ['2026-10-05', '5 Oct – 11 Oct 2026', 28],
-      ['2026-09-28', '28 Sep – 4 Oct 2026', 10],
+      ['2026-10-05', 'Week 2 card', 28],
+      ['2026-09-28', 'Week 1 card', 10],
     ])
-    expect(g[1].items.map((e) => e.id)).toEqual(['c', 'e', 'b'])
+    expect(g[0].items.map((e) => e.id)).toEqual(['c', 'e', 'b'])
   })
-  it('category & week: subtotals at both levels, adding up', () => {
-    const g = groupEntries(entries, 'categoryWeek', acc)
-    const groceries = g.find((c) => c.name === 'Groceries')
-    expect(groceries.total).toBe(33)
-    expect(groceries.weeks.map((w) => [w.key, w.total])).toEqual([['2026-10-05', 23], ['2026-09-28', 10]])
-    expect(groceries.weeks[0].items.map((e) => e.id)).toEqual(['e', 'b'])
-    expect(g.flatMap((c) => c.weeks).reduce((s, w) => s + w.total, 0)).toBe(45)
-  })
-  it('formats a week range across a year end', () => {
-    expect(formatWeekRange('2026-12-28')).toBe('28 Dec – 3 Jan 2027')
+  it('the "Sort by category" chips: A–Z, "Other" next to last, "Uncategorized" last', () => {
+    const list = [
+      { key: 'none', name: 'Uncategorized' },
+      { key: 'o', name: 'Other' },
+      { key: 's', name: 'Shopping' },
+      { key: 'g', name: 'Going out' },
+      { key: 'c', name: 'Cigarettes & Vape' },
+    ]
+    expect(categoryChipOrder(list).map((c) => c.name)).toEqual(['Cigarettes & Vape', 'Going out', 'Shopping', 'Other', 'Uncategorized'])
   })
 })
 

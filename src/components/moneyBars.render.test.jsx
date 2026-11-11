@@ -151,13 +151,13 @@ describe('Money → the closed bars (K146)', () => {
     expect(within(chip('Expenses')).getByText('€135.50')).toBeTruthy()
     expect(within(summary()).getByText('€135.50')).toBeTruthy()
     expect([isOpen(EXPENSES), isOpen(TOTALS), isOpen(INCOME)]).toEqual([false, false, false])
-    // Closed: no list, no totals rows, no "Sort by".
+    // Closed: no list, no totals rows, no "Sort by" buttons.
     expect(listed()).toEqual([])
-    expect(screen.queryByText('Sort by')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sort by category' })).toBeNull()
     expect(screen.queryByRole('region', { name: 'Totals per category' })).toBeNull()
   })
 
-  it('opened: "Totals per category" holds the rows, "Expenses" holds "Sort by" and the list', () => {
+  it('opened: "Totals per category" holds the rows, "Expenses" holds the two "Sort by" buttons and the list', () => {
     data.expenses = october()
     page()
     fireEvent.click(bar(TOTALS))
@@ -166,7 +166,8 @@ describe('Money → the closed bars (K146)', () => {
     expect(within(totals).getByText('€48.90')).toBeTruthy()
     expect(within(totals).getByText('€11.70')).toBeTruthy()
     fireEvent.click(bar(EXPENSES))
-    expect(screen.getByText('Sort by')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sort by category' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sort by period' })).toBeTruthy()
     openRows()
     expect(listed()).toHaveLength(6)
     // Tapping again closes it.
@@ -288,6 +289,8 @@ describe('Money → the Month TREND weeks (K153 / K162)', () => {
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 6 €12.00' }))
     expect(screen.getByRole('button', { name: 'Remove filter Week 6 · 30 Nov' })).toBeTruthy()
     expect(screen.getByText('1 · €12.00')).toBeTruthy()
+    // A second tap lets Week 6 go (prompt 2, K157b: taps add, they don't replace).
+    fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 6 €12.00' }))
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 1 €7.00' }))
     expect(screen.getByRole('button', { name: 'Remove filter Week 1 · 1 Nov' })).toBeTruthy()
     expect(screen.getByText('1 · €7.00')).toBeTruthy()
@@ -371,12 +374,14 @@ describe('Money → how the bars open and close (K149–K151)', () => {
     expect([isOpen(EXPENSES), isOpen(TOTALS), isOpen(INCOME)]).toEqual([false, false, false])
   })
 
-  it('"Select" opens "Expenses (N)" and hides the charts; "Totals per category" stays as it was; leaving clears sort and filters', () => {
+  it('"Select" opens "Expenses (N)" and hides the charts; "Totals per category" stays as it was; leaving clears the filters', () => {
     data.expenses = october()
     page()
-    // A filter and a sort first.
+    // A category from the chart and a period chip from "Sort by period" first.
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Going out' }))
-    fireEvent.click(screen.getByRole('button', { name: 'By week' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by period' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Sort by period' })).getByRole('button', { name: 'Week 2 · 5–11 Oct' }))
+    expect(bar('Expenses (2 of 6)')).toBeTruthy()
     fireEvent.click(bar(EXPENSES))
     expect(isOpen(EXPENSES)).toBe(false)
 
@@ -386,7 +391,7 @@ describe('Money → how the bars open and close (K149–K151)', () => {
     expect(screen.queryByRole('group', { name: 'Charts: No expenses in this period.' })).toBeNull()
     expect(screen.queryByText('Clear filters')).toBeNull()
     expect(screen.getByText('Select expenses')).toBeTruthy()
-    expect(screen.queryByText('Sort by')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Sort by/ })).toBeNull()
     expect(listed()).toHaveLength(6)
     expect(isOpen(TOTALS)).toBe(false)
     // The tick list is inside "Expenses (N)", after "Totals per category".
@@ -397,7 +402,8 @@ describe('Money → how the bars open and close (K149–K151)', () => {
     expect(screen.queryByText('Clear filters')).toBeNull()
     expect(bar('Expenses (6)')).toBeTruthy()
     expect(isOpen(EXPENSES)).toBe(true)
-    expect(screen.getByRole('button', { name: 'By week' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Sort by category' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sort by period' })).toBeTruthy()
   })
 
   it('"Select" with "Totals per category" open: it stays open', () => {

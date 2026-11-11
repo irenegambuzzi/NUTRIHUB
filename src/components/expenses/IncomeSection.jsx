@@ -21,9 +21,9 @@ const incomeDate = (entry) => entry.income_date
 // Adding income (a card that opens on demand), its categories, and the
 // income received in the period on screen with the same charts, filters
 // and sorting as the expenses. Each entry is editable and deletable.
-// The charts and their filter chips stay visible; "Sort by" and the list
-// are in the closed bar "Income (N)" (plan 9O K146–K152), which a chart
-// tap opens. `personOptions`: the "Received by" pills on offer (K174).
+// The charts and their filter chips stay visible; the two "Sort by"
+// buttons and the list are in the closed bar "Income (N)" (plan 9O
+// K146–K152, K158), which a chart tap that turns a filter on opens. `personOptions`: the "Received by" pills on offer (K174).
 export function IncomeSection({
   entries,
   total,

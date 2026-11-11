@@ -3892,6 +3892,8 @@ allows 029 (it doesn't touch `arrive_order` / `unarrive_order`).
   receipt photos in English, Indonesian or Italian go to a Supabase Edge
   Function that calls the Claude API and records expenses and income in the
   app's tables. See 9O K176.
+- CSV/Excel export: a 'names' column for the other names (K145).
+- The 'It arrived!' toast with the order's other name, e.g. 'Added 1 pcs to "Chips & Snacks" (Corn Snack)' (K145).
 
 ### Follow-up 01/11 to 9K (as built; code and tests only, no SQL)
 
@@ -6294,6 +6296,10 @@ keep working as before), no new offline queue.
 - **K174** Income "Received by" pills: the "Shared" pill is shown only when the period on screen (before the pill filter) has at least one income entry with received_by = 'shared'. If the "Shared" pill is selected (or remembered on the phone) and it is not shown, the pill becomes "Everyone" (the same way a tap on "Everyone" works, so the remembered value follows). The "Add income" form keeps "Shared" in "Received by". The Expenses / Orders "Paid by" pills don't change.
 - **K175** (A) The "Sort by period" chips are always the TREND bars of the period: Week → days, Month → weeks, 3/6 Months and Year → months, longer spans → years; plus "From"/"To" (this extends K156).
 - **K176** Later (not scheduled, after the AI round): a Telegram bot. Messages and receipt photos in English, Indonesian or Italian, with past dates understood ("yesterday"), go to a Supabase Edge Function, which calls the Claude API and records expenses and income in the same tables as the app. Only the household's two Telegram accounts. A confirmation or an Undo before or after saving. Rough cost estimate of 11/11/2026: about $2–6 a month. Also listed in the "Later (not scheduled)" list of 9K.
+- **K177** (A) A chart tap that turns a filter off while the list bar is closed leaves the bar closed.
+- **K178** (B) While selecting, closing "Expenses (N)" ends Select like the X ("Stop selecting").
+- **K179** (B) The two K145 items are added to the "Later (not scheduled)" list.
+- **K180** (A) "Totals per category (N)" counts the "Uncategorized" row.
 
 ### Prompt 1 as built (11/11; code and tests only, no SQL)
 
@@ -6390,6 +6396,112 @@ answered.
    under Later", but no "Later" list holds them yet; not added (rule: change
    nothing else in the plan). Options: (a) leave; (b) add them to the 9K
    "Later (not scheduled)" list. Suggestion: (b).
+
+(Answered 11/11: 1 → K177, 2 → K178, 3 → K179.)
+
+iPhone test of MONEY display prompt 1 done 11/11/2026: all OK.
+
+### Prompt 2 as built (11/11; code and tests only, no SQL)
+
+Built: K154–K158, K157a–d, K175, K177 (kept), K178, K180 (kept), and the
+plan (K177–K180, the two K145 items in the 9K "Later (not scheduled)"
+list). No file in `supabase/` changed; no new browser storage, no new
+offline queue. The top card, the K4 note, Orders, colours, the bars of
+prompt 1 (texts, order, open/close rules), the TREND weeks and the Income
+"Shared" pill (K174) are unchanged.
+
+**Files.** Changed: `hooks/useMoneyExplorer.js` (the one filter state:
+`categories` and `buckets` as lists, `from` / `to`, `store`; a chart tap
+toggles one entry without clearing the others; a period chip clears the
+dates and a typed date clears the chips; the chips of both panels; the
+list layout; the counts of the two buttons; `reset` = clear every filter),
+`components/expenses/MoneyExplorer.jsx` (`ExplorerCharts`: the chips row
+with every filter; `ExplorerList`: the two buttons, their panels and the
+cards), `components/expenses/MoneyCharts.jsx` (several categories / TREND
+bars highlighted at once), `lib/moneyList.js` (new `applyFilters`,
+`listArrangement`, `checkDates`, `formatDatesChip`, `categoryChipOrder`,
+`groupByCategory`, `groupByBucket`; removed `applyChartFilters`,
+`groupEntries`, `formatWeekRange` and the "By week" / "Category & week"
+grouping), `pages/ExpensesPage.jsx` (K178), `IncomeSection.jsx` (comment
+only), `lib/moneyList.test.js`, `components/moneyBars.render.test.jsx`.
+New: `components/moneySortBy.render.test.jsx`.
+
+**Removed.** The "Sort by" row with "By category", "By week", "Category &
+week" (title "Tap again for the plain list") and "✕ Clear sort", in
+Money → Income → "Income (N)" and Money → Expenses → "Expenses (N)".
+
+**Texts and where they are** (Income: the same, without the store):
+
+| Text | Where |
+|---|---|
+| "Sort by category" + an arrow icon (▾, turns while open); "Sort by category · 2" while 2 are on | Money → section Expenses → bar "Expenses (N)" open → first button (Income: bar "Income (N)") |
+| "Sort by period" + the arrow; "Sort by period · 1" (the dates count as 1, only while applied) | next to it (they wrap at 375 px; 40 px high) |
+| The category chips, each with its colour dot, A–Z, "Other" next to last, "Uncategorized" last (only with such rows); several on | → "Sort by category ▾" → its panel, under the buttons |
+| The period chips = the TREND bars: Month "Week 1 · 1–4 Oct" … "Week 5 · 26–31 Oct"; Week "Mon 19 Oct" … "Sun 25 Oct"; 3 Months "Sep 2026", "Oct 2026", "Nov 2026"; 6 Months / Year: the months; also the bars at €0.00 | → "Sort by period ▾" → its panel, first row |
+| "From", "To" (labels over the app's date fields, DD/MM/YYYY) | → "Sort by period ▾" → under the chips |
+| `Choose a date in October 2026.` / `"From" is after "To".` (small, red) | → "Sort by period ▾" → under "From" / "To" |
+| "No expenses in this period." / "No income entries in this period." | → "Sort by category ▾" in a period with nothing |
+| Card titles: the category (dot + name) or the period chip text ("Week 2 · 5–11 Oct"), with the subtotal "€54.90" on the right | → the list, under the buttons |
+| Filter chips: each period chip, the dates "03/10 – 06/10" / "03/10", each category, the store; each with "×" (aria "Remove filter …"); "Clear filters"; "{n} · €{x}" | Money → Expenses (or Income) → directly under the charts (unchanged place) |
+
+**The list.** Nothing chosen → the plain list as before; only categories →
+one card per category (ordered as the old "By category"); only period chips
+→ one card per chosen chip that has rows, the newest period first; only
+dates (or only the store) → the plain list; categories + a period → one
+card per category. Inside a card the newest first; a purchase / order
+group is one closed line with "of total €…" (as before).
+
+**Dates.** Nothing applies without a "From"; an empty "To" = that one day;
+a date outside the period (start included, end not) → the line `Choose a
+date in {period text}.` (the text of the "‹ … ›" bar, e.g. "October 2026",
+"Sep – Nov 2026"); a "From" after the "To" → `"From" is after "To".` (the
+outside check comes first). A date that is not applied is kept in the
+field but is no filter, no chip and no "· 1".
+
+**Kept.** A new period ("‹" / "›"), period pill or person pill clears every
+filter (also half-typed dates). "Select" and leaving it clear every filter
+(K149). "Clear filters" clears all and leaves the bar as it is. A chart tap
+that turns a filter on opens the bar (K147); one that turns it off doesn't
+(K177).
+
+**K178.** `ExpensesPage.toggleExpenses`: closing "Expenses (N)" while
+selecting calls `stopSelecting` (the same as "Stop selecting") and closes
+the bar; the charts come back, "Select" is shown again.
+
+**Tests: 2504 → 2531 (135 → 136 files).** `lib/moneyList.test.js` (12 old
+filter / grouping tests → 17: several categories and chips, AND / OR, dates,
+the store, `checkDates` with both lines, the dates chip, the five layouts,
+cards by category and by period, the chip order). New
+`components/moneySortBy.render.test.jsx` (22: every example of the prompt:
+2 · €31.70, 3 · €54.90, 5 · €86.60 "Expenses (5 of 6)" with the cards
+€74.90 (#6 #4 #1) / €11.70 (#5 #3), Week 1 + Week 2 → 6 · €135.50 with the
+week cards, the dates (2 · €24.20, 3 · €73.10, 1 · €48.90), chips OR
+dates, both lines, pie / legend / TREND taps, "· 1" / "· 2", the chips row
+and "Clear filters", K177, period / pill changes, 3 Months, Week, the three
+pills 39.90 / 46.70 / 31.40, Income 2 · €2000.00 "Income (2 of 3)",
+1 · €30.00, 0 "Income (0 of 3)", K178). Three prompt-1 tests in
+`moneyBars.render.test.jsx` changed only where the old "Sort by" row was
+used: the open bar now shows the two buttons; November taps Week 6 again to
+let it go before Week 1 (a tap no longer replaces, K157b); the Select test
+sets a filter with "Sort by period" instead of "By week".
+
+**Kata ragu (11/11 prompt 2, tanya Zidane).** Built the safe way until
+answered.
+
+1. "To" typed with "From" empty (e.g. To 06/10). Built: nothing applied,
+   no line. Options: (a) as built; (b) "To" alone = that one day; (c) a
+   line "Type a "From" date.". Suggestion: (a).
+2. A chosen period chip with nothing in it (e.g. Week 1 + Week 3 in
+   October; Week 3 €0.00). Built: no card for Week 3, only "Week 1 · 1–4
+   Oct". Options: (a) as built; (b) an empty card "Week 3 · 12–18 Oct
+   €0.00". Suggestion: (a).
+3. The count on an open button. Built: "Sort by category · 2" also while
+   its panel is open. Options: (a) as built; (b) only while closed.
+   Suggestion: (a).
+4. A date that is not applied (outside the period, or "From" after "To")
+   stays in the field, with the line, but is not counted ("Sort by period"
+   without "· 1") and has no chip. Options: (a) as built; (b) count it.
+   Suggestion: (a).
 
 ---
 

@@ -222,7 +222,7 @@ export function ExpensesPage() {
   const [totalsOpen, setTotalsOpen] = useState(false)
   const [expensesOpen, setExpensesOpen] = useState(false)
   // "Select" opens "Expenses (N)" (K149) and starts, like it leaves, with
-  // no sort and no chart filter — as when the list was built again.
+  // no filter — as when the list was built again.
   const startSelecting = () => {
     explorer.reset()
     setExpensesOpen(true)
@@ -231,6 +231,12 @@ export function ExpensesPage() {
   const stopSelecting = () => {
     explorer.reset()
     setSelecting(false)
+  }
+  // Closing "Expenses (N)" while selecting ends Select like "Stop
+  // selecting" does (K178).
+  const toggleExpenses = () => {
+    if (expensesOpen && selecting) stopSelecting()
+    setExpensesOpen((v) => !v)
   }
   // One row per purchase (SHOP trip, MONEY purchase or merged expenses,
   // with supabase/021), and the other expenses one row per main category
@@ -397,10 +403,10 @@ export function ExpensesPage() {
         </div>
 
         <div className="space-y-2">
-          <ClosedBar icon={Receipt} label={`Expenses ${explorer.count}`} open={expensesOpen} onToggle={() => setExpensesOpen((v) => !v)} />
+          <ClosedBar icon={Receipt} label={`Expenses ${explorer.count}`} open={expensesOpen} onToggle={toggleExpenses} />
           {expensesOpen &&
             (selecting ? (
-              // In place of "Sort by" and the list (K149). A person's pill
+              // In place of the two "Sort by" buttons and the list (K149). A person's pill
               // lists only their own expenses to merge (K20), as before 9K;
               // Shared ones are merged from Everyone or Shared.
               <SelectExpenses

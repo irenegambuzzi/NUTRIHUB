@@ -3,7 +3,7 @@
 //   dateOf(entry)   → 'YYYY-MM-DD'
 //   mainOf(entry)   → the entry's main category ({ id, name }) or null
 
-import { getWeekStart, parseLocalDate } from './week'
+import { parseLocalDate } from './week'
 import { bucketKeyForDate } from './expensePeriods'
 import { newestFirst, newestGroupFirst } from './recency'
 import { compareCategories, sortCategories } from './categoryOrder'
@@ -16,39 +16,71 @@ export const categoryKeyOf = (main) => main?.id ?? NO_CATEGORY
 const amountOf = (entry) => Number(entry.amount || 0)
 const sum = (entries) => entries.reduce((total, e) => total + amountOf(e), 0)
 
-// Only what the chart clicks picked: a time bucket, a category and/or a
-// store (`shopKeyOf(entry)` gives the key a store is filed under).
-export function applyChartFilters(entries, { bucket, category, store }, { dateOf, mainOf, period, shopKeyOf }) {
+// The list filters of a section (plan 9O K157): AND between kinds, OR
+// inside one kind.
+//   categories – main category keys (`categoryKeyOf`); any of them
+//   buckets    – TREND bucket keys (the "Sort by period" chips); any of them
+//   dates      – { from, to } (YYYY-MM-DD, both included) already checked
+//                by `checkDates`, or null
+//   store      – expenses only: one store key (`shopKeyOf(entry)`)
+// Chips and dates never come together (K154); if they did, both would apply.
+export function applyFilters(entries, { categories = [], buckets = [], dates = null, store = null }, { dateOf, mainOf, period, shopKeyOf }) {
   return entries.filter((e) => {
-    if (bucket && bucketKeyForDate(dateOf(e), period) !== bucket) return false
-    if (category && categoryKeyOf(mainOf(e)) !== category) return false
+    if (buckets.length && !buckets.includes(bucketKeyForDate(dateOf(e), period))) return false
+    if (dates && (dateOf(e) < dates.from || dateOf(e) > dates.to)) return false
+    if (categories.length && !categories.includes(categoryKeyOf(mainOf(e)))) return false
     if (store && shopKeyOf?.(e) !== store) return false
     return true
   })
 }
 
-// "5 Oct – 11 Oct 2026" for the week starting `weekStart`.
-export function formatWeekRange(weekStart) {
-  const start = parseLocalDate(weekStart)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 6)
-  const day = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`
-  return `${day(start)} – ${day(end)} ${end.getFullYear()}`
+// How the list is laid out for the filters on (K157):
+//   'plain'    – nothing chosen, only dates, or only the store: as today
+//   'category' – any category (with or without a period): a card each
+//   'period'   – only period chips: a card per chosen chip
+export function listArrangement({ categories = [], buckets = [] }) {
+  if (categories.length) return 'category'
+  if (buckets.length) return 'period'
+  return 'plain'
 }
 
-function byWeek(entries, dateOf) {
-  const map = new Map()
-  for (const e of [...entries].sort(newestFirst(dateOf))) {
-    const key = getWeekStart(parseLocalDate(dateOf(e)))
-    if (!map.has(key)) map.set(key, { key, label: formatWeekRange(key), items: [], total: 0 })
-    const g = map.get(key)
-    g.items.push(e)
-    g.total += amountOf(e)
-  }
-  return [...map.values()].sort((a, b) => b.key.localeCompare(a.key))
+// "03/10" for 2026-10-03.
+const dayMonth = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+
+// The chip of a "From" / "To" filter: "03/10 – 06/10", or "03/10" for one day.
+export function formatDatesChip({ from, to }) {
+  return from === to ? dayMonth(from) : `${dayMonth(from)} – ${dayMonth(to)}`
 }
 
-function byCategory(entries, { dateOf, mainOf }) {
+// Whether "From" / "To" can be applied in the period on screen (K155, K156):
+//   from, to    – YYYY-MM-DD or '' ("To" empty = that one day)
+//   start, end  – the period: start included, end not (YYYY-MM-DD)
+//   periodText  – the period as the bar says it ("October 2026")
+// → { dates: { from, to } | null, problem: '' | the short line to show }.
+// Nothing is applied without a "From", with a date outside the period, or
+// with "From" after "To".
+export function checkDates({ from, to }, { start, end, periodText }) {
+  if (!from) return { dates: null, problem: '' }
+  const last = to || from
+  const outside = (d) => d < start || d >= end
+  if (outside(from) || (to && outside(to))) return { dates: null, problem: `Choose a date in ${periodText}.` }
+  if (from > last) return { dates: null, problem: '"From" is after "To".' }
+  return { dates: { from, to: last }, problem: '' }
+}
+
+// The chips of "Sort by category" (K157): the categories ({ key, name, … };
+// key = the main's id, or NO_CATEGORY) A–Z, "Other" next to last and
+// "Uncategorized" last.
+export function categoryChipOrder(list) {
+  const asCategory = (c) => ({ id: c.key, name: c.name })
+  return [...list].sort((a, b) => (a.key === NO_CATEGORY) - (b.key === NO_CATEGORY) || compareCategories(asCategory(a), asCategory(b)))
+}
+
+// One card per main category ("Uncategorized" for none) with its total;
+// the category whose newest entry is most recent first, then the bigger
+// total, then A–Z; inside, newest first.
+//   → [{ key, main, name, total, items }]
+export function groupByCategory(entries, { dateOf, mainOf }) {
   const map = new Map()
   for (const e of [...entries].sort(newestFirst(dateOf))) {
     const main = mainOf(e)
@@ -58,21 +90,23 @@ function byCategory(entries, { dateOf, mainOf }) {
     g.items.push(e)
     g.total += amountOf(e)
   }
-  // The category with the most recent entry first.
   const newest = newestGroupFirst(dateOf, (g) => g.items)
   return [...map.values()].sort((a, b) => newest(a, b) || b.total - a.total || a.name.localeCompare(b.name))
 }
 
-// The three ways of sorting the list shown:
-//   'category'      → [{ key, main, name, total, items }]
-//   'week'          → [{ key, label, total, items }]
-//   'categoryWeek'  → [{ key, main, name, total, weeks: [{ key, label, total, items }] }]
-// Inside every group the newest entries come first.
-export function groupEntries(entries, mode, accessors) {
-  if (mode === 'week') return byWeek(entries, accessors.dateOf)
-  if (mode === 'category') return byCategory(entries, accessors)
-  if (mode === 'categoryWeek') return byCategory(entries, accessors).map((g) => ({ ...g, weeks: byWeek(g.items, accessors.dateOf), items: undefined }))
-  return []
+// One card per chosen period chip that has entries, the newest period
+// first; inside, newest first. `chosen` are the TREND buckets of the chips
+// on ({ key, … }, in TREND order); `labelOf(bucket)` gives the card title.
+//   → [{ key, label, total, items }]
+export function groupByBucket(entries, chosen, { dateOf, period, labelOf }) {
+  const sorted = [...entries].sort(newestFirst(dateOf))
+  return [...chosen]
+    .reverse()
+    .map((b) => {
+      const items = sorted.filter((e) => bucketKeyForDate(dateOf(e), period) === b.key)
+      return { key: b.key, label: labelOf(b), items, total: sum(items) }
+    })
+    .filter((g) => g.items.length)
 }
 
 export const entriesTotal = sum
