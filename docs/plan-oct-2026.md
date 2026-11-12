@@ -6300,6 +6300,11 @@ keep working as before), no new offline queue.
 - **K178** (B) While selecting, closing "Expenses (N)" ends Select like the X ("Stop selecting").
 - **K179** (B) The two K145 items are added to the "Later (not scheduled)" list.
 - **K180** (A) "Totals per category (N)" counts the "Uncategorized" row.
+- **K181** (B) Money colours: a strong green for money in / plus (BALANCE plus, the INCOME tile, the Income € chip), a strong red for minus (BALANCE minus); EXPENSES stays orange. The same rule for the leftover numbers of prompt 4.
+- **K182** (B) "Sort by period": "To" alone (From empty) = that one day.
+- **K183** (A) A chosen period chip with €0.00 gets no card.
+- **K184** (A) The count on a "Sort by…" button shows also while its panel is open.
+- **K185** (A) An invalid date stays in its field with the warning, is not counted and gets no chip.
 
 ### Prompt 1 as built (11/11; code and tests only, no SQL)
 
@@ -6501,6 +6506,136 @@ answered.
 4. A date that is not applied (outside the period, or "From" after "To")
    stays in the field, with the line, but is not counted ("Sort by period"
    without "· 1") and has no chip. Options: (a) as built; (b) count it.
+   Suggestion: (a).
+
+(Answered 12/11: 1 → K182, 2 → K183, 3 → K184, 4 → K185.)
+
+iPhone test of MONEY display prompt 2 done 12/11/2026: all OK.
+
+### Prompt 3 as built (12/11; code and tests only, no SQL)
+
+Built: K159, K160a–d, K160b + K161, K173, K175 (kept for the new
+periods), K181, K182, and the plan (K181–K185). No file in `supabase/`
+changed; no new browser storage, no new offline queue. The bars of prompt
+1, the "Sort by category" / "Sort by period" buttons of prompt 2 (except
+K182), the K4 note, Orders and the person pills are unchanged.
+
+**Files.** Changed: `lib/expensePeriods.js` (a "view" = the period on
+screen: `{ pill: 'week', offset }` or `{ pill, from, months, choice }` in
+whole months; `defaultView`, `spanFromMonth`, `quickSpans`,
+`calendarYearView`, `yearSpanView`, `dataYears`, `yearChoices`,
+`viewRange`, `formatView`, `viewBuckets`, `viewBucketPeriod`, `viewKey`,
+`sameView`; year buckets in `bucketKeyForDate`; the old
+`getPeriodRange` / `getPeriodBuckets` / `formatPeriodRange` kept),
+`components/expenses/PeriodPicker.jsx` (the bar and the inline row),
+`pages/ExpensesPage.jsx` (`view` in place of `period` + `offset`;
+`showView` moves `since` back like `showPeriod` did),
+`hooks/useMoneyExplorer.js` and `IncomeSection.jsx` (take the view; TREND
+bars and period chips from `viewBuckets`), `lib/moneyList.js` (year chip
+"2026"; K182 in `checkDates`), `MoneySummary.jsx` and `IncomeSection.jsx`
+(K181), `index.css` (the two colour tokens). New:
+`hooks/useFirstMoneyMonth.js` (the first month with data: one select per
+table, `expenses.expense_date` / `income.income_date`, ascending, limit 1;
+offline or failed: the earliest loaded row, else this month; read again
+when the connection comes back), `components/moneyPeriods.render.test.jsx`.
+
+**The bar under the pills.**
+
+| Pill | Bar | Tapping the text | Row (inline under the bar) |
+|---|---|---|---|
+| "Week" | "‹ 9 Nov – 15 Nov 2026 ›" | back to this week (title "Back to the current period"), as before | none |
+| "Month" | "‹ November 2026 ›" + a small ▾ | opens / closes the row | selects "Month" (January … December; this year only up to this month) and "Year"; "Show"; "This month" (only when not on this month) |
+| "3 Months" | "Sep – Nov 2026" + ▾ (no arrows) | opens / closes the row | "Month", "Year"; "Ending in" / "Starting in" (default "Ending in"); "Q1" "Q2" "Q3" "Q4" of the year in "Year"; "Show"; "This month" |
+| "6 Months" | "Jun – Nov 2026" + ▾ (no arrows) | as 3 Months | as 3 Months with "H1" "H2" |
+| "Year" | "2026" + ▾ (no arrows) | opens / closes the row | select "Year" + "Show"; the span buttons "All", "Last 12 months", "3 years", "5 years", "10 years" (only those that differ, K160c); "This year" (only when not on this year) |
+
+The row (aria "Pick a period", same card look as the "Sort by" panels,
+buttons 40 px) closes after "Show", after a quick / span / back button,
+when the text is tapped again, and also when a pill or an arrow is used.
+Until then nothing changes. A pill shows its default period (this week,
+this month, the 3 / 6 months ending in this month, this calendar year).
+The selects start on the period on screen: Month its month; 3 / 6 Months
+the last month of the span (at most this month) with "Ending in"; Year its
+year (this year for a span). The year list is the same in every row:
+the first year with data … this year, newest first; a year before it
+(reachable only with "‹" on Month) starts the select on the first year.
+
+**K160d.** No month after this one in "Month" for this year, no later year
+in "Year"; a Q / H button that starts after this month is disabled (Q4
+2026 and H2 2026 are allowed on 12/11/2026: running). "Starting in" is
+disabled while "Month" / "Year" are on this month, with the small grey line
+`Use Month for this month only` under the two choices (then "Ending in" is
+used). TREND has no bar after this month on 3 Months, 6 Months and Year
+(Year 2026 on 12/11/2026: Jan … Nov; Q4: Oct, Nov; H2: Jul … Nov); Week and
+Month keep all theirs. The "Sort by period" chips are the same bars
+(K175): months "Oct 2026", years "2026".
+
+**Texts** (12/11/2026, first data October 2026): 3 Months "Sep – Nov
+2026"; September + Ending in "Jul – Sep 2026"; + Starting in "Sep – Nov
+2026"; Q3 "Jul – Sep 2026"; Q4 "Oct – Dec 2026"; 6 Months "Jun – Nov 2026";
+H1 "Jan – Jun 2026"; H2 "Jul – Dec 2026"; Year "2026"; Last 12 months "Dec
+2025 – Nov 2026"; All on 15/01/2027 "Oct 2026 – Jan 2027"; 3 years on
+15/11/2029 "Dec 2026 – Nov 2029" (TREND and chips "2026" … "2029"). With
+data from January 2025: December 2025 + Starting in "Dec 2025 – Feb 2026".
+
+**Loading.** Every period that starts before `since` moves it back to the
+period's start (H1 2026 with only November loaded → 2026-01-01; "All" →
+the first month with data). The person pills, the K4 note and the top
+card are computed as before; a new period clears the filters (as before).
+
+**K181 colours** (`index.css`, tokens `--color-money-in` /
+`--color-money-out`): dark theme green `#22C55E` (7.32:1 on the card
+`#1C1E23`, 8.15:1 on the page `#121316`), red `#FF5252` (5.23:1 / 5.82:1);
+light values `#15803D` (5.02:1 on white) and `#B91C1C` (6.47:1) under
+`:root[data-theme="light"]` (the app has no light theme yet, see Kata
+ragu 2). Top card: BALANCE plus green, minus red, exactly €0.00 (counted in
+cents) the normal text colour; INCOME green; the € chip next to "Income"
+green (was the pale `#7FDB92`; BALANCE minus was `rose-300`). EXPENSES
+(tile and chip) stays orange; titles, charts and category colours
+unchanged.
+
+**K182.** Only "To" filled = that one day: To 06/11 → only the 06/11
+rows, "Sort by period · 1", the chip "06/11" (the same as "From" alone).
+A "To" outside the period gives `Choose a date in {period}.`.
+
+**Tests: 2531 → 2568 (136 → 137 files).** `lib/expensePeriods.test.js`
+(+8: every text of K160a, the Year choices on 12/11/2026, 15/01/2027,
+15/11/2027 and 15/11/2029, Last 12 months / All ranges, the year list,
+TREND without future months, months → years). `lib/moneyList.test.js`
+(the "To" alone check now expects one day, K182). New
+`components/moneyPeriods.render.test.jsx` (29: arrows only on Week and
+Month; Week's text; the Month row (January … November, September 2026,
+"This month", closing by the text); 3 Months (the four texts, Q1–Q4, the
+highlighted Q, "This month"); "Starting in" disabled with its line;
+October + Starting in → TREND and chips Oct, Nov; 6 Months H1 / H2; Dec
+2025 – Feb 2026; future Q / H disabled on 15/01/2027; the Year rows of the
+four dates, "All", "Last 12 months", "3 years" with 4 year bars and chips;
+a failed read; `since` 2026-11-01 → 2026-01-01; the four person pills
+€135.50 / €59.90 / €75.60 / €80.30 and the K4 note in five periods; the
+colours; K182). A mutation check (K182 off, future months drawn) makes 5
+of them fail.
+
+**Kata ragu (12/11 prompt 3, tanya Zidane).** Built the safe way until
+answered.
+
+1. A "This week" button. K160b names one for Week, but Week has no row and
+   tapping its text already goes back to this week. Built: Week unchanged,
+   no extra button. Options: (a) as built; (b) a small "This week" under
+   the bar while on another week. Suggestion: (a).
+2. The light theme. The app only has the dark theme (`index.css`, nothing
+   sets a light one). Built: the dark values are used; the light values
+   are written under `:root[data-theme="light"]` and do nothing today.
+   Options: (a) as built; (b) leave the light values out until a light
+   theme exists. Suggestion: (a).
+3. The amounts in the income list ("+€1200.00" inside "Income (N)") keep
+   the pale green `#7FDB92` (K181 names only the tile and the chip).
+   Options: (a) leave them; (b) the same strong green. Suggestion: (b).
+4. A future-dated entry in a running period (e.g. an expense dated
+   20/12/2026 while Q4 2026 is shown on 12/11/2026). Built: it counts in
+   the top card, the € chip and the list, but has no TREND bar and no
+   period chip (December is not drawn, K160d). Options: (a) as built;
+   (b) a running period stops at today (the entry is left out until
+   December); (c) draw a future month only when it has entries.
    Suggestion: (a).
 
 ---

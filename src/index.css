@@ -19,6 +19,19 @@
   --color-accent-dark: #E8631F;
   --color-accent-bg: rgba(255, 122, 69, 0.14);
   --color-accent-border: rgba(255, 122, 69, 0.35);
+
+  /* Money in / plus and minus (plan 9O K181): BALANCE plus, the INCOME
+     tile and the Income € chip; BALANCE minus. Contrast ≥ 4.5:1 on the
+     card (#1C1E23): green 7.32:1, red 5.23:1. */
+  --color-money-in: #22C55E;
+  --color-money-out: #FF5252;
+}
+
+/* The same two for a light theme (on #FFFFFF: green 5.02:1, red 6.47:1).
+   The app has no light theme yet; nothing sets data-theme="light". */
+:root[data-theme="light"] {
+  --color-money-in: #15803D;
+  --color-money-out: #B91C1C;
 }
 
 body {

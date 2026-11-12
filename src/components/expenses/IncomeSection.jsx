@@ -31,8 +31,7 @@ export function IncomeSection({
   categories,
   categoriesMissing,
   styleFor,
-  period,
-  offset,
+  view,
   person,
   onPerson,
   personOptions,
@@ -51,14 +50,14 @@ export function IncomeSection({
   const onManage = categoriesMissing ? undefined : () => setManaging(true)
   // Closed each time Money opens; kept open through a new period or pill.
   const [listOpen, setListOpen] = useState(false)
-  const explorer = useMoneyExplorer({ entries, dateOf: incomeDate, categoryOf: tree.mainOf, period, offset, scope: person, styleFor })
+  const explorer = useMoneyExplorer({ entries, dateOf: incomeDate, categoryOf: tree.mainOf, view, scope: person, styleFor })
 
   return (
     <section className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-extrabold text-[var(--color-primary)]">Income</h2>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold text-[#7FDB92] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm">
+          <span className="text-xs font-mono font-bold text-[var(--color-money-in)] bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm">
             €{total.toFixed(2)}
           </span>
           {!adding && (

@@ -32,7 +32,8 @@ import { groupDiscountNote, groupMembers } from '../lib/orderGroups'
 import { PersonSelector } from '../components/expenses/PersonSelector'
 import { Button } from '../components/ui/Button'
 import { PERSON_OPTIONS, usePersonFilter } from '../lib/personFilter'
-import { getPeriodRange, localDateString } from '../lib/expensePeriods'
+import { defaultView, localDateString, viewRange } from '../lib/expensePeriods'
+import { useFirstMoneyMonth } from '../hooks/useFirstMoneyMonth'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
@@ -156,8 +157,8 @@ export function ExpensesPage() {
 
   const renderExpense = (e) => <ExpenseRow key={e.id} expense={e} names={namesOf} shopOf={shopOf} noteOf={discountNote} onEdit={editExpense} onDelete={removeExpense} />
 
-  const [period, setPeriod] = useState('month')
-  const [offset, setOffset] = useState(0)
+  // The period on screen (plan 9O K159–K161): a pill and its range.
+  const [view, setView] = useState(() => defaultView('month'))
   const [paidByFilter, setPaidByFilter] = usePersonFilter('money.expensePerson')
   const [receivedByFilter, setReceivedByFilter] = usePersonFilter('money.incomePerson')
   const [addingExpense, setAddingExpense] = useState(false)
@@ -165,16 +166,19 @@ export function ExpensesPage() {
   // Edit always opens the expense itself, never a personal view's part.
   const editExpense = (row) => setEditingExpense(realExpense(row))
 
-  const showPeriod = (nextPeriod, nextOffset) => {
-    const start = localDateString(getPeriodRange(nextPeriod, new Date(), nextOffset).start)
+  // A period that starts before what is loaded moves `since` back to its
+  // start ("All": the first month with data).
+  const showView = (next) => {
+    const start = localDateString(viewRange(next, new Date()).start)
     setSince((current) => (start < current ? start : current))
-    setPeriod(nextPeriod)
-    setOffset(nextOffset)
+    setView(next)
   }
   const { startDate, endDate } = useMemo(() => {
-    const { start, end } = getPeriodRange(period, new Date(), offset)
+    const { start, end } = viewRange(view, new Date())
     return { startDate: localDateString(start), endDate: localDateString(end) }
-  }, [period, offset])
+  }, [view])
+  // The first month with data, for the years of the period pickers (K160c).
+  const firstMonth = useFirstMoneyMonth(expenses, income)
 
   // Everything is shown by main category; sub-categories only appear
   // when a main category is opened.
@@ -215,7 +219,7 @@ export function ExpensesPage() {
 
   // The expense charts and list share one filter state (plan 9O K148): the
   // charts and their chips stay visible, the list is inside "Expenses (N)".
-  const explorer = useMoneyExplorer({ entries: filteredExpenses, dateOf: expenseDate, categoryOf: mainOf, period, offset, scope: paidByFilter, styleFor, shopById })
+  const explorer = useMoneyExplorer({ entries: filteredExpenses, dateOf: expenseDate, categoryOf: mainOf, view, scope: paidByFilter, styleFor, shopById })
   // The closed bars (K146–K151): closed each time Money opens (page state
   // only, nothing remembered), kept as they are through a new period, a
   // new pill or a saved expense; a chart tap opens "Expenses (N)" (K147).
@@ -309,7 +313,7 @@ export function ExpensesPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-4">
-        <PeriodPicker period={period} offset={offset} onPeriod={(p) => showPeriod(p, 0)} onOffset={(o) => showPeriod(period, o)} />
+        <PeriodPicker view={view} onView={showView} firstMonth={firstMonth} />
 
         <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} expensesNote={partsNote} />
       </div>
@@ -321,8 +325,7 @@ export function ExpensesPage() {
         categories={incomeCategories}
         categoriesMissing={incomeCategoriesMissing}
         styleFor={incomeStyleFor}
-        period={period}
-        offset={offset}
+        view={view}
         person={receivedByFilter}
         onPerson={setReceivedByFilter}
         personOptions={incomePersonOptions}

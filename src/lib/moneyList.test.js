@@ -61,11 +61,12 @@ describe('store filter', () => {
 
 describe('"From" / "To" (K155, K156)', () => {
   const october = { start: '2026-10-01', end: '2026-11-01', periodText: 'October 2026' }
-  it('an empty "To" is that one day; nothing without a "From"', () => {
+  it('an empty "To" is that one day; only "To" is that one day too (K182); nothing with both empty', () => {
     expect(checkDates({ from: '2026-10-03', to: '' }, october)).toEqual({ dates: { from: '2026-10-03', to: '2026-10-03' }, problem: '' })
     expect(checkDates({ from: '2026-10-03', to: '2026-10-06' }, october)).toEqual({ dates: { from: '2026-10-03', to: '2026-10-06' }, problem: '' })
     expect(checkDates({ from: '', to: '' }, october)).toEqual({ dates: null, problem: '' })
-    expect(checkDates({ from: '', to: '2026-10-06' }, october)).toEqual({ dates: null, problem: '' })
+    expect(checkDates({ from: '', to: '2026-10-06' }, october)).toEqual({ dates: { from: '2026-10-06', to: '2026-10-06' }, problem: '' })
+    expect(checkDates({ from: '', to: '2026-11-06' }, october)).toEqual({ dates: null, problem: 'Choose a date in October 2026.' })
   })
   it('a date outside the period: nothing applied, "Choose a date in October 2026."', () => {
     expect(checkDates({ from: '2026-09-28', to: '' }, october)).toEqual({ dates: null, problem: 'Choose a date in October 2026.' })

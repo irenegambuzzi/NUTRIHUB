@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { categoryTotals } from '../lib/moneySummary'
 import { onlineSplit, shopKeyFor, shopTotals } from '../lib/shops'
 import { applyFilters, bucketChipLabel, categoryChipOrder, checkDates, groupByBucket, groupByCategory, listArrangement } from '../lib/moneyList'
-import { bucketKeyForDate, formatPeriodRange, getPeriodBuckets, getPeriodRange, localDateString } from '../lib/expensePeriods'
+import { bucketKeyForDate, formatView, localDateString, viewBucketPeriod, viewBuckets, viewKey, viewRange } from '../lib/expensePeriods'
 
 const toggled = (list, key) => (list.includes(key) ? list.filter((k) => k !== key) : [...list, key])
 
@@ -19,6 +19,8 @@ const toggled = (list, key) => (list.includes(key) ? list.filter((k) => k !== ke
 //   store      – expenses only, from the "By store" chart (K157d)
 // Arguments:
 //   entries     – everything in the period (already filtered by person)
+//   view        – the period on screen (lib/expensePeriods: a pill and its
+//                 range); its TREND bars are the period chips (K173, K175)
 //   scope       – the person selection; changing it clears every filter
 //   dateOf      – an entry's date
 //   categoryOf  – (categoryId) => its main category ({ id, name }) or null
@@ -26,7 +28,7 @@ const toggled = (list, key) => (list.includes(key) ? list.filter((k) => k !== ke
 //                 filter); null for income
 // The filters only narrow the list: the top card, the K4 note and
 // "Totals per category" never follow them.
-export function useMoneyExplorer({ entries, dateOf, categoryOf, period, offset, scope, styleFor, shopById = null }) {
+export function useMoneyExplorer({ entries, dateOf, categoryOf, view, scope, styleFor, shopById = null }) {
   const [categories, setCategories] = useState([])
   const [buckets, setBuckets] = useState([])
   const [from, setFrom] = useState('')
@@ -46,18 +48,20 @@ export function useMoneyExplorer({ entries, dateOf, categoryOf, period, offset, 
   }
 
   // A new period (or person) starts with no filter at all.
-  const periodKey = `${period}|${offset}|${scope ?? ''}`
+  const periodKey = `${viewKey(view)}|${scope ?? ''}`
   const [seenPeriod, setSeenPeriod] = useState(periodKey)
   if (seenPeriod !== periodKey) {
     setSeenPeriod(periodKey)
     clearFilters()
   }
 
-  const trendBuckets = useMemo(() => getPeriodBuckets(period, new Date(), offset), [period, offset])
+  // What the bars are: days, the weeks of a month, months or years.
+  const period = viewBucketPeriod(view)
+  const trendBuckets = useMemo(() => viewBuckets(view, new Date()), [view])
   const range = useMemo(() => {
-    const { start, end } = getPeriodRange(period, new Date(), offset)
-    return { start: localDateString(start), end: localDateString(end), periodText: formatPeriodRange(period, new Date(), offset) }
-  }, [period, offset])
+    const { start, end } = viewRange(view, new Date())
+    return { start: localDateString(start), end: localDateString(end), periodText: formatView(view, new Date()) }
+  }, [view])
 
   const barData = useMemo(() => {
     const sums = new Map(trendBuckets.map((b) => [b.key, 0]))

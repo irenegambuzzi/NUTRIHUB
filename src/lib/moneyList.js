@@ -53,13 +53,16 @@ export function formatDatesChip({ from, to }) {
 }
 
 // Whether "From" / "To" can be applied in the period on screen (K155, K156):
-//   from, to    – YYYY-MM-DD or '' ("To" empty = that one day)
+//   from, to    – YYYY-MM-DD or '' (only one of them filled = that one day)
 //   start, end  – the period: start included, end not (YYYY-MM-DD)
 //   periodText  – the period as the bar says it ("October 2026")
 // → { dates: { from, to } | null, problem: '' | the short line to show }.
-// Nothing is applied without a "From", with a date outside the period, or
+// Nothing is applied with both empty, with a date outside the period, or
 // with "From" after "To".
-export function checkDates({ from, to }, { start, end, periodText }) {
+export function checkDates({ from: typedFrom, to: typedTo }, { start, end, periodText }) {
+  // Only one of the two filled = that one day (K155, K182).
+  const from = typedFrom || typedTo
+  const to = typedFrom ? typedTo : ''
   if (!from) return { dates: null, problem: '' }
   const last = to || from
   const outside = (d) => d < start || d >= end
@@ -123,11 +126,13 @@ export function formatMonthWeek(first, last) {
 // What the chip for a clicked time bucket says. `bucket` is the chart's
 // bucket ({ key, label }, and for a Month its `first` and `last` day):
 // a day ("Mon 5 Oct"), a week of the month ("Week 2 · 2–8 Nov",
-// "Week 6 · 30 Nov") or a month ("Oct 2026").
+// "Week 6 · 30 Nov"), a month ("Oct 2026") or a year ("2026").
 export function bucketChipLabel(period, bucket) {
   const { key, label } = bucket
   if (period === 'week') return parseLocalDate(key).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
   if (period === 'month') return `${label} · ${formatMonthWeek(bucket.first, bucket.last)}`
+  // A year of a span longer than 12 months (K160c-2): "2026".
+  if (period === 'years') return key
   const [y, m] = key.split('-').map(Number)
   return `${MONTHS[m - 1]} ${y}`
 }
