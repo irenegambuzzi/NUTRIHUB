@@ -142,6 +142,20 @@ describe('the periods of the pills (K160a–d)', () => {
     expect(viewBuckets(calendarYearView(2025), NOW)).toHaveLength(12)
   })
 
+  it('K192: a month after this one gets its bar only when the section has an entry dated in it', () => {
+    const labels = (view, dates) => viewBuckets(view, NOW, dates).map((b) => b.label)
+    // NOW = 12/11/2026 here; Q4 2026 with an entry on 20/12/2026.
+    expect(labels(q('3months', 2026, 'Q4'), ['2026-10-02', '2026-12-20'])).toEqual(['Oct', 'Nov', 'Dec'])
+    expect(viewBuckets(q('3months', 2026, 'Q4'), NOW, ['2026-12-20']).at(-1).key).toBe('2026-12')
+    expect(labels(q('3months', 2026, 'Q4'), ['2026-10-02'])).toEqual(['Oct', 'Nov'])
+    // Each later month on its own: H2 2026 with an entry only in December.
+    expect(labels(q('6months', 2026, 'H2'), ['2026-12-01'])).toEqual(['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    expect(labels(calendarYearView(2026), ['2026-12-31'])).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    // A date outside the period changes nothing; Week and Month as before.
+    expect(labels(q('3months', 2026, 'Q4'), ['2027-01-05'])).toEqual(['Oct', 'Nov'])
+    expect(labels(defaultView('month', NOW), ['2026-12-20'])).toHaveLength(6)
+  })
+
   it('TREND follows the period (K173): days, weeks, months, years for more than 12 months (K160c-2)', () => {
     const later = day(2029, 11, 15)
     expect(viewBucketPeriod(defaultView('week', NOW))).toBe('week')

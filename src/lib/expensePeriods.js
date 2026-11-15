@@ -241,19 +241,30 @@ export function viewBucketPeriod(view) {
 }
 
 // The TREND bars of a view. Months and years after this month get no bar
-// (K160d); the Week and Month pills keep all theirs.
-export function viewBuckets(view, now = new Date()) {
+// (K160d) — unless the section has an entry dated in that month (K192):
+// `dates` are the section's entry dates (YYYY-MM-DD), and each later month
+// with one of them gets its bar (and so its "Sort by period" chip). The
+// Week and Month pills keep all theirs.
+export function viewBuckets(view, now = new Date(), dates = []) {
   if (view.pill === 'week') return getPeriodBuckets('week', now, view.offset)
   const kind = viewBucketPeriod(view)
   if (kind === 'month') return monthWeeks(Math.floor(view.from / 12), view.from % 12)
-  const last = Math.min(view.from + view.months - 1, monthNumber(now))
-  if (kind === 'years') {
-    const firstYear = Math.floor(view.from / 12)
-    const lastYear = Math.floor(last / 12)
-    return Array.from({ length: Math.max(lastYear - firstYear + 1, 0) }, (_, i) => ({ key: String(firstYear + i), label: String(firstYear + i) }))
+  const current = monthNumber(now)
+  const lastOfView = view.from + view.months - 1
+  const withData = new Set()
+  for (const d of dates) {
+    if (!d) continue
+    const n = Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1
+    if (n > current && n >= view.from && n <= lastOfView) withData.add(n)
   }
-  return Array.from({ length: Math.max(last - view.from + 1, 0) }, (_, i) => {
-    const d = monthDate(view.from + i)
+  const months = []
+  for (let n = view.from; n <= lastOfView; n++) if (n <= current || withData.has(n)) months.push(n)
+  if (kind === 'years') {
+    const years = [...new Set(months.map((n) => Math.floor(n / 12)))]
+    return years.map((y) => ({ key: String(y), label: String(y) }))
+  }
+  return months.map((n) => {
+    const d = monthDate(n)
     return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: MONTH_LABELS[d.getMonth()] }
   })
 }

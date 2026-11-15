@@ -34,6 +34,8 @@ import { Button } from '../components/ui/Button'
 import { PERSON_OPTIONS, usePersonFilter } from '../lib/personFilter'
 import { defaultView, localDateString, viewRange } from '../lib/expensePeriods'
 import { useFirstMoneyMonth } from '../hooks/useFirstMoneyMonth'
+import { useLeftoverRows } from '../hooks/useLeftover'
+import { leftoverCard } from '../lib/leftover'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
@@ -215,6 +217,16 @@ export function ExpensesPage() {
   const total = sumAmounts(filteredExpenses)
   const incomeTotal = sumAmounts(filteredIncome)
 
+  // The leftover from the months before the period (plan 9O K164–K172):
+  // computed from every row before the period's first day (read with only
+  // what it needs, kept live), only shown, never saved. Week: nothing read.
+  // Until those rows are read (or offline): no line and no bar.
+  const before = useLeftoverRows(startDate, { needed: view.pill !== 'week', partsReady })
+  const { line: leftoverLine, available } = useMemo(
+    () => leftoverCard({ view, incomePerson: receivedByFilter, expensesPerson: paidByFilter, income: incomeTotal, expenses: total, before, partsReady: partsReady === true }),
+    [view, receivedByFilter, paidByFilter, incomeTotal, total, before, partsReady]
+  )
+
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
 
   // The expense charts and list share one filter state (plan 9O K148): the
@@ -315,7 +327,15 @@ export function ExpensesPage() {
       <div className="space-y-4">
         <PeriodPicker view={view} onView={showView} firstMonth={firstMonth} />
 
-        <MoneySummary income={incomeTotal} expenses={total} incomePerson={receivedByFilter} expensesPerson={paidByFilter} expensesNote={partsNote} />
+        <MoneySummary
+          income={incomeTotal}
+          expenses={total}
+          incomePerson={receivedByFilter}
+          expensesPerson={paidByFilter}
+          expensesNote={partsNote}
+          leftover={leftoverLine}
+          available={available}
+        />
       </div>
 
       <IncomeSection
@@ -425,6 +445,7 @@ export function ExpensesPage() {
               <ExplorerList
                 explorer={explorer}
                 plural="expenses"
+                noun={['expense', 'expenses']}
                 styleFor={styleFor}
                 renderDefault={expenseGroups}
                 renderEntry={renderExpense}

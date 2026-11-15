@@ -3,6 +3,7 @@ import { createTableStore, newestFirst, storeFamily } from './tableStore'
 import { normalizeItem } from './inventory'
 import { getPeriodRange } from './expensePeriods'
 import { localDateString } from './week'
+import { PART_COLUMNS } from './sharedParts'
 
 // The app's shared, live tables (see tableStore.js). The lists used
 // around the house are also kept on the phone (`persist`), so they open
@@ -142,7 +143,37 @@ export const incomeSince = storeFamily((since) =>
   })
 )
 
-export const allIncomeStores = () => [...incomeSince.all(), incomeUsageStore].filter((s) => s.isStarted())
+// The money before a day, only what the leftover needs (plan 9O K164–
+// K172): every row dated before the first day of the period on screen,
+// with just its date, amount and person. Kept live like every store, so
+// a later edit, delete or add of an old entry changes the leftover at
+// once. Key "YYYY-MM-DD|1": the period's first day, and whether the part
+// columns are there (supabase/029; before it they are not read).
+export const expensesBefore = storeFamily((key) => {
+  const [before, parts] = key.split('|')
+  return createTableStore({
+    name: 'expenses',
+    table: 'expenses',
+    columns: ['id', 'expense_date', 'amount', 'paid_by', ...(parts === '1' ? PART_COLUMNS : [])].join(', '),
+    query: (q) => q.lt('expense_date', before).order('expense_date').order('id'),
+    paginate: true,
+    accept: (row) => row.expense_date < before,
+  })
+})
+
+export const incomeBefore = storeFamily((before) =>
+  createTableStore({
+    name: 'income',
+    table: 'income',
+    columns: 'id, income_date, amount, received_by',
+    query: (q) => q.lt('income_date', before).order('income_date').order('id'),
+    paginate: true,
+    optional: true,
+    accept: (row) => row.income_date < before,
+  })
+)
+
+export const allIncomeStores = () => [...incomeSince.all(), ...incomeBefore.all(), incomeUsageStore].filter((s) => s.isStarted())
 
 // The saved color of each expense category (supabase/016).
 export const categoryColorStore = createTableStore({
@@ -261,7 +292,7 @@ export const budgetMapStore = createTableStore({
 
 // Every expense store in use, so a write can update all of them.
 export const allExpenseStores = () =>
-  [...expensesSince.all(), ...expensesInCategory.all(), expenseUsageStore, shopUsageStore, tripExpenseStore].filter((s) => s.isStarted())
+  [...expensesSince.all(), ...expensesBefore.all(), ...expensesInCategory.all(), expenseUsageStore, shopUsageStore, tripExpenseStore].filter((s) => s.isStarted())
 
 export const recipeStore = createTableStore({
   name: 'recipes',

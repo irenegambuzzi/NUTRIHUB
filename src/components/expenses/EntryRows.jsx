@@ -73,7 +73,7 @@ export function IncomeRow({ entry, names, onEdit, onDelete }) {
       title={entry.source || sub || main || 'Income'}
       detail={[dateLabel(entry.income_date), sub && main ? `${main} › ${sub}` : main, paidByLabel(entry.received_by)].filter(Boolean).join(' · ')}
       amount={`+€${Number(entry.amount).toFixed(2)}`}
-      tone="font-bold text-[#7FDB92]"
+      tone="font-bold text-[var(--color-money-in)]"
       actions={
         <>
           <button onClick={() => onEdit(entry)} className={`${iconButton} hover:text-[var(--color-primary)]`} title="Edit income" aria-label="Edit income">

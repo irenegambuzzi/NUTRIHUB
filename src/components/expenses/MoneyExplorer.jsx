@@ -20,13 +20,14 @@ const periodChipColors = 'bg-[var(--color-primary)]/15 text-[var(--color-text)] 
 // bar, K157).
 
 // The charts, then — only while a filter is on — a chip for each (the
-// period chips, the dates, the categories, the store), "Clear filters" and
-// "{n} · €{x}" of what the list shows.
+// period chips, the dates, the categories, the store) and "Clear filters".
+// (The total of what the list shows is next to the "Sort by" buttons,
+// K186.)
 //   onPick – called when a chart tap turns a filter on (K147: it opens the
 //            list's bar); a tap that lets a filter go calls nothing (K177)
 //   shopsMissing – stores aren't in the database yet (supabase/019)
 export function ExplorerCharts({ explorer, plural, shopsMissing = false, onPick = () => {} }) {
-  const { barData, pieData, storeTotals, storeSplit, shopById, categoryChips, periodChips, categories, buckets, dates, store, toggleCategory, toggleBucket, toggleStore, clearDates, visible, filtered, clearFilters } = explorer
+  const { barData, pieData, storeTotals, storeSplit, shopById, categoryChips, periodChips, categories, buckets, dates, store, toggleCategory, toggleBucket, toggleStore, clearDates, filtered, clearFilters } = explorer
   const tap = (toggle) => (key) => {
     if (toggle(key)) onPick()
   }
@@ -91,9 +92,6 @@ export function ExplorerCharts({ explorer, plural, shopsMissing = false, onPick 
           <button onClick={clearFilters} className="min-h-10 px-3 rounded-full text-xs font-bold text-[var(--color-text-muted)] underline underline-offset-2">
             Clear filters
           </button>
-          <span className="text-[11px] text-[var(--color-text-muted)] ml-auto font-mono">
-            {visible.length} · €{entriesTotal(visible).toFixed(2)}
-          </span>
         </div>
       )}
     </div>
@@ -151,7 +149,13 @@ function PanelChip({ on, onClick, hex = null, children }) {
 //   renderEntry    – (entry) => one row, for the cards
 //   renderEntries  – (entries) => the rows of a card (optional; e.g. a
 //                    shopping trip's expenses as one row)
-export function ExplorerList({ explorer, plural, styleFor, renderDefault, renderEntry, renderEntries = null }) {
+//   noun           – [one, many] for the total: "1 expense", "3 expenses"
+//   totalTone      – the colour of the total (orange expenses, green income)
+// While a filter is on, the total of what the list shows sits on the row of
+// the two buttons, at the right (K186–K188): "3 expenses · €74.90", in the
+// look of the € chip next to the section title; on a narrow phone it wraps
+// to its own row, still at the right.
+export function ExplorerList({ explorer, plural, styleFor, renderDefault, renderEntry, renderEntries = null, noun = ['entry', 'entries'], totalTone = 'text-[var(--color-accent)]' }) {
   const { categoryChips, periodChips, categories, buckets, from, to, datesProblem, toggleCategory, toggleBucket, setFrom, setTo, categoryCount, periodCount, fieldsKey, visible, arrangement, groups, filtered } = explorer
   const [panel, setPanel] = useState(null)
   const fromId = useId()
@@ -162,9 +166,16 @@ export function ExplorerList({ explorer, plural, styleFor, renderDefault, render
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <PanelButton label="Sort by category" count={categoryCount} open={panel === 'category'} onToggle={flip('category')} />
           <PanelButton label="Sort by period" count={periodCount} open={panel === 'period'} onToggle={flip('period')} />
+          {filtered && (
+            <span
+              className={cn('ml-auto text-xs font-mono font-bold bg-[var(--color-surface)] px-3 py-1.5 rounded-full border border-[var(--color-border)] shadow-sm', totalTone)}
+            >
+              {visible.length} {visible.length === 1 ? noun[0] : noun[1]} · €{entriesTotal(visible).toFixed(2)}
+            </span>
+          )}
         </div>
 
         {panel === 'category' && (

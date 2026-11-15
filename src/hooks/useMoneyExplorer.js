@@ -57,7 +57,8 @@ export function useMoneyExplorer({ entries, dateOf, categoryOf, view, scope, sty
 
   // What the bars are: days, the weeks of a month, months or years.
   const period = viewBucketPeriod(view)
-  const trendBuckets = useMemo(() => viewBuckets(view, new Date()), [view])
+  // A month after this one gets a bar only with an entry in it (K192).
+  const trendBuckets = useMemo(() => viewBuckets(view, new Date(), entries.map(dateOf)), [view, entries, dateOf])
   const range = useMemo(() => {
     const { start, end } = viewRange(view, new Date())
     return { start: localDateString(start), end: localDateString(end), periodText: formatView(view, new Date()) }

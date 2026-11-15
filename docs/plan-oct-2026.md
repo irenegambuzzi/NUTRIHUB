@@ -38,7 +38,9 @@ Contents
    - 9N. One item, many names (round 6D, decided 04–09/11, stages 1–5 as
      built; SQL 032): up to K145
    - 9O. MONEY display round (decided 10–11/11; no SQL): K146–K176, prompt 1
-     as built
+     as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
+   - 9P. Update round (decided 15/11): the search in "Confirm purchase", the
+     date and payer of a whole purchase, the Reopen / Undo bug report
 10. Risks and decisions
 
 ---
@@ -2296,7 +2298,7 @@ Investments). A durable bought on a trip stays locked (Add to HOME off, no
    and phase 2 are under 9K "Later".
 
 The order of the rounds from 01/11 on: section 9K, "Follow-up 01/11 to 9K",
-"Next rounds".
+"Next rounds"; from 15/11 on: section 9O, K193.
 
 ### 9G. Similar-name safety net (decided 26/10, as built)
 
@@ -4021,9 +4023,15 @@ fake database that can't answer now means "not known".
    Orders); then the expenses history (with Sort by) as a closed bar in
    the same way; the Income history also closed until tapped. Only how
    things are shown, not colours or content. Read-only analysis first.
-5. Family Tree (another project).
-
-Trips & Holidays (round 7) and AI (round 8) stay postponed.
+   **Prompts 1–4 built (11–15/11); done after the iPhone test of prompt 4.**
+5. (Replaced 15/11 by 9O K193.) Update round (section 9P): read-only
+   analysis first, then building and testing.
+6. AI round (round 8): reading receipt photos and category suggestions,
+   before Family Tree and Trips. Read-only analysis, costs, account and
+   credits guided step by step, then building.
+7. Family Tree (another project).
+8. Later: Telegram bot (K176, needs the AI round), Trips & Holidays
+   (round 7).
 
 ### iPhone checklist for round 9K
 
@@ -6305,6 +6313,21 @@ keep working as before), no new offline queue.
 - **K183** (A) A chosen period chip with €0.00 gets no card.
 - **K184** (A) The count on a "Sort by…" button shows also while its panel is open.
 - **K185** (A) An invalid date stays in its field with the warning, is not counted and gets no chip.
+- **K186** (A) The "{n} · €{x}" total moves from the chips row under the charts to the open list bar ("Expenses (N)" and "Income (N)"), on the same row as the two buttons "Sort by category" and "Sort by period", at the right. At 375 px it may wrap to its own row, right-aligned, directly under the two buttons.
+  - Its look is the same as the € chip next to the section title (same pill shape, border and text size). Colour: orange for Expenses, the green token for Income.
+  - The chips row under the charts keeps the filter chips and "Clear filters" only.
+- **K187** (B) Text with a word, singular or plural: "1 expense · €7.00", "3 expenses · €74.90"; Income: "1 entry · €30.00", "2 entries · €2000.00".
+- **K188** (A) The total is shown only while a filter is on (as today).
+- **K189** (A) Week keeps no "This week" button (as built).
+- **K190** (A) The light-theme colour values stay (as built).
+- **K191** (B) The income amounts in the income list (inside "Income (N)", e.g. "+€1200.00") use the strong green token of K181 instead of the pale green.
+- **K192** (C) In a running period, a month after the current month gets a TREND bar (and its "Sort by period" chip, K175) only when that section has data in it. Example on 12/11/2026, Q4 2026, an expense dated 20/12/2026 €9.00 → Expenses TREND bars Oct, Nov, Dec and a "Dec 2026" chip; the Income TREND (no December income) still Oct, Nov. Without such data: no Dec bar (as built).
+- **K193** (A) New order of work (decided 15/11; replaces "Next rounds (decided 01/11)" item 5 and the order in 9F/9K):
+  1. MONEY display round (this prompt and its iPhone test).
+  2. Update round (section 9P): read-only analysis first, then building and testing.
+  3. AI round (round 8): reading receipt photos and category suggestions. Moved before Family Tree and Trips (the household wants it as soon as possible). Read-only analysis, costs, account and credits guided step by step, then building.
+  4. Family Tree (another project).
+  5. Later: Telegram bot (K176, needs the AI round), Trips & Holidays (round 7).
 
 ### Prompt 1 as built (11/11; code and tests only, no SQL)
 
@@ -6637,6 +6660,167 @@ answered.
    (b) a running period stops at today (the entry is left out until
    December); (c) draw a future month only when it has entries.
    Suggestion: (a).
+
+(Answered 15/11: 1 → K189, 2 → K190, 3 → K191, 4 → K192.)
+
+iPhone test of MONEY display prompt 3 done 15/11/2026: all OK.
+
+### Prompt 4 as built (15/11; code and tests only, no SQL)
+
+Built: K164–K172 (the leftover), K186–K188 (the filter total), K191, K192,
+K189 / K190 kept as built, and the plan (K186–K193, 9P, the order of work).
+No file in `supabase/` changed; no new browser storage (the leftover's rows
+are not kept on the phone), no new offline queue. The bars, the "Sort by"
+buttons and panels, the period pickers, the colours of prompt 3, the K4
+note and Orders are unchanged except as below.
+
+**Files.** New: `lib/leftover.js` (pure: `leftoverCents`, `leftoverScope`,
+`monthBefore`, `leftoverCard`), `hooks/useLeftover.js` (`useLeftoverRows`),
+`lib/leftover.test.js`, `components/moneyLeftover.render.test.jsx`.
+Changed: `lib/stores.js` (two store families `expensesBefore` /
+`incomeBefore`; both are in `allExpenseStores` / `allIncomeStores`, so this
+phone's own saves reach them at once), `pages/ExpensesPage.jsx` (reads the
+rows, passes the leftover and the bar to the card; the `noun` of the
+list), `components/expenses/MoneySummary.jsx` (the line, the breakdown,
+"This month" / "This range", the bar), `components/expenses/MoneyExplorer.jsx`
+(the total leaves the chips row and goes on the row of the two buttons),
+`components/expenses/IncomeSection.jsx` and `EntryRows.jsx` (K191; the
+income `noun` and green total), `lib/expensePeriods.js` (`viewBuckets`
+takes the section's entry dates, K192), `hooks/useMoneyExplorer.js` (passes
+them), `lib/expensePeriods.test.js` (+1). The four older Money render test
+files (`moneyBars`, `moneySortBy`, `moneyPeriods`, `sharedParts`) mock the
+two new stores as "not read" (so their top card is as before) and expect
+the new total texts ("3 expenses · €74.90" for "3 · €74.90"; the K148
+position check now finds the chips row by its "Remove filter" chip and the
+total inside the open "Expenses" bar).
+
+**The top card** (Money → top card under the period bar), top to bottom,
+when a leftover line is shown:
+
+| What | Exact text (examples of the fixture) | Look |
+|---|---|---|
+| The line, above the tiles | `Leftover from October 2026 · +€1400.00` | small bold, normal text colour; the amount in the strong green token (K181) |
+| The breakdown (household only), under it | `{label} +€860.00 · {label} +€540.00` (labels from PAID_BY_OPTIONS, the two persons) | very small grey; each amount in the K181 colour: plus green, minus red (`−€50.00`), €0.00 normal |
+| The three tiles | INCOME `€2900.00` (green), EXPENSES `€2400.00` (orange), BALANCE `+€1900.00` (= leftover + income − expenses; green / red / normal) | unchanged look |
+| Under BALANCE | `This month +€500.00` (Month pill) or `This range +€500.00` (other periods) | very small grey; the amount in the K181 colour (`This month €0.00` normal) |
+| The bar, under the tiles | a thin bar (orange fill = spent, up to full) and under it `Available €4300.00 · spent 56%` | very small grey; red token (and a full bar) when the % is over 100 |
+| The K4 note (person pill with Shared expenses without parts) | unchanged text | under the bar |
+
+Without a leftover line: no line, no breakdown, BALANCE = income − expenses
+as before, no "This month"; the bar still shows when it may (below), with
+`Available` = the income only.
+
+**When.** The line and the bar need both pills "Everyone", or both on the
+same person; never the Week pill. Line: the leftover > €0.00 (in cents). The
+breakdown: only with the household line. The bar: those pill
+combinations, `a` > 0, and the earlier rows read. Periods: Month, 3 Months,
+6 Months, Year and every span; the leftover is always the one at the end of
+the month before the period's first month ("Leftover from {that month}").
+A period starting in or before the first month with data has no row before
+it, so no line (October 2026; 3 Months Sep – Nov 2026; Year 2026; "All";
+"Last 12 months" in 2026).
+
+**How the leftover data is read.** For a period starting on day D (its
+1st): every expense dated before D (columns `id, expense_date, amount,
+paid_by` + the two `part_<code>` columns once 029 is seen) and every income
+entry dated before D (`id, income_date, amount, received_by`), one paged
+select per table (pages of 1000), oldest first. Nothing for the Week pill;
+nothing until it is known whether the part columns exist. The rows stay
+live like every store (realtime: an edit, delete or add of an old entry on
+any phone changes them; this phone's own saves update them at once). One
+read per period start per app session (going back to a start already read
+uses the live copy); read again after the realtime connection drops and
+comes back, or when the phone comes back online after a read that could
+not be made. Rows: all rows before the period, i.e. on 15/11/2026 for
+November 2026: the October 2026 expenses and income (nothing for October
+itself). Offline, a failed read or not read yet → no line and no bar
+(the top card as before); the household and person numbers follow the
+same rules as the pills (A1, K4, K9, K14; before 029 a person has only
+their own expenses).
+
+**Filter total (K186–K188).** Money → Expenses → bar "Expenses (N)" open →
+the row of "Sort by category" / "Sort by period" → at the right (it wraps
+to its own row under the two buttons on a narrow phone, still at the
+right): `3 expenses · €74.90` / `1 expense · €6.20`, the look of the €
+chip next to "Expenses" (pill, border, `text-xs` mono bold), orange. Money
+→ Income → bar "Income (N)" open → the same place: `2 entries · €2000.00` /
+`1 entry · €30.00`, green token. Only while a filter is on. The chips row
+under the charts: the chips and "Clear filters" only.
+
+**K191.** Money → Income → "Income (N)" open → each amount (`+€1200.00`)
+in the plain list and in the cards: the strong green token (was `#7FDB92`).
+
+**K192.** `viewBuckets(view, now, dates)`: a month after this month (inside
+the period) gets its bar and its "Sort by period" chip when the section
+(after its person pill) has an entry dated in that month; Week, Month and
+months up to now unchanged.
+
+**Tests: 2568 → 2604 (137 → 139 files).** New `lib/leftover.test.js` (13:
+the fixture's three leftovers, K4 / K9 / K14, before 029, cents, the
+scopes, the card for November / one person / other pills / Week / not read
+/ ≤ 0 / the first month / over 100 % / "This range" / the month names).
+New `components/moneyLeftover.render.test.jsx` (22: every top-card example
+of the prompt — October, November, December, both pills on one person,
+two persons, Shared, Week (nothing read), 3 Months Sep – Nov and Nov – Jan,
+Year 2026 / 2027, K164 live delete, K166, the red bar, K168a, offline then
+back online, a failed read; K186–K188 with the prompt-1 and prompt-2
+fixtures; K191; K192 with and without the 20/12 expense).
+`lib/expensePeriods.test.js` +1 (K192). A mutation check (K192 off, the
+line off, "This range" off) makes 14 of them fail.
+
+**Kata ragu (15/11 prompt 4, tanya Zidane).** Built the safe way until
+answered.
+
+1. The colours in the grey breakdown. Built: the names grey, each amount in
+   the K181 colour (K168a example: `Irene +€900.00` green, `Akbar −€50.00`
+   red; €0.00 normal) — K181 says the same rule for the leftover numbers. Options:
+   (a) as built; (b) plus amounts grey too, only a minus red.
+   Suggestion: (a).
+2. K192 with a gap. On 15/08/2026, H2 2026 with an expense only on
+   10/12/2026: built literally → bars Jul, Aug, Dec (no Sep, Oct, Nov).
+   Options: (a) as built; (b) every month up to the last month with data
+   (Jul … Dec, Sep–Nov at €0.00). Suggestion: (b).
+3. Offline after the rows were read (e.g. Money open in November, then no
+   signal). Built: the line and the bar disappear while offline (the card
+   as before) and come back with the connection — the rows could be out of
+   date. Options: (a) as built; (b) keep showing what was last read.
+   Suggestion: (a).
+4. The filter total lives inside the open bar, so with a filter on and the
+   bar closed by hand (e.g. "Going out" tapped, then "Expenses (3 of 6)"
+   closed) no total is visible (the bar still says "(3 of 6)"). Options:
+   (a) as built; (b) the € of the filter on the closed bar's right side.
+   Suggestion: (a).
+5. "spent {p}%" in red only when the rounded p is over 100 (K172): €100.40
+   spent of €100.00 shows "spent 100%" in grey with a full bar. Options:
+   (a) as built; (b) red whenever expenses > available. Suggestion: (b).
+
+### 9P. Update round (decided 15/11)
+
+Order: section 9O K193 (item 2, after the MONEY display round). Read-only
+analysis first, then building and testing.
+
+- **NOTE 1 — Search in "Confirm purchase".** A search field in the "Confirm
+  purchase" screen that searches only the lines of that screen (the items
+  in the cart being confirmed), never the SHOP list or HOME. It only hides
+  non-matching lines from view. Every button keeps working; the total,
+  "Confirm purchase · €…" and the Shared parts always include every line;
+  no amount changes because of the search.
+- **NOTE 2 — Change the date and who paid of a whole purchase** (SHOP
+  "Confirm purchase" purchases and MONEY purchases with several items) in
+  Money's expenses history, after a mistake. Today a purchase row has
+  "Change the store of the whole purchase" and "Reopen purchase" / "Undo
+  purchase" only. The new actions must not be placed next to those (too
+  long): they are hidden behind a "▾" button that opens them, like the
+  period and "Sort by" panels. Real case: a purchase of 15/11/2026, paid by
+  Irene, €40.41, saved with a wrong date in the same month.
+- **BUG REPORT (15/11) — "Reopen purchase"** (Money → the purchase row) and
+  "Undo" on the "Purchase confirmed" toast, for a SHOP purchase with many
+  items: some items did not come back to "Confirm purchase" (fewer lines, a
+  lower total), so they had to be found and typed again. Later the missing
+  items appeared again on the SHOP list. Real case: purchase of 07/11/2026,
+  paid by Irene, 10 items, €3.39, entered through Shop → List → in the cart
+  → "Confirm purchase", reopened from Money. To analyse (read only, with the
+  real functions in PGlite) before building anything.
 
 ---
 

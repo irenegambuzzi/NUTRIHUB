@@ -21,17 +21,26 @@ const data = vi.hoisted(() => ({
   trips: [],
 }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
-vi.mock('../lib/stores', async (original) => ({
-  ...(await original()),
-  pantryStore: fake(() => data.pantry),
-  groceryStore: fake(() => []),
-  orderStore: fake(() => []),
-  budgetMapStore: fake(() => []),
-  tripStore: fake(() => data.trips),
-  tripItemStore: fake(() => []),
-  shopStore: fake(() => []),
-  inventoryCategoryStore: fake(() => [{ id: 'pantry-staples', name: 'Pantry Staples' }]),
-}))
+const notRead = vi.hoisted(() => ({ getSnapshot: () => ({ rows: [], loaded: false }), refresh: () => {} }))
+vi.mock('../lib/stores', async (original) => {
+  const { emptyStore } = await import('../lib/tableStore')
+  notRead.useRows = emptyStore.useRows
+  return {
+    ...(await original()),
+    // The leftover's rows (plan 9O prompt 4) never read here: the top card
+    // stays as before (no leftover line, no "Available" bar).
+    expensesBefore: () => notRead,
+    incomeBefore: () => notRead,
+    pantryStore: fake(() => data.pantry),
+    groceryStore: fake(() => []),
+    orderStore: fake(() => []),
+    budgetMapStore: fake(() => []),
+    tripStore: fake(() => data.trips),
+    tripItemStore: fake(() => []),
+    shopStore: fake(() => []),
+    inventoryCategoryStore: fake(() => [{ id: 'pantry-staples', name: 'Pantry Staples' }]),
+  }
+})
 const parents = [{ id: 'pantry-staples', name: 'Pantry Staples', type: 'parent' }]
 vi.mock('../hooks/useInventoryCategories', () => ({
   useInventoryCategories: () => ({ parents, pantryParents: parents, subsByParent: new Map(parents.map((p) => [p.id, []])), addCategory: vi.fn(), addSubcategory: vi.fn() }),

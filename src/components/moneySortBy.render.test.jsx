@@ -12,17 +12,26 @@ vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: 
 
 const data = vi.hoisted(() => ({ expenses: [], income: [] }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
-vi.mock('../lib/stores', async (original) => ({
-  ...(await original()),
-  pantryStore: fake(() => []),
-  groceryStore: fake(() => []),
-  orderStore: fake(() => []),
-  budgetMapStore: fake(() => []),
-  tripStore: fake(() => []),
-  tripItemStore: fake(() => []),
-  shopStore: fake(() => []),
-  inventoryCategoryStore: fake(() => []),
-}))
+const notRead = vi.hoisted(() => ({ getSnapshot: () => ({ rows: [], loaded: false }), refresh: () => {} }))
+vi.mock('../lib/stores', async (original) => {
+  const { emptyStore } = await import('../lib/tableStore')
+  notRead.useRows = emptyStore.useRows
+  return {
+    ...(await original()),
+    // The leftover's rows (plan 9O prompt 4) never read here: the top card
+    // stays as before (no leftover line, no "Available" bar).
+    expensesBefore: () => notRead,
+    incomeBefore: () => notRead,
+    pantryStore: fake(() => []),
+    groceryStore: fake(() => []),
+    orderStore: fake(() => []),
+    budgetMapStore: fake(() => []),
+    tripStore: fake(() => []),
+    tripItemStore: fake(() => []),
+    shopStore: fake(() => []),
+    inventoryCategoryStore: fake(() => []),
+  }
+})
 vi.mock('../hooks/useInventoryCategories', () => ({
   useInventoryCategories: () => ({ parents: [], pantryParents: [], subsByParent: new Map(), addCategory: vi.fn(), addSubcategory: vi.fn() }),
 }))
@@ -208,9 +217,9 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     fireEvent.click(bar(ex(), EXPENSES))
     pick(ex(), 'category', ...BOTH)
     pick(ex(), 'period', 'Week 1 · 1–4 Oct')
-    expect(ex().getByText('2 · €31.70')).toBeTruthy()
+    expect(ex().getByText('2 expenses · €31.70')).toBeTruthy()
     pick(ex(), 'period', 'Week 1 · 1–4 Oct', 'Week 2 · 5–11 Oct')
-    expect(ex().getByText('3 · €54.90')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €54.90')).toBeTruthy()
   })
 
   it('Week 1 + Week 2 + the two categories → 5 · €86.60, "Expenses (5 of 6)"; cards Going out €74.90 (#6 #4 #1), Cigarettes & Vape €11.70 (#5 #3)', () => {
@@ -219,7 +228,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     fireEvent.click(bar(ex(), EXPENSES))
     pick(ex(), 'period', 'Week 1 · 1–4 Oct', 'Week 2 · 5–11 Oct')
     pick(ex(), 'category', ...BOTH)
-    expect(ex().getByText('5 · €86.60')).toBeTruthy()
+    expect(ex().getByText('5 expenses · €86.60')).toBeTruthy()
     expect(bar(ex(), 'Expenses (5 of 6)')).toBeTruthy()
     expect(button(ex(), 'category').textContent).toBe('Sort by category · 2')
     expect(button(ex(), 'period').textContent).toBe('Sort by period · 2')
@@ -229,7 +238,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     expect(cardTotal(ex(), 'Cigarettes & Vape')).toBe('€11.70')
     expect(numbersIn(card(ex(), 'Cigarettes & Vape'))).toEqual([5, 3])
     // The total is only in the chips row under the charts (K148).
-    expect(ex().getAllByText('5 · €86.60')).toHaveLength(1)
+    expect(ex().getAllByText('5 expenses · €86.60')).toHaveLength(1)
   })
 
   it('Week 1 + Week 2 only → 6 · €135.50; cards "Week 2 · 5–11 Oct" €54.90 (#6 #5 #4), then "Week 1 · 1–4 Oct" €80.60 (#3 #2 #1)', () => {
@@ -237,7 +246,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     page()
     fireEvent.click(bar(ex(), EXPENSES))
     pick(ex(), 'period', 'Week 1 · 1–4 Oct', 'Week 2 · 5–11 Oct')
-    expect(ex().getByText('6 · €135.50')).toBeTruthy()
+    expect(ex().getByText('6 expenses · €135.50')).toBeTruthy()
     expect(bar(ex(), 'Expenses (6 of 6)')).toBeTruthy()
     expect(cardTitles(ex())).toEqual(['Week 2 · 5–11 Oct', 'Week 1 · 1–4 Oct'])
     expect(cardTotal(ex(), 'Week 2 · 5–11 Oct')).toBe('€54.90')
@@ -251,7 +260,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     page()
     fireEvent.click(bar(ex(), EXPENSES))
     pick(ex(), 'category', 'Groceries', 'Going out')
-    expect(ex().getByText('4 · €123.80')).toBeTruthy()
+    expect(ex().getByText('4 expenses · €123.80')).toBeTruthy()
     expect(cardTitles(ex())).toEqual(['Going out', 'Groceries'])
   })
 
@@ -262,7 +271,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     typeDate(ex(), 'From', '03/10/2026')
     typeDate(ex(), 'To', '06/10/2026')
     pick(ex(), 'category', ...BOTH)
-    expect(ex().getByText('2 · €24.20')).toBeTruthy()
+    expect(ex().getByText('2 expenses · €24.20')).toBeTruthy()
     expect(cardTitles(ex())).toEqual(['Going out', 'Cigarettes & Vape'])
     expect(cardTotal(ex(), 'Going out')).toBe('€18.00')
     expect(numbersIn(card(ex(), 'Going out'))).toEqual([4])
@@ -279,11 +288,11 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     fireEvent.click(bar(ex(), EXPENSES))
     typeDate(ex(), 'From', '03/10/2026')
     typeDate(ex(), 'To', '06/10/2026')
-    expect(ex().getByText('3 · €73.10')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €73.10')).toBeTruthy()
     expect(bar(ex(), 'Expenses (3 of 6)')).toBeTruthy()
     expect(cards(ex())).toEqual([])
     typeDate(ex(), 'To', '')
-    expect(ex().getByText('1 · €48.90')).toBeTruthy()
+    expect(ex().getByText('1 expense · €48.90')).toBeTruthy()
     expect(ex().getByRole('button', { name: 'Remove filter 03/10' })).toBeTruthy()
   })
 
@@ -295,11 +304,11 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     expect(chipOn(ex(), 'period', 'Week 1 · 1–4 Oct')).toBe(true)
     typeDate(ex(), 'From', '03/10/2026')
     expect(chipOn(ex(), 'period', 'Week 1 · 1–4 Oct')).toBe(false)
-    expect(ex().getByText('1 · €48.90')).toBeTruthy()
+    expect(ex().getByText('1 expense · €48.90')).toBeTruthy()
     pick(ex(), 'period', 'Week 2 · 5–11 Oct')
     expect(openPanel(ex(), 'period').getByLabelText('From').value).toBe('')
     expect(ex().queryByRole('button', { name: /^Remove filter 03\/10/ })).toBeNull()
-    expect(ex().getByText('3 · €54.90')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €54.90')).toBeTruthy()
   })
 
   it('a date outside the period: nothing applied, "Choose a date in October 2026."; "From" after "To": nothing applied, the other line', () => {
@@ -333,7 +342,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     tapChart(ex(), 'Week 2 €54.90')
     expect(chipOn(ex(), 'period', 'Week 2 · 5–11 Oct')).toBe(true)
     expect(button(ex(), 'period').textContent).toBe('Sort by period · 1')
-    expect(ex().getByText('3 · €54.90')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €54.90')).toBeTruthy()
     // A second tap on the legend lets it go.
     tapChart(ex(), 'Going out')
     expect(button(ex(), 'category').textContent).toBe('Sort by category · 1')
@@ -350,10 +359,10 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     expect(ex().getByRole('button', { name: 'Remove filter No store' })).toBeTruthy()
     // The store is never a third button (K157d).
     expect(ex().queryByRole('button', { name: /^Sort by store/ })).toBeNull()
-    expect(ex().getByText('2 · €49.40')).toBeTruthy()
+    expect(ex().getByText('2 expenses · €49.40')).toBeTruthy()
     fireEvent.click(ex().getByRole('button', { name: 'Remove filter Going out' }))
     expect(chipOn(ex(), 'category', 'Going out')).toBe(false)
-    expect(ex().getByText('3 · €54.90')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €54.90')).toBeTruthy()
     fireEvent.click(ex().getByRole('button', { name: 'Clear filters' }))
     expect(bar(ex(), 'Expenses (6)').getAttribute('aria-expanded')).toBe('true')
     expect(button(ex(), 'period').textContent).toBe('Sort by period')
@@ -398,7 +407,7 @@ describe('Money → Expenses → "Sort by category" and "Sort by period" (K157)'
     fireEvent.click(bar(ex(), EXPENSES))
     expect(openPanel(ex(), 'period').getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Sep 2026', 'Oct 2026', 'Nov 2026'])
     pick(ex(), 'period', 'Oct 2026')
-    expect(ex().getByText('6 · €135.50')).toBeTruthy()
+    expect(ex().getByText('6 expenses · €135.50')).toBeTruthy()
     expect(cardTitles(ex())).toEqual(['Oct 2026'])
   })
 
@@ -430,19 +439,19 @@ describe('Money → Expenses → the person pills with Week 1 + Week 2 + the two
     page()
     paidBy(L1)
     choose()
-    expect(ex().getByText('3 · €39.90')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €39.90')).toBeTruthy()
     expect(numbersIn(card(ex(), 'Going out'))).toEqual([6, 4])
     expect(numbersIn(card(ex(), 'Cigarettes & Vape'))).toEqual([3])
     paidBy(L2)
     choose()
-    expect(ex().getByText('3 · €46.70')).toBeTruthy()
+    expect(ex().getByText('3 expenses · €46.70')).toBeTruthy()
     expect(numbersIn(card(ex(), 'Going out'))).toEqual([6, 1])
     expect(Math.round((39.9 + 46.7) * 100) / 100).toBe(86.6)
     // Shared has no Cigarettes & Vape in October, so it has no chip there.
     paidBy(SHARED)
     expect(openPanel(ex(), 'category').getAllByRole('button').map((b) => b.textContent)).toEqual(['Going out', 'Groceries'])
     choose(['Going out'])
-    expect(ex().getByText('1 · €31.40')).toBeTruthy()
+    expect(ex().getByText('1 expense · €31.40')).toBeTruthy()
   })
 })
 
@@ -453,7 +462,7 @@ describe('Money → Income → the same two buttons (K158)', () => {
     fireEvent.click(bar(inc(), INCOME))
     expect(openPanel(inc(), 'category').getAllByRole('button').map((b) => b.textContent)).toEqual(['Salary', 'Other'])
     pick(inc(), 'category', 'Salary')
-    expect(inc().getByText('2 · €2000.00')).toBeTruthy()
+    expect(inc().getByText('2 entries · €2000.00')).toBeTruthy()
     expect(bar(inc(), 'Income (2 of 3)')).toBeTruthy()
     expect(cardTitles(inc())).toEqual(['Salary'])
     expect(inc().queryByRole('button', { name: /^Store / })).toBeNull()
@@ -464,14 +473,14 @@ describe('Money → Income → the same two buttons (K158)', () => {
     page()
     fireEvent.click(bar(inc(), INCOME))
     pick(inc(), 'period', 'Week 3 · 12–18 Oct')
-    expect(inc().getByText('1 · €30.00')).toBeTruthy()
+    expect(inc().getByText('1 entry · €30.00')).toBeTruthy()
     expect(cardTitles(inc())).toEqual(['Week 3 · 12–18 Oct'])
     pick(inc(), 'period', 'Week 3 · 12–18 Oct', 'Week 2 · 5–11 Oct')
     pick(inc(), 'category', 'Salary')
-    expect(inc().getByText('2 · €2000.00')).toBeTruthy()
+    expect(inc().getByText('2 entries · €2000.00')).toBeTruthy()
     pick(inc(), 'period', 'Week 2 · 5–11 Oct', 'Week 1 · 1–4 Oct')
     expect(bar(inc(), 'Income (0 of 3)')).toBeTruthy()
-    expect(inc().getByText('0 · €0.00')).toBeTruthy()
+    expect(inc().getByText('0 entries · €0.00')).toBeTruthy()
     expect(inc().getByText('No income entries match these filters.')).toBeTruthy()
   })
 

@@ -10,19 +10,28 @@ vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: 
 
 const data = vi.hoisted(() => ({ expenses: [], income: [], since: [], incomeSince: [] }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
-vi.mock('../lib/stores', async (original) => ({
-  ...(await original()),
-  // Only November is loaded when Money opens (to see `since` move back).
-  currentExpensesSince: () => '2026-11-01',
-  pantryStore: fake(() => []),
-  groceryStore: fake(() => []),
-  orderStore: fake(() => []),
-  budgetMapStore: fake(() => []),
-  tripStore: fake(() => []),
-  tripItemStore: fake(() => []),
-  shopStore: fake(() => []),
-  inventoryCategoryStore: fake(() => []),
-}))
+const notRead = vi.hoisted(() => ({ getSnapshot: () => ({ rows: [], loaded: false }), refresh: () => {} }))
+vi.mock('../lib/stores', async (original) => {
+  const { emptyStore } = await import('../lib/tableStore')
+  notRead.useRows = emptyStore.useRows
+  return {
+    ...(await original()),
+    // The leftover's rows (plan 9O prompt 4) never read here: the top card
+    // stays as before (no leftover line, no "Available" bar).
+    expensesBefore: () => notRead,
+    incomeBefore: () => notRead,
+    // Only November is loaded when Money opens (to see `since` move back).
+    currentExpensesSince: () => '2026-11-01',
+    pantryStore: fake(() => []),
+    groceryStore: fake(() => []),
+    orderStore: fake(() => []),
+    budgetMapStore: fake(() => []),
+    tripStore: fake(() => []),
+    tripItemStore: fake(() => []),
+    shopStore: fake(() => []),
+    inventoryCategoryStore: fake(() => []),
+  }
+})
 vi.mock('../hooks/useInventoryCategories', () => ({
   useInventoryCategories: () => ({ parents: [], pantryParents: [], subsByParent: new Map(), addCategory: vi.fn(), addSubcategory: vi.fn() }),
 }))
@@ -509,7 +518,7 @@ describe('Money → "Sort by period": "To" alone (K182)', () => {
     fireEvent.click(ex().getByRole('button', { name: /^Sort by period/ }))
     const panel = within(ex().getByRole('region', { name: 'Sort by period' }))
     fireEvent.change(panel.getByLabelText('To'), { target: { value: '06/11/2026' } })
-    expect(ex().getByText('2 · €13.50')).toBeTruthy()
+    expect(ex().getByText('2 expenses · €13.50')).toBeTruthy()
     expect(ex().getByRole('button', { name: 'Expenses (2 of 4)' })).toBeTruthy()
     expect(ex().getByRole('button', { name: /^Sort by period/ }).textContent).toBe('Sort by period · 1')
     expect(ex().getByRole('button', { name: 'Remove filter 06/11' }).textContent).toBe('06/11')

@@ -11,17 +11,26 @@ vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: 
 
 const data = vi.hoisted(() => ({ expenses: [], income: [] }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
-vi.mock('../lib/stores', async (original) => ({
-  ...(await original()),
-  pantryStore: fake(() => []),
-  groceryStore: fake(() => []),
-  orderStore: fake(() => []),
-  budgetMapStore: fake(() => []),
-  tripStore: fake(() => []),
-  tripItemStore: fake(() => []),
-  shopStore: fake(() => []),
-  inventoryCategoryStore: fake(() => []),
-}))
+const notRead = vi.hoisted(() => ({ getSnapshot: () => ({ rows: [], loaded: false }), refresh: () => {} }))
+vi.mock('../lib/stores', async (original) => {
+  const { emptyStore } = await import('../lib/tableStore')
+  notRead.useRows = emptyStore.useRows
+  return {
+    ...(await original()),
+    // The leftover's rows (plan 9O prompt 4) never read here: the top card
+    // stays as before (no leftover line, no "Available" bar).
+    expensesBefore: () => notRead,
+    incomeBefore: () => notRead,
+    pantryStore: fake(() => []),
+    groceryStore: fake(() => []),
+    orderStore: fake(() => []),
+    budgetMapStore: fake(() => []),
+    tripStore: fake(() => []),
+    tripItemStore: fake(() => []),
+    shopStore: fake(() => []),
+    inventoryCategoryStore: fake(() => []),
+  }
+})
 vi.mock('../hooks/useInventoryCategories', () => ({
   useInventoryCategories: () => ({ parents: [], pantryParents: [], subsByParent: new Map(), addCategory: vi.fn(), addSubcategory: vi.fn() }),
 }))
@@ -181,7 +190,7 @@ describe('Money → the closed bars (K146)', () => {
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Going out' }))
     expect(isOpen(EXPENSES)).toBe(true)
     expect(bar('Expenses (3 of 6)')).toBeTruthy()
-    expect(screen.getByText('3 · €74.90')).toBeTruthy()
+    expect(screen.getByText('3 expenses · €74.90')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Remove filter Going out' })).toBeTruthy()
     expect(within(bar(TOTALS)).getByText('Totals per category (3)', { exact: false })).toBeTruthy()
     expect(within(bar(TOTALS)).getByText('€135.50')).toBeTruthy()
@@ -189,10 +198,13 @@ describe('Money → the closed bars (K146)', () => {
     expect(within(chip('Expenses')).getByText('€135.50')).toBeTruthy()
     openRows()
     expect(listed()).toEqual(['TEST bar', 'TEST cinema', 'TEST dinner'])
-    // The chips row sits right under the charts, before both bars.
-    const chips = screen.getByText('3 · €74.90')
+    // The chips row sits right under the charts, before both bars; the
+    // total is inside the open "Expenses" bar, next to the buttons (K186).
+    const chips = screen.getByRole('button', { name: 'Remove filter Going out' })
     expect(expenseCharts().compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(chips.compareDocumentPosition(bar(TOTALS)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const total = screen.getByText('3 expenses · €74.90')
+    expect(bar('Expenses (3 of 6)').compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // "Clear filters" never closes a bar.
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(bar('Expenses (6)').getAttribute('aria-expanded')).toBe('true')
@@ -220,7 +232,7 @@ describe('Money → the closed bars (K146)', () => {
     expect(within(bar(TOTALS)).getByText('Totals per category (3)', { exact: false })).toBeTruthy()
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Going out' }))
     expect(bar('Expenses (2 of 4)')).toBeTruthy()
-    expect(screen.getByText('2 · €33.70')).toBeTruthy()
+    expect(screen.getByText('2 expenses · €33.70')).toBeTruthy()
 
     paidBy(L2)
     expect(bar('Expenses (4)')).toBeTruthy()
@@ -272,7 +284,7 @@ describe('Money → the Month TREND weeks (K153 / K162)', () => {
     expect(screen.getByRole('button', { name: 'Remove filter Week 2 · 5–11 Oct' }).textContent).toBe('Week 2 · 5–11 Oct')
     expect(bar('Expenses (3 of 6)')).toBeTruthy()
     expect(isOpen(EXPENSES)).toBe(true)
-    expect(screen.getByText('3 · €54.90')).toBeTruthy()
+    expect(screen.getByText('3 expenses · €54.90')).toBeTruthy()
     openRows()
     expect(listed()).toEqual(['TEST cinema', 'TEST vape', 'TEST dinner'])
   })
@@ -288,12 +300,12 @@ describe('Money → the Month TREND weeks (K153 / K162)', () => {
     expect(weeks).toEqual(['Week 1 €7.00', 'Week 2 €0.00', 'Week 3 €0.00', 'Week 4 €0.00', 'Week 5 €0.00', 'Week 6 €12.00'])
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 6 €12.00' }))
     expect(screen.getByRole('button', { name: 'Remove filter Week 6 · 30 Nov' })).toBeTruthy()
-    expect(screen.getByText('1 · €12.00')).toBeTruthy()
+    expect(screen.getByText('1 expense · €12.00')).toBeTruthy()
     // A second tap lets Week 6 go (prompt 2, K157b: taps add, they don't replace).
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 6 €12.00' }))
     fireEvent.click(within(expenseCharts()).getByRole('button', { name: 'Week 1 €7.00' }))
     expect(screen.getByRole('button', { name: 'Remove filter Week 1 · 1 Nov' })).toBeTruthy()
-    expect(screen.getByText('1 · €7.00')).toBeTruthy()
+    expect(screen.getByText('1 expense · €7.00')).toBeTruthy()
     expect(bar('Expenses (1 of 2)')).toBeTruthy()
   })
 })

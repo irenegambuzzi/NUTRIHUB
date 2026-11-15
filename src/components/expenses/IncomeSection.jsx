@@ -99,6 +99,8 @@ export function IncomeSection({
           <ExplorerList
             explorer={explorer}
             plural="income entries"
+            noun={['entry', 'entries']}
+            totalTone="text-[var(--color-money-in)]"
             styleFor={styleFor}
             renderDefault={(visible) =>
               sortNewestFirst(visible, incomeDate).map((entry) => {
@@ -122,7 +124,8 @@ export function IncomeSection({
                       </span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <span className="font-mono font-bold text-[#7FDB92] mr-1">+€{Number(entry.amount).toFixed(2)}</span>
+                      {/* The strong money-in green (plan 9O K191). */}
+                      <span className="font-mono font-bold text-[var(--color-money-in)] mr-1">+€{Number(entry.amount).toFixed(2)}</span>
                       <button onClick={() => setEditing(entry)} className="text-[var(--color-icon-muted)] hover:text-[var(--color-primary)] transition w-9 h-9 flex items-center justify-center" title="Edit income" aria-label="Edit income">
                         <Pencil size={13} />
                       </button>
