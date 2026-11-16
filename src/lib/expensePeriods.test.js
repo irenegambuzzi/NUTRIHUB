@@ -156,6 +156,23 @@ describe('the periods of the pills (K160a–d)', () => {
     expect(labels(defaultView('month', NOW), ['2026-12-20'])).toHaveLength(6)
   })
 
+  it('K195: in a running period every month up to the last one with data gets its bar, no gaps; only dates inside the view count', () => {
+    const labels = (view, now, dates) => viewBuckets(view, now, dates).map((b) => b.label)
+    const aug15 = day(2026, 8, 15)
+    // 15/08/2026, H2 2026, one expense on 10/12/2026: Sep–Nov too (at €0.00).
+    expect(labels(q('6months', 2026, 'H2'), aug15, ['2026-07-03', '2026-12-10'])).toEqual(['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    expect(viewBuckets(q('6months', 2026, 'H2'), aug15, ['2026-12-10']).map((b) => b.key)).toEqual(['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'])
+    // Income with data only in Jul–Aug: Jul, Aug.
+    expect(labels(q('6months', 2026, 'H2'), aug15, ['2026-07-05', '2026-08-01'])).toEqual(['Jul', 'Aug'])
+    // Year 2026 on 15/03/2026 with an entry on 10/06/2026: Jan … Jun.
+    expect(labels(calendarYearView(2026), day(2026, 3, 15), ['2026-06-10'])).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'])
+    // Q4 on 12/11/2026 with 20/12/2026: Oct, Nov, Dec (as K192).
+    expect(labels(q('3months', 2026, 'Q4'), day(2026, 11, 12), ['2026-12-20'])).toEqual(['Oct', 'Nov', 'Dec'])
+    // A date outside the view changes nothing; never a month after its end.
+    expect(labels(q('6months', 2026, 'H2'), aug15, ['2027-02-01'])).toEqual(['Jul', 'Aug'])
+    expect(labels(calendarYearView(2026), day(2026, 3, 15), ['2025-12-31', '2027-01-01'])).toEqual(['Jan', 'Feb', 'Mar'])
+  })
+
   it('TREND follows the period (K173): days, weeks, months, years for more than 12 months (K160c-2)', () => {
     const later = day(2029, 11, 15)
     expect(viewBucketPeriod(defaultView('week', NOW))).toBe('week')

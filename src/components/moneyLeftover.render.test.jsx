@@ -357,6 +357,21 @@ describe('Money → top card: the leftover (K164–K172)', () => {
     expect(meter().firstChild.style.width).toBe('100%')
   })
 
+  it('K198: €100.40 spent of €100.00 → "spent 100%" in red, the bar full; €100.00 of €100.00 → not red', () => {
+    for (const [out, red] of [
+      [100.4, true],
+      [100, false],
+    ]) {
+      load({ expenses: [spent('x1', out, '2026-10-10', P1)], income: [earned('i1', 100, '2026-10-05', P1)] }, NOVEMBER)
+      page()
+      fireEvent.click(screen.getByRole('button', { name: 'Previous period' }))
+      expect(availableText().textContent).toBe('Available €100.00 · spent 100%')
+      expect(availableText().className.includes(RED)).toBe(red)
+      expect(meter().firstChild.style.width).toBe('100%')
+      cleanup()
+    }
+  })
+
   it('K168a: a person\'s minus in the breakdown, in red; both pills on that person → no line', () => {
     load({ expenses: [spent('x1', 100, '2026-10-10', P1), spent('x2', 50, '2026-10-11', P2)], income: [earned('i1', 1000, '2026-10-05', P1)] }, NOVEMBER)
     page()
@@ -506,6 +521,26 @@ describe('Money → a later month with data in a running period (K192)', () => {
     fireEvent.click(sortButton(ex(), 'period'))
     expect(within(ex().getByRole('region', { name: 'Sort by period' })).getByRole('button', { name: 'Dec 2026' })).toBeTruthy()
     expect(trend(inc())).toEqual(['Oct', 'Nov'])
+  })
+
+  it('K195: 15/08/2026, H2 2026, an expense dated 10/12/2026 → Expenses TREND Jul … Dec (Sep €0.00), chips "Sep 2026" … "Dec 2026"; Income Jul, Aug', () => {
+    today(2026, 8, 15)
+    firstDates('2026-07-02')
+    data.expenses = [spent('x1', 20, '2026-07-02', P1), spent('x2', 30, '2026-08-03', P2), spent('x9', 9, '2026-12-10', P1)]
+    data.income = [earned('i1', 1000, '2026-07-05', P1), earned('i2', 900, '2026-08-05', P2)]
+    page()
+    pill('6 Months')
+    fireEvent.click(screen.getByRole('button', { name: 'Mar – Aug 2026' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Pick a period' })).getByRole('button', { name: 'H2' }))
+    expect(screen.getByRole('button', { name: 'Jul – Dec 2026' })).toBeTruthy()
+    expect(trend(ex())).toEqual(['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    expect(ex().getByRole('button', { name: 'Sep €0.00' })).toBeTruthy()
+    expect(ex().getByRole('button', { name: 'Dec €9.00' })).toBeTruthy()
+    fireEvent.click(ex().getByRole('button', { name: /^Expenses \(/ }))
+    fireEvent.click(sortButton(ex(), 'period'))
+    const chips = within(ex().getByRole('region', { name: 'Sort by period' }))
+    for (const name of ['Sep 2026', 'Oct 2026', 'Nov 2026', 'Dec 2026']) expect(chips.getByRole('button', { name })).toBeTruthy()
+    expect(trend(inc())).toEqual(['Jul', 'Aug'])
   })
 
   it('without such an entry: no December bar (as built)', () => {

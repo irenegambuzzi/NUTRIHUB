@@ -93,11 +93,27 @@ describe('Reopen / Undo purchase: the notes', () => {
     }
   })
 
-  it('the lines can\'t be read first: the purchase is reopened all the same, without notes', async () => {
+  // Plan 9P (report A2.9 part 1): the lines are now required — without
+  // them the purchase's cards couldn't be read back — so nothing changes.
+  it('the lines can\'t be read first: nothing is reopened, the usual error toast with Retry', async () => {
     withReopen({ v031: true })
     const gum = db.add('pantry_items', { name: 'Gum', unit: 'pcs', current_stock: 2 })
     addLine({ pantry_item_id: gum.id, stock_unit: 'pack' })
     db.failWhen = (call) => call.table === 'shopping_trip_items'
+    const { error } = await reopenTrip('t1')
+    expect(error).toBeTruthy()
+    expect(db.calls.some((c) => c.name === 'reopen_shopping_trip')).toBe(false)
+    expect(db.tables.shopping_trip_items).toHaveLength(1)
+    expect(db.row('pantry_items', gum.id).current_stock).toBe(2)
+    expect(getToasts().map((t) => [t.message, t.action?.label])).toEqual([["Couldn't save — check your connection.", 'Retry']])
+  })
+
+  it('the pantry rows for the notes can\'t be read: the purchase is reopened all the same, without notes', async () => {
+    withReopen({ v031: true })
+    const gum = db.add('pantry_items', { name: 'Gum', unit: 'pcs', current_stock: 2 })
+    addLine({ pantry_item_id: gum.id, stock_unit: 'pack' })
+    let reads = 0
+    db.failWhen = (call) => call.table === 'pantry_items' && call.op === 'select' && ++reads === 1
     const { error } = await reopenTrip('t1')
     expect(error).toBeNull()
     expect(db.calls.some((c) => c.name === 'reopen_shopping_trip')).toBe(true)

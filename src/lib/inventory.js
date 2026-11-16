@@ -318,11 +318,13 @@ export async function updateRows(table, ids, patch) {
 
 // Keeps the grocery list in step with stock: a Low, Out or Expired item
 // gets one auto-generated entry, and that entry disappears once the item
-// is fine again. Manually added entries are never touched. A one-time item
-// never gets one, and its entry in the cart stays there. A group row from
-// an older version of the app never gets one (K138): its automatic entries
-// still "to buy" go, those in a cart or on the way stay until bought,
-// arrived or cancelled. Throws if the list couldn't be read or changed.
+// is fine again. Manually added entries are never touched. An entry in the
+// cart is never taken out (K200: the cart is the household's own choice),
+// whatever the item: only automatic entries still "to buy" go. A one-time
+// item never gets one. A group row from an older version of the app never
+// gets one (K138): its automatic entries still "to buy" go, those in a cart
+// or on the way stay until bought, arrived or cancelled. Throws if the list
+// couldn't be read or changed.
 export async function syncShoppingForItem(item) {
   const open = must(
     await supabase.from('grocery_items').select('id, auto_generated, in_cart, created_at').eq('pantry_item_id', item.id).eq('completed', false)
@@ -331,10 +333,9 @@ export async function syncShoppingForItem(item) {
   if (!restockReason(item)) {
     // An entry ordered online and on the way stays: it leaves the list
     // when the order arrives (or goes back to "to buy" if cancelled). So
-    // does a one-time item's entry already in the cart.
+    // does every entry already in the cart (K200).
     const ordered = await orderedEntryIds(open.map((g) => g.id))
-    const keepInCart = isOneTime(item) || isGroup(item)
-    const autoIds = open.filter((g) => g.auto_generated && !ordered.has(g.id) && !(keepInCart && g.in_cart)).map((g) => g.id)
+    const autoIds = open.filter((g) => g.auto_generated && !g.in_cart && !ordered.has(g.id)).map((g) => g.id)
     if (autoIds.length) must(await supabase.from('grocery_items').delete().in('id', autoIds))
     return
   }

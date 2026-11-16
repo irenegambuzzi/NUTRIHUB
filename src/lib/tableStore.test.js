@@ -116,6 +116,137 @@ describe('createTableStore', () => {
   })
 })
 
+// Plan 9P (report A2.9 part 2): each reload has its own buffer, an older
+// read never goes over a newer one, a failed read keeps what came in.
+describe('reloads that overlap or fail', () => {
+  const bought = (id) => ({ id, completed: true, in_cart: false })
+  const inCart = (id) => ({ id, completed: false, in_cart: true })
+  const ids = (store, test) => store.getSnapshot().rows.filter(test).map((r) => r.id).sort()
+  const cart = (store) => ids(store, (r) => r.in_cart && !r.completed)
+
+  async function loaded(rows) {
+    const { loads, realtime } = fakeClient()
+    const store = createTableStore({ name: 't', table: 't' })
+    store.subscribe(() => {})
+    loads[0]({ data: rows, error: null })
+    await flush()
+    return { store, loads, realtime }
+  }
+
+  it('a failed read keeps the changes that came in while it was reading (and shows the usual toast)', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { store, loads, realtime } = await loaded([bought('a'), bought('b')])
+    const reload = store.refresh()
+    realtime.change({ eventType: 'UPDATE', new: inCart('a') })
+    realtime.change({ eventType: 'UPDATE', new: inCart('b') })
+    loads[1]({ data: null, error: { message: 'Failed to fetch' } })
+    await reload
+    expect(cart(store)).toEqual(['a', 'b'])
+    const { getToasts, dismissToast } = await import('./feedback')
+    expect(getToasts().map((t) => t.message)).toContain("Couldn't load — check your connection.")
+    getToasts().forEach((t) => dismissToast(t.id))
+    errors.mockRestore()
+  })
+
+  it('a failed first read (nothing read yet): the changes go on the rows shown, the list still counts as not read', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { loads, realtime } = fakeClient()
+    const store = createTableStore({ name: 't', table: 't' })
+    store.subscribe(() => {})
+    realtime.change({ eventType: 'INSERT', new: inCart('a') })
+    loads[0]({ data: null, error: { message: 'Failed to fetch' } })
+    await flush()
+    expect(store.getSnapshot()).toEqual({ rows: [inCart('a')], loaded: false })
+    const { getToasts, dismissToast } = await import('./feedback')
+    getToasts().forEach((t) => dismissToast(t.id))
+    errors.mockRestore()
+  })
+
+  it('three overlapping reloads, the oldest (read before the Reopen) answered last → the newest read stays, no exception', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { store, loads, realtime } = await loaded([bought('a'), bought('b'), bought('c')])
+    const r1 = store.refresh() // its read was made before the Reopen
+    const r2 = store.refresh()
+    realtime.change({ eventType: 'UPDATE', new: inCart('a') }) // the burst starts
+    const r3 = store.refresh() // starts mid-burst
+    realtime.change({ eventType: 'UPDATE', new: inCart('b') })
+    realtime.change({ eventType: 'UPDATE', new: inCart('c') })
+    loads[3]({ data: [inCart('a'), inCart('b'), bought('c')], error: null })
+    await flush()
+    expect(cart(store)).toEqual(['a', 'b', 'c'])
+    loads[2]({ data: [inCart('a'), bought('b'), bought('c')], error: null })
+    loads[1]({ data: [bought('a'), bought('b'), bought('c')], error: null })
+    await Promise.all([r1, r2, r3])
+    expect(cart(store)).toEqual(['a', 'b', 'c'])
+    expect(errors).not.toHaveBeenCalled()
+    errors.mockRestore()
+  })
+
+  it('an older read answered after a newer one is dropped — also when realtime missed the change only the newer read has', async () => {
+    const { store, loads } = await loaded([bought('a')])
+    const old = store.refresh() // read before the Reopen
+    const fresh = store.refresh() // read after it; realtime lost
+    loads[2]({ data: [inCart('a')], error: null })
+    await flush()
+    expect(cart(store)).toEqual(['a'])
+    loads[1]({ data: [bought('a')], error: null })
+    await Promise.all([old, fresh])
+    expect(cart(store)).toEqual(['a'])
+  })
+
+  it('a change during two reloads ends in both results (whichever is applied)', async () => {
+    for (const order of [
+      [1, 2],
+      [2, 1],
+    ]) {
+      const { store, loads, realtime } = await loaded([bought('a')])
+      const reloads = [store.refresh(), store.refresh()]
+      realtime.change({ eventType: 'UPDATE', new: inCart('a') })
+      for (const n of order) {
+        loads[n]({ data: [bought('a'), bought(`x${n}`)], error: null })
+        await flush()
+        expect(cart(store)).toEqual(['a'])
+      }
+      await Promise.all(reloads)
+      // The read applied is the one of the reload that started last.
+      expect(ids(store, () => true)).toEqual(['a', 'x2'])
+    }
+  })
+
+  it('a change after the newer read is on screen, while an older reload is still reading, is not lost', async () => {
+    const { store, loads, realtime } = await loaded([bought('a'), bought('b')])
+    const r1 = store.refresh()
+    const r2 = store.refresh()
+    loads[2]({ data: [bought('a'), bought('b')], error: null })
+    await flush()
+    realtime.change({ eventType: 'UPDATE', new: inCart('b') })
+    loads[1]({ data: [bought('a'), bought('b')], error: null })
+    await Promise.all([r1, r2])
+    expect(cart(store)).toEqual(['b'])
+  })
+
+  it('rows put in by this device (Reopen reads its cards back) are never replaced by a read that started before them', async () => {
+    const { store, loads } = await loaded([bought('a'), bought('b')])
+    const old = store.refresh() // e.g. the reload after waking the device
+    store.upsertLocal([inCart('a'), inCart('b')]) // fresh from the database
+    expect(cart(store)).toEqual(['a', 'b'])
+    loads[1]({ data: [bought('a'), bought('b')], error: null })
+    await old
+    expect(cart(store)).toEqual(['a', 'b'])
+  })
+
+  it('the same for a row taken off or patched by this device', async () => {
+    const { store, loads } = await loaded([bought('a'), bought('b')])
+    const old = store.refresh()
+    store.removeLocal(['a'])
+    store.patchLocal(['b'], { in_cart: true, completed: false })
+    loads[1]({ data: [bought('a'), bought('b')], error: null })
+    await old
+    expect(ids(store, () => true)).toEqual(['b'])
+    expect(cart(store)).toEqual(['b'])
+  })
+})
+
 describe('the copy kept on the phone', () => {
   it('is read only when the list is first used (after login), not when the app loads', async () => {
     const reads = []

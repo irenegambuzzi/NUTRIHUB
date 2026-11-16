@@ -105,6 +105,14 @@ describe('leftoverCard (K166–K172)', () => {
     expect(card({ before: { expenses: [], income: [] }, income: 0, expenses: 50 }).available).toBeNull()
   })
 
+  it('K198: over whenever the spending in cents is above the available (€100.40 of €100.00 → "100%" and over)', () => {
+    const none = { expenses: [], income: [] }
+    expect(card({ before: none, income: 100, expenses: 100.4 }).available).toEqual({ amount: 100, percent: 100, over: true })
+    expect(card({ before: none, income: 100, expenses: 100 }).available).toEqual({ amount: 100, percent: 100, over: false })
+    expect(card({ before: none, income: 100, expenses: 100.01 }).available).toEqual({ amount: 100, percent: 100, over: true })
+    expect(card({ before: none, income: 100, expenses: 99.99 }).available).toEqual({ amount: 100, percent: 100, over: false })
+  })
+
   it('other periods: "This range", the month before the span (K169)', () => {
     const q1 = quickSpans('3months', 2027)[0]
     const { line } = card({ view: q1, before: { expenses: OCT.expenses, income: OCT.income } })

@@ -1,12 +1,13 @@
 import { useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { attempt, deleteWithUndo, followUp, must } from '../lib/db'
-import { confirmDialog, showToast } from '../lib/feedback'
-import { syncShoppingForItem, updateRows } from '../lib/inventory'
+import { OFFLINE_MESSAGE, attempt, deleteWithUndo, followUp, must } from '../lib/db'
+import { confirmDialog, showToast, toastSaveError } from '../lib/feedback'
+import { isOffline } from '../lib/connection'
+import { normalizeItem, syncShoppingForItem, updateRows } from '../lib/inventory'
 import { budgetResolver } from '../lib/budgetContext'
 import { confirmationPayload } from '../lib/purchase'
 import { money } from '../lib/pricing'
-import { allExpenseStores, groceryStore, pantryStore, shopStore, tripItemStore, tripStore } from '../lib/stores'
+import { allExpenseStores, groceryStore, shopStore, tripItemStore, tripStore } from '../lib/stores'
 import { shopsAvailable } from '../lib/shops'
 import { refreshStartedStores } from '../lib/tableStore'
 import { purchaseUndo } from '../lib/trips'
@@ -37,6 +38,12 @@ async function expenseCategories(lines) {
 // elsewhere, and stock whose unit changed is converted (or not taken out
 // at all): its lines and items are read before and after, and a toast
 // names each such item (lib/reopenUnits.js; never before 031).
+// The lines are read first, and must be: without them nothing is changed
+// (the usual error toast with Retry). After the Reopen the purchase's own
+// SHOP cards are read back from the database and shown at once, before the
+// toast says they are back — whatever realtime or a held reload did on this
+// device (plan 9P, report A2.9 part 1). Then only the HOME items of its
+// lines get their SHOP entries checked, each on a fresh read (K200, A.5 b).
 export async function reopenTrip(tripId, note = null, source = 'shop') {
   let seen = null
   const result = await attempt(
@@ -47,25 +54,30 @@ export async function reopenTrip(tripId, note = null, source = 'shop') {
     { onFail: reloadAll }
   )
   if (!result.error) {
+    await followUp('the cart', () => showCardsOf(seen.lines))
     const done = source === 'money' ? 'Purchase undone — its expenses are deleted and HOME stock is back as before.' : 'Purchase reopened — the items are back in the cart.'
     showToast({ message: note ? `${done} ${note}` : done })
-    for (const message of await notesAfterReopen(seen)) showToast({ message })
+    for (const message of await notesAfterReopen(seen.notes)) showToast({ message })
     await reloadAll()
     await followUp('the shopping list', async () => {
-      for (const item of pantryStore.getSnapshot().rows) await syncShoppingForItem(item)
+      for (const id of seen.itemIds) await syncItemNow(id)
     })
   }
   return result
 }
 
-// The purchase's lines, their HOME items and own history rows, read just
-// before Reopen (the lines go with it). Null when they can't be read: the
-// purchase is reopened all the same, only without the notes.
+// The purchase's lines (required: a failed read throws), with their HOME
+// items and own history rows for the notes (`notes`, null when the lines
+// have no HOME item or those can't be read: then only the notes are left
+// out), read just before Reopen (the lines go with it).
 async function readPurchaseItems(tripId) {
+  const lines = must(await supabase.from('shopping_trip_items').select('*').eq('trip_id', tripId))
+  const itemIds = [...new Set(lines.map((l) => l.pantry_item_id).filter(Boolean))]
+  return { lines, itemIds, notes: itemIds.length ? await readNotesBefore(lines, itemIds) : null }
+}
+
+async function readNotesBefore(lines, ids) {
   try {
-    const lines = must(await supabase.from('shopping_trip_items').select('*').eq('trip_id', tripId))
-    const ids = [...new Set(lines.map((l) => l.pantry_item_id).filter(Boolean))]
-    if (!ids.length) return null
     const before = must(await supabase.from('pantry_items').select('*').in('id', ids))
     const logIds = lines.flatMap((l) => l.log_ids ?? [])
     const logs = logIds.length ? must(await supabase.from('stock_logs').select('id, unit, reason').in('id', logIds)) : []
@@ -74,6 +86,37 @@ async function readPurchaseItems(tripId) {
     console.error(error)
     return null
   }
+}
+
+// The SHOP cards of these purchase lines, read from the database and put
+// on this device's list at once. Throws if they can't be read.
+async function showCardsOf(lines) {
+  const ids = [...new Set(lines.map((l) => l.grocery_item_id).filter(Boolean))]
+  if (!ids.length) return
+  groceryStore.upsertLocal(must(await supabase.from('grocery_items').select('*').in('id', ids)))
+}
+
+// One HOME item's SHOP entries brought in step with its stock, judged on
+// the item as it is now in the database (not on a copy read earlier); an
+// item deleted meanwhile is skipped.
+async function syncItemNow(id) {
+  const item = must(await supabase.from('pantry_items').select('*').eq('id', id).maybeSingle())
+  if (item) await syncShoppingForItem(normalizeItem(item))
+}
+
+// "Confirm purchase" checks the database cart before anything is sent (plan
+// 9P, K214): the cards in the cart there that this screen doesn't show
+// (`shownIds`: every card on it, in this trip or not) are read, put on this
+// device's list and returned; nothing is confirmed then. [] when the screen
+// shows them all. Throws if the cart can't be read.
+export async function unseenCartCards(shownIds) {
+  const shown = new Set(shownIds)
+  const inCart = must(await supabase.from('grocery_items').select('id').eq('in_cart', true).eq('completed', false))
+  const missing = inCart.map((r) => r.id).filter((id) => !shown.has(id))
+  if (!missing.length) return []
+  const rows = must(await supabase.from('grocery_items').select('*').in('id', missing))
+  groceryStore.upsertLocal(rows)
+  return rows
 }
 
 async function notesAfterReopen(seen) {
@@ -151,7 +194,25 @@ export async function recordMoneyPurchase({ payload, restocked = [] }) {
 // the purchase, on the trip and its expenses; before it, the store is put
 // on the expenses once the purchase is saved.
 // `partsByItem`: each person's part of the Shared lines (plan 9K), or null.
-export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], shopId = null, paidBy = null, pricing = null, partsByItem = null }) {
+// `shownIds` (the confirm screen: every card it shows): the database cart
+// is checked first (K214). Cards there that the screen didn't show → they
+// are put on the list, `unseen` returns them and nothing is sent. The check
+// can't be made (offline, a failed read) → nothing is sent, with the usual
+// messages; Retry runs `again` (pressing Confirm again).
+export async function confirmCart({ id, date, lines, answers, totalOf, photoIds, patches = [], shopId = null, paidBy = null, pricing = null, partsByItem = null, shownIds = null, again = null }) {
+  if (shownIds) {
+    if (isOffline()) {
+      showToast({ message: OFFLINE_MESSAGE, key: 'offline' })
+      return { data: null, error: { message: OFFLINE_MESSAGE, offline: true } }
+    }
+    try {
+      const unseen = await unseenCartCards(shownIds)
+      if (unseen.length) return { data: null, error: null, unseen }
+    } catch (error) {
+      toastSaveError(error, again)
+      return { data: null, error }
+    }
+  }
   let flowReady = false
   const result = await attempt(
     async () => {
@@ -190,12 +251,14 @@ function afterConfirm(lines, shop) {
   afterSave(new Set(lines.map((l) => l.pantry?.id).filter(Boolean)), shop)
 }
 
+// Each restocked item is judged on a fresh read of it (A.5 b): a copy read
+// earlier may be from before an Undo tapped meanwhile.
 function afterSave(restocked, shop = null) {
   Promise.resolve(shop ? saveShop(shop) : null)
     .then(() => reloadAll())
     .then(() =>
       followUp('the shopping list', async () => {
-        for (const item of pantryStore.getSnapshot().rows) if (restocked.has(item.id)) await syncShoppingForItem(item)
+        for (const id of restocked) await syncItemNow(id)
       })
     )
     .catch((error) => console.error(error))

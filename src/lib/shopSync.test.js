@@ -223,3 +223,30 @@ describe('a one-time item and the SHOP list', () => {
     expect(tables.grocery_items).toHaveLength(1)
   })
 })
+
+// Plan 9P, K200: the cart is the household's own choice — the sync never
+// takes a card out of it, whatever the item.
+describe('K200: an automatic card in the cart', () => {
+  it('"Latte" automatic card in the cart, its HOME stock goes above the minimum ("+") → the card stays in the cart; its automatic entry still "to buy" goes', async () => {
+    const latte = { id: 'l', name: 'Latte', unit: 'pcs', current_stock: 3, min_stock: 1, category_id: 'dairy' }
+    const tables = {
+      pantry_items: [latte],
+      grocery_items: [open('cart', 'l', { in_cart: true }), open('toBuy', 'l'), open('typed', 'l', { auto_generated: false })],
+      orders: [],
+    }
+    const writes = fakeDb(tables)
+    await syncShoppingForItem(latte)
+    expect(tables.grocery_items.map((g) => g.id)).toEqual(['cart', 'typed'])
+    expect(tables.grocery_items[0]).toMatchObject({ in_cart: true, completed: false })
+    expect(writes).toEqual([{ op: 'delete', table: 'grocery_items', ids: ['toBuy'] }])
+  })
+
+  it('an item still low keeps its card in the cart and gets nothing new (as before)', async () => {
+    const latte = { id: 'l', name: 'Latte', unit: 'pcs', current_stock: 0, min_stock: 1, category_id: 'dairy' }
+    const tables = { pantry_items: [latte], grocery_items: [open('cart', 'l', { in_cart: true })], orders: [] }
+    const writes = fakeDb(tables)
+    await syncShoppingForItem(latte)
+    expect(tables.grocery_items.map((g) => g.id)).toEqual(['cart'])
+    expect(writes).toEqual([])
+  })
+})

@@ -241,24 +241,25 @@ export function viewBucketPeriod(view) {
 }
 
 // The TREND bars of a view. Months and years after this month get no bar
-// (K160d) — unless the section has an entry dated in that month (K192):
-// `dates` are the section's entry dates (YYYY-MM-DD), and each later month
-// with one of them gets its bar (and so its "Sort by period" chip). The
-// Week and Month pills keep all theirs.
+// (K160d) — unless the section has an entry dated in a later month of the
+// view (K192 + K195): `dates` are the section's entry dates (YYYY-MM-DD);
+// then every month up to the last one with data gets its bar, no gaps (and
+// so its "Sort by period" chip). Only dates inside the view count; never a
+// month after the view's end. The Week and Month pills keep all theirs.
 export function viewBuckets(view, now = new Date(), dates = []) {
   if (view.pill === 'week') return getPeriodBuckets('week', now, view.offset)
   const kind = viewBucketPeriod(view)
   if (kind === 'month') return monthWeeks(Math.floor(view.from / 12), view.from % 12)
   const current = monthNumber(now)
   const lastOfView = view.from + view.months - 1
-  const withData = new Set()
+  let last = current
   for (const d of dates) {
     if (!d) continue
     const n = Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1
-    if (n > current && n >= view.from && n <= lastOfView) withData.add(n)
+    if (n > last && n >= view.from && n <= lastOfView) last = n
   }
   const months = []
-  for (let n = view.from; n <= lastOfView; n++) if (n <= current || withData.has(n)) months.push(n)
+  for (let n = view.from; n <= lastOfView; n++) if (n <= last) months.push(n)
   if (kind === 'years') {
     const years = [...new Set(months.map((n) => Math.floor(n / 12)))]
     return years.map((y) => ({ key: String(y), label: String(y) }))

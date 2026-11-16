@@ -1,7 +1,7 @@
 // Runs every migration in a real Postgres (PGlite) and checks the shopping
 // trip functions from 014: confirming a cart all at once, sending the same
 // confirmation twice, a confirmation that fails half way, and reopening.
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,6 +30,17 @@ const { purchasedPackLabel } = await import('../src/lib/packSize.js')
 const { arrivalNotTakenOutText, keptNotTakenOutText, keptText, notTakenOutText, reopenNotes, unarriveNote } = await import('../src/lib/reopenUnits.js')
 // For 032: the coupon over name lines, as the app spreads it (lib/discounts.js).
 const { spreadCoupon } = await import('../src/lib/discounts.js')
+// For plan 9P (update round, prompt 1): the app's own SHOP list store, Reopen
+// and the Confirm cart check, over the real 032 functions.
+const appClient = (await import('../src/lib/supabaseClient')).supabase
+const { groceryStore } = await import('../src/lib/stores.js')
+const { refreshStartedStores, setRefreshGate } = await import('../src/lib/tableStore.js')
+const { reopenTrip, unseenCartCards } = await import('../src/hooks/usePurchase.js')
+const { normalizeItem, syncShoppingForItem } = await import('../src/lib/inventory.js')
+const { pantryItemFor } = await import('../src/lib/purchase.js')
+const { inCartOrder } = await import('../src/lib/grocery.js')
+const { lineTotal } = await import('../src/lib/pricing.js')
+const { dismissToast, getToasts } = await import('../src/lib/feedback.js')
 
 const dir = path.join(import.meta.dirname)
 let db
@@ -7226,6 +7237,432 @@ describe('032: one item, many names — pantry_items.names, confirm and reopen r
       await reopen(fx, tripId)
       expect(await stockOf(fx, box)).toBe(11)
       expect((await namesOf(fx, box)).map((n) => n.name)).toEqual(NAMES)
+    })
+  })
+})
+
+// Plan 9P, update round prompt 1 (report A2.7, A2.9, A.2; K200, K214). No
+// new SQL: the real 032 confirm / reopen, and the app's own code on the
+// device side — the SHOP list store (lib/tableStore.js), reopenTrip and the
+// "Confirm purchase" cart check (hooks/usePurchase.js), the list sync (lib/
+// inventory.js). Realtime is played by hand: a trigger in this test database
+// only records every grocery_items change in the order Postgres makes it,
+// and the test hands those changes to the store (all, part, or none). The
+// store's full reads can be held (read now, answered later) or refused.
+describe('9P: "Reopen purchase" / "Undo" never loses a card — the real 032 functions with the app\'s own store, Reopen and Confirm check', () => {
+  const [P1] = PEOPLE
+  const BUDGET = '9a000000-0000-4000-8000-0000000000b1'
+  const REOPENED = 'Purchase reopened — the items are back in the cart.'
+  let d
+  let stopStore
+  let minute = 0
+  const rows = async (text, params) => (await d.query(text, params)).rows
+  const until = (test) => vi.waitFor(() => expect(test()).toBe(true))
+
+  // Realtime: the recorded changes, handed to the store's channel.
+  const channels = []
+  let lastSeq = 0
+  async function newEvents() {
+    const found = await rows(`select * from rt_log where seq > $1 order by seq`, [lastSeq])
+    if (found.length) lastSeq = Number(found.at(-1).seq)
+    return found.map((r) => ({ table: r.tbl, eventType: r.op, new: r.rec ?? {}, old: { id: r.old_id ?? r.rec?.id } }))
+  }
+  function deliver(events) {
+    for (const e of events) for (const ch of channels) for (const h of ch.handlers) if (h.filter?.table === e.table) h.cb({ eventType: e.eventType, new: e.new, old: e.old })
+  }
+  const setStatus = (status) => channels.forEach((ch) => ch.status?.(status))
+
+  // The store's next full read of grocery_items: made at once, answered
+  // when released (or refused).
+  const holds = []
+  function holdNextRead({ fail = false } = {}) {
+    const h = { fail, started: false }
+    h.gate = new Promise((r) => (h.release = r))
+    holds.push(h)
+    return h
+  }
+  // What realtime delivers at the moment a database function commits,
+  // before its answer reaches the device.
+  let onCommit = null
+
+  // A small PostgREST look-alike over PGlite, as the household member.
+  function from(table) {
+    const st = { op: 'select', cols: '*', where: [], params: [], patch: null, rows: null, returning: false, order: null, limit: null, single: false, filtered: false }
+    const p = (v) => (st.params.push(v), `$${st.params.length}`)
+    const b = {
+      select: (cols = '*') => (st.op === 'select' ? (st.cols = cols) : (st.returning = true), b),
+      insert: (r) => ((st.op = 'insert'), (st.rows = [r].flat()), b),
+      upsert: (r) => ((st.op = 'upsert'), (st.rows = [r].flat()), b),
+      update: (patch) => ((st.op = 'update'), (st.patch = patch), b),
+      delete: () => ((st.op = 'delete'), b),
+      eq: (c, v) => ((st.filtered = true), st.where.push(`${c} = ${p(v)}`), b),
+      is: (c, v) => ((st.filtered = true), st.where.push(`${c} is ${v === null ? 'null' : v ? 'true' : 'false'}`), b),
+      in: (c, list) => ((st.filtered = true), st.where.push(list.length ? `${c} in (${list.map(p).join(',')})` : 'false'), b),
+      not: (c, _op, v) => ((st.filtered = true), st.where.push(`${c} is not ${v === null ? 'null' : v ? 'true' : 'false'}`), b),
+      order: (c, { ascending = true } = {}) => ((st.order = `${c} ${ascending ? 'asc' : 'desc'}`), b),
+      limit: (n) => ((st.limit = n), b),
+      single: () => ((st.single = true), b),
+      maybeSingle: () => ((st.single = true), b),
+      then(resolve, reject) {
+        const answer = run()
+        const h = table === 'grocery_items' && st.op === 'select' && !st.filtered ? holds.shift() : null
+        if (!h) return answer.then(resolve, reject)
+        h.started = true
+        return answer.then(async (r) => (await h.gate, h.fail ? { data: null, error: { message: 'TypeError: Load failed' } } : r)).then(resolve, reject)
+      },
+    }
+    async function run() {
+      const where = st.where.length ? ` where ${st.where.join(' and ')}` : ''
+      const statements = []
+      if (st.op === 'select') statements.push(`select ${st.cols} from ${table}${where}${st.order ? ` order by ${st.order}` : ''}${st.limit ? ` limit ${st.limit}` : ''}`)
+      else if (st.op === 'delete') statements.push(`delete from ${table}${where} returning *`)
+      else if (st.op === 'update') statements.push(`update ${table} set ${Object.keys(st.patch).map((k) => `${k} = ${p(st.patch[k])}`).join(', ')}${where} returning *`)
+      else {
+        for (const r of st.rows) {
+          const keys = Object.keys(r)
+          const vals = keys.map((k) => p(typeof r[k] === 'object' && r[k] !== null ? JSON.stringify(r[k]) : r[k]))
+          const conflict = st.op === 'upsert' ? ` on conflict (id) do update set ${keys.map((k) => `${k} = excluded.${k}`).join(', ')}` : ''
+          statements.push(`insert into ${table} (${keys.join(',')}) values (${vals.join(',')})${conflict} returning *`)
+        }
+      }
+      try {
+        const out = []
+        for (const s of statements) {
+          const used = (s.match(/\$\d+/g) ?? []).reduce((m, x) => Math.max(m, Number(x.slice(1))), 0)
+          out.push(...(await d.query(s, st.params.slice(0, used))).rows)
+        }
+        if (st.op !== 'select' && !st.returning) return { data: null, error: null }
+        return { data: st.single ? out[0] ?? null : out, error: null }
+      } catch (error) {
+        return { data: null, error: { message: error.message, code: error.code } }
+      }
+    }
+    return b
+  }
+  async function rpc(name, args) {
+    const keys = Object.keys(args)
+    try {
+      const [r] = (await d.query(`select * from ${name}(${keys.map((k, i) => `${k} => $${i + 1}`).join(', ')})`, keys.map((k) => args[k]))).rows
+      await onCommit?.()
+      return { data: r && Object.keys(r).length === 1 && Object.keys(r)[0] === name ? r[name] : r, error: null }
+    } catch (error) {
+      return { data: null, error: { message: error.message, code: error.code } }
+    }
+  }
+  function channel(name) {
+    const ch = { name, handlers: [], status: null }
+    ch.on = (type, filter, cb) => (ch.handlers.push({ type, filter, cb }), ch)
+    ch.subscribe = (cb) => ((ch.status = cb ?? null), channels.push(ch), ch)
+    return ch
+  }
+
+  beforeAll(async () => {
+    d = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2\d|3[0-2])_.*\.sql$/.test(f) && !f.includes('ROLLBACK')).sort()) await d.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    // The realtime recorder (this test database only).
+    await d.exec(`
+      create table rt_log (seq bigserial primary key, tbl text, op text, rec jsonb, old_id uuid);
+      grant select on rt_log to authenticated;
+      create function rt_capture() returns trigger language plpgsql security definer as $f$
+      begin
+        insert into rt_log (tbl, op, rec, old_id)
+        values (tg_table_name, tg_op, case when tg_op = 'DELETE' then null else to_jsonb(new) end, case when tg_op = 'INSERT' then null else old.id end);
+        return null;
+      end $f$;
+      create trigger rt_capture after insert or update or delete on grocery_items for each row execute function rt_capture();
+    `)
+    await d.query(`insert into expense_categories (id, name) values ($1, 'Groceries 9P')`, [BUDGET])
+    await d.query(`select set_config('request.jwt.claim.sub', $1, false)`, [MEMBER])
+    await d.exec('set role authenticated')
+    Object.assign(appClient, { from, rpc, channel })
+    setRefreshGate(() => true)
+    stopStore = groceryStore.subscribe(() => {})
+    await groceryStore.refresh()
+  }, 180000)
+
+  afterAll(() => {
+    stopStore?.()
+    for (const k of ['from', 'rpc', 'channel']) delete appClient[k]
+    setRefreshGate(() => true)
+  })
+  beforeEach(() => vi.spyOn(console, 'error').mockImplementation(() => {}))
+  afterEach(async () => {
+    getToasts().forEach((t) => dismissToast(t.id))
+    holds.length = 0
+    onCommit = null
+    setRefreshGate(() => true)
+    vi.restoreAllMocks()
+    // The device catches up before the next case.
+    deliver(await newEvents())
+    await groceryStore.refresh()
+  })
+
+  // On the device / in the database: the cards of `ids` in the cart.
+  const inCartHere = (ids) => groceryStore.getSnapshot().rows.filter((g) => ids.includes(g.id) && g.in_cart && !g.completed).map((g) => g.name).sort()
+  const inCartThere = async (ids) => (await rows(`select name from grocery_items where id = any($1) and in_cart and not completed order by name`, [ids])).map((r) => r.name)
+  const shownNow = () => groceryStore.getSnapshot().rows.filter((g) => g.in_cart && !g.completed).map((g) => g.id)
+
+  // Makes the cards (and HOME items) of one purchase, in the cart on this
+  // device, confirms them with the app's own payload (paid by P1, as the
+  // confirm screen builds it), and lets realtime and a reload show them
+  // bought. `home`: [stock, minimum] of its HOME item, if it has one.
+  async function confirmed(tag, cards) {
+    const ids = []
+    const items = {}
+    for (const c of cards) {
+      const name = `${c.name} ${tag}`
+      const item = c.home ? (await rows(`insert into pantry_items (name, unit, current_stock, min_stock, category_id) values ($1, 'pcs', $2, $3, 'misc') returning id`, [name, c.home[0], c.home[1]]))[0].id : null
+      if (item) items[c.name] = item
+      const at = new Date(Date.UTC(2026, 10, 7, 9, ++minute)).toISOString()
+      const [card] = await rows(
+        `insert into grocery_items (name, quantity, unit, price, price_qty, price_unit, category_id, pantry_item_id, auto_generated, in_cart, cart_added_at, created_at, payer)
+         values ($1, 1, 'pcs', $2, 1, 'pcs', 'misc', $3, $4, true, $5, $5, $6) returning id`,
+        [name, c.price ?? 2, item, Boolean(c.auto), at, P1]
+      )
+      ids.push(card.id)
+    }
+    deliver(await newEvents())
+    await groceryStore.refresh()
+    expect(inCartHere(ids)).toHaveLength(cards.length)
+    const pantry = (await rows(`select * from pantry_items`)).map(normalizeItem)
+    const cart = inCartOrder(groceryStore.getSnapshot().rows.filter((g) => ids.includes(g.id) && !g.completed))
+    const lines = newNameOnce(expiryOncePerItem(cart.map((item) => purchaseLine(item, pantry, {}, { unitsReady: true, typedName: item.name }))))
+    expect(lines.every((l) => l.ready)).toBe(true)
+    const totalOf = (g) => lineTotal(g, pantryItemFor(g, pantry))
+    const pricing = purchasePricing(lines.map((l) => l.item), totalOf, {}, { kind: 'amount', text: '' })
+    const tripId = crypto.randomUUID()
+    const payload = confirmationPayload({ id: tripId, date: '2026-11-07', at: '2026-11-07T11:43:30Z', lines, answers: {}, totalOf, expenseCategoryFor: () => BUDGET, paidBy: P1, pricing })
+    const { data, error } = await appClient.rpc('confirm_shopping_trip', { payload })
+    expect(error).toBeNull()
+    deliver(await newEvents())
+    await groceryStore.refresh()
+    expect(inCartHere(ids)).toEqual([])
+    // The HOME rows as this device read them just after Confirm.
+    const after = (await rows(`select * from pantry_items where id = any($1)`, [Object.values(items)])).map(normalizeItem)
+    return { tripId, ids, items, total: Number(data.total), after, names: cards.map((c) => `${c.name} ${tag}`).sort() }
+  }
+  const reopenOnly = async (tripId) => expect((await appClient.rpc('reopen_shopping_trip', { trip_id: tripId })).error).toBeNull()
+
+  // Report A2.7: like purchase "B" of 07/11 — 7 typed cards linked to HOME,
+  // "ASADO short ribs" linked to an item made earlier, "Vesuvio pizza" new
+  // in the pantry, and the automatic "Smoke Salmone".
+  const P2_LIKE = [
+    { name: 'Smoke Salmone', home: [0, 1], auto: true, price: 6.5 },
+    ...['Latte', 'Uova', 'Pane', 'Mele', 'Riso', 'Pasta', 'Burro'].map((name) => ({ name, home: [1, 0] })),
+    { name: 'ASADO short ribs', home: [1, 0], price: 9.9 },
+    { name: 'Vesuvio pizza', price: 4.29 },
+  ]
+
+  describe('the store on its own (report A2.9 part 2), the Reopen and the reloads exactly as in the report', () => {
+    it('S1: the reload after the Reopen is refused while the burst arrives → 10 of 10 (the buffered changes are kept)', async () => {
+      const p = await confirmed('S1', P2_LIKE)
+      await reopenOnly(p.tripId)
+      const h = holdNextRead({ fail: true })
+      const reload = refreshStartedStores()
+      await until(() => h.started)
+      deliver(await newEvents())
+      h.release()
+      await reload
+      expect(await inCartThere(p.ids)).toHaveLength(10)
+      expect(inCartHere(p.ids)).toEqual(p.names)
+    })
+
+    it('S1-cut: half the burst before the reload, half during it, the reload refused → 10 of 10', async () => {
+      const p = await confirmed('S1C', P2_LIKE)
+      await reopenOnly(p.tripId)
+      const burst = await newEvents()
+      const cut = Math.floor(burst.length / 2)
+      deliver(burst.slice(0, cut))
+      const h = holdNextRead({ fail: true })
+      const reload = refreshStartedStores()
+      await until(() => h.started)
+      deliver(burst.slice(cut))
+      h.release()
+      await reload
+      expect(inCartHere(p.ids)).toEqual(p.names)
+    })
+
+    it('S2: three overlapping reloads, the oldest (read before the Reopen) answered last → 10 of 10, no exception', async () => {
+      const p = await confirmed('S2', P2_LIKE)
+      const a = holdNextRead()
+      const r1 = groceryStore.refresh()
+      await until(() => a.started)
+      await reopenOnly(p.tripId)
+      await refreshStartedStores()
+      deliver(await newEvents())
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      const c = holdNextRead()
+      const r3 = groceryStore.refresh()
+      await until(() => c.started)
+      a.release()
+      await r1
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      c.release()
+      await r3
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      expect(console.error).not.toHaveBeenCalled()
+    })
+
+    it('S2-cut: the same, the third reload starting mid-burst → 10 of 10 (was 8: "Vesuvio pizza" and "ASADO short ribs" missing)', async () => {
+      const p = await confirmed('S2C', P2_LIKE)
+      const a = holdNextRead()
+      const r1 = groceryStore.refresh()
+      await until(() => a.started)
+      await reopenOnly(p.tripId)
+      await refreshStartedStores()
+      const burst = await newEvents()
+      deliver(burst.slice(0, 5))
+      const c = holdNextRead()
+      const r3 = groceryStore.refresh()
+      await until(() => c.started)
+      deliver(burst.slice(5))
+      a.release()
+      await r1
+      c.release()
+      await r3
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      expect(console.error).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('through the app\'s reopenTrip (report A2.9 part 1): it reads its own cards back', () => {
+    it('S1 and S2 → 10 of 10, before the toast says so', async () => {
+      const s1 = await confirmed('R1', P2_LIKE)
+      const h = holdNextRead({ fail: true })
+      const reopening = reopenTrip(s1.tripId)
+      await until(() => h.started)
+      expect(inCartHere(s1.ids)).toEqual(s1.names)
+      expect(getToasts().map((t) => t.message)).toContain(REOPENED)
+      deliver(await newEvents())
+      h.release()
+      expect((await reopening).error).toBeNull()
+      expect(inCartHere(s1.ids)).toEqual(s1.names)
+
+      const s2 = await confirmed('R2', P2_LIKE)
+      const a = holdNextRead()
+      const r1 = groceryStore.refresh()
+      await until(() => a.started)
+      onCommit = async () => deliver(await newEvents())
+      expect((await reopenTrip(s2.tripId)).error).toBeNull()
+      a.release()
+      await r1
+      expect(inCartHere(s2.ids)).toEqual(s2.names)
+    })
+
+    it('S3: a change waiting offline holds every reload, the channel was down during the burst → 10 of 10', async () => {
+      const p = await confirmed('R3', P2_LIKE)
+      setRefreshGate(() => false)
+      setStatus('CHANNEL_ERROR')
+      onCommit = async () => void (await newEvents()) // lost
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      setStatus('SUBSCRIBED')
+      await refreshStartedStores()
+      expect(inCartHere(p.ids)).toEqual(p.names)
+    })
+
+    it('LOST1: reloads held, the last change of one card ("Vesuvio pizza") lost → 10 of 10', async () => {
+      const p = await confirmed('R4', P2_LIKE)
+      setRefreshGate(() => false)
+      onCommit = async () => {
+        const burst = await newEvents()
+        const last = burst.filter((e) => e.new.name === 'Vesuvio pizza R4').at(-1)
+        deliver(burst.filter((e) => e !== last))
+      }
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      expect(inCartHere(p.ids)).toEqual(p.names)
+    })
+  })
+
+  describe('"Confirm purchase" checks the database cart (report A2.9 part 3, K214)', () => {
+    it('S3 with the bare Reopen: the device shows 0 of 10; the check finds the 10, puts them on the list → 10 of 10', async () => {
+      const p = await confirmed('C3', P2_LIKE)
+      setRefreshGate(() => false)
+      setStatus('CHANNEL_ERROR')
+      await reopenOnly(p.tripId)
+      await newEvents() // lost
+      setStatus('SUBSCRIBED')
+      await refreshStartedStores()
+      expect(inCartHere(p.ids)).toEqual([])
+      const found = await unseenCartCards(shownNow())
+      expect(found.map((g) => g.id).sort()).toEqual([...p.ids].sort())
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      expect(await unseenCartCards(shownNow())).toEqual([])
+    })
+
+    it('LOST1 with the bare Reopen: 9 of 10; the check finds "Vesuvio pizza" → 10 of 10', async () => {
+      const p = await confirmed('C4', P2_LIKE)
+      setRefreshGate(() => false)
+      await reopenOnly(p.tripId)
+      const burst = await newEvents()
+      const last = burst.filter((e) => e.new.name === 'Vesuvio pizza C4').at(-1)
+      deliver(burst.filter((e) => e !== last))
+      await refreshStartedStores()
+      expect(inCartHere(p.ids)).toEqual(p.names.filter((n) => n !== 'Vesuvio pizza C4'))
+      expect((await unseenCartCards(shownNow())).map((g) => g.name)).toEqual(['Vesuvio pizza C4'])
+      expect(inCartHere(p.ids)).toEqual(p.names)
+    })
+  })
+
+  // Report A.2: 10 single-line cards, €3.39, 5 without a price; "Pane" an
+  // automatic card whose item is fine in the rows read just after Confirm.
+  describe('the four timings of report A.2 keep the cart card (K200, A.5 b)', () => {
+    const RECEIPT = [
+      { name: 'Latte', home: [0, 1], auto: true, price: 1 },
+      { name: 'Pane', home: [1, 1], auto: true, price: 0.89 },
+      { name: 'Sale', home: [2, 0], price: 0 },
+      { name: 'Uova', home: [0, 2], auto: true, price: 0 },
+      { name: 'Basilico', price: 0.5 },
+      { name: 'Limone', price: 0.3 },
+      { name: 'Zenzero', price: 0.7 },
+      { name: 'Prezzemolo', price: 0 },
+      { name: 'Aglio', price: 0 },
+      { name: 'Peperoncino', price: 0 },
+    ]
+    // The old background sync, on the HOME rows read just after Confirm.
+    const staleSync = async (p) => {
+      for (const item of p.after) await syncShoppingForItem(item)
+    }
+    async function expectAllTen(p, tag) {
+      expect(p.total).toBe(3.39)
+      expect(await inCartThere(p.ids)).toEqual(p.names)
+      expect(inCartHere(p.ids)).toEqual(p.names)
+      const pantry = (await rows(`select * from pantry_items`)).map(normalizeItem)
+      const cart = (await rows(`select * from grocery_items where id = any($1)`, [p.ids])).map(normalizeItem)
+      expect(Math.round(cart.reduce((sum, g) => sum + lineTotal(g, pantryItemFor(g, pantry)), 0) * 100) / 100).toBe(3.39)
+      // No new entry "to buy" for Pane: its card is in the cart.
+      expect(await rows(`select id from grocery_items where pantry_item_id = $1 and not completed and not in_cart`, [p.items.Pane])).toEqual([])
+      expect(inCartHere(p.ids)).toContain(`Pane ${tag}`)
+    }
+
+    it('1: Money "Reopen purchase" days later, every list read again first → 10 lines · €3.39', async () => {
+      const p = await confirmed('T1', RECEIPT)
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      await expectAllTen(p, 'T1')
+    })
+
+    it('2: the toast "Undo" within seconds, the Confirm sync running after it on the rows read just after Confirm → still 10 · €3.39', async () => {
+      const p = await confirmed('T2', RECEIPT)
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      await staleSync(p)
+      deliver(await newEvents())
+      await expectAllTen(p, 'T2')
+    })
+
+    it('2b: the same, with Reopen\'s own sync running last → still 10 · €3.39, no entry "to buy" made again', async () => {
+      const p = await confirmed('T2B', RECEIPT)
+      onCommit = () => staleSync(p)
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      deliver(await newEvents())
+      await expectAllTen(p, 'T2B')
+    })
+
+    it('3: Reopen with this device\'s HOME copy not read again (reloads held), synced on that old copy → still 10 · €3.39', async () => {
+      const p = await confirmed('T3', RECEIPT)
+      setRefreshGate(() => false)
+      expect((await reopenTrip(p.tripId)).error).toBeNull()
+      await staleSync(p)
+      deliver(await newEvents())
+      await expectAllTen(p, 'T3')
     })
   })
 })

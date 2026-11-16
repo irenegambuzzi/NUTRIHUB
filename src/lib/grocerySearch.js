@@ -23,6 +23,20 @@ export function namesHint(item, query, otherNames) {
   return hit.length ? `In it: ${hit.join(', ')}` : null
 }
 
+// The search in "Confirm purchase" (plan 9P, K201): capitals and accents
+// don't count ("cafe" finds "Café"), a part of a word is enough. `texts`
+// are only the texts shown on that card.
+const fold = (text) =>
+  String(text ?? '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+
+export function cardMatchesSearch(texts, query) {
+  const q = fold(query).trim()
+  return !q || texts.some((text) => fold(text).includes(q))
+}
+
 export const GROCERY_LIST_LABELS = { toBuy: 'To buy', inCart: 'In the cart' }
 
 export const listOf = (item) => (item.in_cart ? 'inCart' : 'toBuy')

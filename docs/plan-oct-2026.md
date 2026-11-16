@@ -39,8 +39,9 @@ Contents
      built; SQL 032): up to K145
    - 9O. MONEY display round (decided 10–11/11; no SQL): K146–K176, prompt 1
      as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
-   - 9P. Update round (decided 15/11): the search in "Confirm purchase", the
-     date and payer of a whole purchase, the Reopen / Undo bug report
+   - 9P. Update round (decided 15–16/11): the search in "Confirm purchase", the
+     date and payer of a whole purchase, the Reopen / Undo bug report, the
+     shared bank account; K200–K218, prompt 1 as built
 10. Risks and decisions
 
 ---
@@ -6328,6 +6329,12 @@ keep working as before), no new offline queue.
   3. AI round (round 8): reading receipt photos and category suggestions. Moved before Family Tree and Trips (the household wants it as soon as possible). Read-only analysis, costs, account and credits guided step by step, then building.
   4. Family Tree (another project).
   5. Later: Telegram bot (K176, needs the AI round), Trips & Holidays (round 7).
+- **K194** (A) The grey per-person breakdown: each amount coloured (plus green, minus red, €0.00 normal), as built.
+- **K195** (B) TREND in a running period: every month up to the last month with data in that section, no gaps (15/08/2026, H2 2026, expense 10/12 → Jul, Aug, Sep, Oct, Nov, Dec). Built in the Update round, prompt 1.
+- **K196** (A) Offline: the leftover line and the bar disappear (no out-of-date numbers), as built.
+- **K197** (A) With a filter on and the list bar closed, the filter total is not shown (the bar still says "Expenses (3 of 6)"), as built.
+- **K198** (B) "spent {p}%" red whenever expenses > available (€100.40 of €100.00). Built in the Update round, prompt 1.
+- **K199** (A) The shared bank account goes into the Update round (read only + discussion), before the AI round.
 
 ### Prompt 1 as built (11/11; code and tests only, no SQL)
 
@@ -6794,6 +6801,10 @@ answered.
    spent of €100.00 shows "spent 100%" in grey with a full bar. Options:
    (a) as built; (b) red whenever expenses > available. Suggestion: (b).
 
+(Answered 15/11: 1 → K194, 2 → K195, 3 → K196, 4 → K197, 5 → K198.)
+
+iPhone test of MONEY display prompt 4 done 15/11/2026: all OK.
+
 ### 9P. Update round (decided 15/11)
 
 Order: section 9O K193 (item 2, after the MONEY display round). Read-only
@@ -6810,17 +6821,202 @@ analysis first, then building and testing.
   Money's expenses history, after a mistake. Today a purchase row has
   "Change the store of the whole purchase" and "Reopen purchase" / "Undo
   purchase" only. The new actions must not be placed next to those (too
-  long): they are hidden behind a "▾" button that opens them, like the
-  period and "Sort by" panels. Real case: a purchase of 15/11/2026, paid by
-  Irene, €40.41, saved with a wrong date in the same month.
+  long): the three choices (Store, Date, Paid by) sit behind ONE button
+  "Change purchase ▾" (K204) that opens them inline, like the period and
+  "Sort by" panels; "Reopen purchase" / "Undo purchase" stay visible. Real
+  case: a purchase of 15/11/2026, paid by Irene, €40.41, saved with a wrong
+  date in the same month.
 - **BUG REPORT (15/11) — "Reopen purchase"** (Money → the purchase row) and
   "Undo" on the "Purchase confirmed" toast, for a SHOP purchase with many
   items: some items did not come back to "Confirm purchase" (fewer lines, a
   lower total), so they had to be found and typed again. Later the missing
-  items appeared again on the SHOP list. Real case: purchase of 07/11/2026,
-  paid by Irene, 10 items, €3.39, entered through Shop → List → in the cart
-  → "Confirm purchase", reopened from Money. To analyse (read only, with the
-  real functions in PGlite) before building anything.
+  items appeared again on the SHOP list. Real case: purchase "B" of
+  07/11/2026 (paid by Irene, 10 lines, €48.44, entered on a computer through
+  Shop → List → in the cart → "Confirm purchase", reopened from Money), and
+  also purchase "A" of 07/11 (33 lines, €109.46). (Corrected 16/11: not
+  €3.39.) To analyse (read only, with the real functions in PGlite) before
+  building anything.
+
+**Read-only results** (`tmp-export/update-readonly-report.md`, 15–16/11,
+commit e22dd5e). Part A: the database's Reopen is right; the app's list sync
+could delete an automatic card in the cart when it judged the item on an old
+HOME copy (fix: K200 + A.5 b). Part A2 (the real data of 15/11): the
+database put every card back; the device's copy of the SHOP list was behind
+(a refused reload threw away its buffered changes, overlapping reloads
+shared one buffer and an old read could win, held reloads with lost
+realtime); fix in three parts, app only (A2.9). Part B: the search in
+"Confirm purchase". Part C: the date and payer of a whole purchase (a new
+SQL function). Part D: the shared bank account (K199). Part E: K195 B and
+K198 B. Parts F–G: the read-only queries and the test labels.
+
+(Answered 16/11: 1 → the real data, Part A2; 2 → K200, 3 → K201, 4 → K202, 5 → K203, 6 → K204, 7 → K205, 8 → K206, 9 → K207, 10 → K208, 11 → K209, 12–15 → K210–K213 and K215–K218; A2-1 → K214.)
+
+**Decisions.**
+
+- **K200** (A) The app's list sync never deletes a SHOP entry in the CART (the cart is the household's choice); an automatic "to buy" entry still goes when the item is fine. With A.5 (b): each item judged on a fresh read; Reopen syncs only its own items. Built in prompt 1.
+- **K201** The search in "Confirm purchase" matches only text shown on that screen's cards: the title (HOME item, K53), the small grey card name, the names typed (line 1 "Name", lines 2…N). Built in prompt 1.
+- **K202** Under the field "1 of 10 shown — the total counts all 10."; × to clear; when a hidden card needs an answer the bottom line says so with "Show all". Built in prompt 1.
+- **K203** (A) "Paid by (everything)" keeps changing every card, hidden ones too.
+- **K204** (A) Money's opened purchase row gets ONE button "Change purchase ▾"; "Reopen purchase" / "Undo purchase" stay visible. ▾ opens an inline panel (no popup) with Store (today's "Change the store of the whole purchase" moved into it: "Bought at" + save), Date, Paid by. SHOP "Confirm purchase" only gets the search (K201).
+- **K205** Paid by = one payer for the whole purchase (K92), no per-line payer; the payers offered follow K216. Moving to Shared needs the parts (old 9K rule); moving away from Shared clears them.
+- **K206** (A) A date after today is refused: "A purchase can't be after today."
+- **K207** The ▾ on every purchase row of "Expenses History" (SHOP, MONEY, merged, order groups — order groups through the existing save_order_group).
+- **K208** (A) Changing Paid by also changes the payer of the purchase's SHOP cards (Reopen brings them back with the corrected payer). MONEY purchases have no cards.
+- **K209** (A) A new SQL function change_purchase in one transaction with a "was" guard against another device; Undo = the same call with the old values (report C.3).
+- **K210** Option 1: a 4th payer "Joint" (label "Joint" through PAID_BY_OPTIONS) for everything paid from the household's shared Revolut account; deposits into it are TRANSFERS (never an expense, never income), so every pill matches one real account. Personal use of it = an expense "Paid by Joint" + a transfer back from that person; a person's own money that lands in it and is moved out again = not recorded. The transfer screen is designed before prompt 2.
+- **K211** October 2026 is not changed; the shared-account rules apply from November 2026.
+- **K212** The shared account holds only shared money; personal use is paid back (at least the same amount); personal money that lands in it is moved to the person's own account.
+- **K213** "Aptamil Nutribio 1 infant formula" 14/11 €19.52 is personal (Akbar, a donation): its line becomes Paid by Joint and the €20 of 14/11 a transfer Akbar → Joint; "Almond & sesame bar" €0.48 is not personal.
+- **K214** (A2-1 = a) Confirm with cards in the database cart that the screen doesn't show: stop, show them, confirm nothing; the household checks and presses again. Built in prompt 1.
+- **K215** Facts (16/11): the two Shared purchases of 14/11 (Lidl 36 expenses + Iper Coop 4; €111.05 + €35.76 = €146.81) were paid from the shared account and are changed to Joint by hand after prompt 3; deposits Akbar €300 (13/11) + €20 (14/11), Irene €300 (13/11); the shared account held €35.67 on 31/10/2026 and €525.67 on 16/11/2026 (the household's figure; a gap with the app comes from entries not recorded yet, which the household adds).
+- **K216** (A) "Shared" is not used for new data: forms offer Irene / Akbar / Joint; the Money "Shared" pill shows only in a period with Shared expenses (today only 27/10/2026 "SPESE CONDOMINIO"), like K174; an existing Shared expense keeps "Shared" in its "Edit expense". K216a: income "Received by" offers Irene / Akbar / Joint; the Joint income pill only with Joint income (K174 rule). Built in prompt 2.
+- **K217** (a) No default payer: saving waits until a payer is chosen (in "Confirm purchase" one tap on "Paid by (everything)"). Data 1–15/11: Irene 92 expenses, Akbar 15, shared account 40. Built in prompt 2.
+- **K218** (open, decided before prompt 2): how the shared account's starting balance €35.67 is recorded.
+
+**Order of work (decided 16/11).**
+
+1. Prompt 1 (no SQL): the Reopen / Undo fix, the search in "Confirm purchase", K195 B, K198 B (as built below).
+2. Prompt 2 (SQL 033): the payer "Joint", transfers, K216–K218 and the transfer screen (designed before the prompt).
+3. Prompt 3 (SQL 034): "Change purchase ▾" + change_purchase (K204–K209).
+4. Then the household's own changes: the two 14/11 purchases to Joint, the deposits, the starting balance, the date of the 15/11 purchase.
+5. Then the AI round (round 8), then Family Tree (K193).
+
+### Update round prompt 1 as built (16/11; code and tests only, no SQL)
+
+Built: report A2.9 parts 1–3 (K214), A.5 (a) = K200 and A.5 (b), the
+search in "Confirm purchase" (K201–K203), K195 B, K198 B, and the plan
+(K194–K218, 9P). No file in `supabase/` changed except
+`supabase/migrations.test.js` (tests only); no new browser storage, no new
+offline queue. Nothing else on the "Confirm purchase" screen, in Money or in
+the toasts changed.
+
+**Files.** Changed: `lib/tableStore.js` (each reload its own buffer and a
+number; an older read is dropped; a failed read keeps what came in; local
+writes go into every reload still reading), `hooks/usePurchase.js`
+(`reopenTrip`: the lines required, the cards read back before the toast,
+the sync only of its own items on a fresh read; `afterSave`: a fresh read
+per item; new `unseenCartCards`; `confirmCart` takes `shownIds` / `again`),
+`lib/inventory.js` (`syncShoppingForItem`, K200),
+`components/grocery/ConfirmPurchase.jsx` (the search, the hidden-card line,
+the K214 line, Retry; `cardNeedsAnswer` = the amber rule, shared with the
+card), `components/ui/SearchBox.jsx` (optional `bigClear`),
+`lib/grocerySearch.js` (`cardMatchesSearch`), `lib/expensePeriods.js`
+(`viewBuckets`, K195), `lib/leftover.js` (K198). Tests: `lib/tableStore.test.js`,
+`hooks/reopenNotes.test.js`, `lib/shopSync.test.js`,
+`lib/expensePeriods.test.js`, `lib/leftover.test.js`,
+`components/moneyLeftover.render.test.jsx`, `supabase/migrations.test.js`;
+new `hooks/reopenCards.test.js`, `components/confirmSearch.render.test.jsx`.
+
+**1a — Reopen reads its own cards back** (`reopenTrip`, used by Money →
+section Expenses → "Expenses (N)" → the purchase row → "Reopen purchase" /
+"Undo purchase", Shop → "Receipts" → "Reopen purchase", and the "Undo" of
+the toast "Purchase confirmed · …"). Before the Reopen the purchase lines
+are read; a failed read changes nothing (toast `Couldn't save — check your
+connection.` + Retry). A purchase with no HOME item goes on (no notes). After
+the Reopen: every `grocery_items` row whose id is a line's `grocery_item_id`
+is read and put on this device's list (`groceryStore.upsertLocal`), then the
+toast `Purchase reopened — the items are back in the cart.` (MONEY: `Purchase
+undone — …`, unchanged), then the 9M notes. If that read fails the purchase
+stays reopened and the existing follow-up toast says `Saved, but couldn't
+update the cart — check your connection.` with Retry (`followUp('the cart')`;
+the existing text has no "phone").
+
+**1b — `refresh()` never puts an older copy over a newer one.** Each reload
+has its own buffer; a realtime change goes into every open buffer and, once
+the list was read, on screen at once. A reload's read is applied only if no
+reload that started later is already applied (otherwise dropped, no error).
+A failed read: its changes are already on screen (before the first read they
+go on the rows shown, which stay "not read"); the usual `Couldn't load —
+check your connection.`. Rows put in by 1a can't be replaced by a read that
+started before them: **decided** — every local write (`upsertLocal`,
+`patchLocal`, `removeLocal`) goes into the buffer of every reload still
+reading, like a realtime change, so such a reload puts it back on top of its
+own read. "pending is not iterable" can't happen any more.
+
+**1c — Confirm checks the database cart** (Shop → "List" → "Confirm purchase
+({n} in the cart)" → "Confirm purchase · €…"). After the screen's own
+checks and before anything is sent: one read of the ids `in_cart = true and
+completed = false`, compared with every card on the screen ("In this trip"
+and "Not in this trip — stays in the cart"). Cards the screen doesn't have →
+their rows are read and put on the list (they appear), the search is
+cleared, nothing is confirmed, and above the button (amber, like "Answer the
+question above to confirm."):
+
+- `1 item in the cart was not shown here: {name}. It is shown now — check it and press Confirm again.`
+- `{n} items in the cart were not shown here: {name}, {name}. They are shown now — check them and press Confirm again.`
+
+({name} = the card title as shown, K53; n counts cards, K96.) The line goes
+at the next press. Offline: `You're offline — this needs a connection.`; a
+failed read: `Couldn't save — check your connection.` with Retry, which
+presses "Confirm purchase" again while the screen is open (closed: Retry does
+nothing). No difference: confirmed exactly as before.
+
+**1d — K200** (`syncShoppingForItem`): an entry in the cart is never deleted;
+an automatic entry "to buy" still goes when the item is fine; ordered,
+typed-by-hand and the K138 rules unchanged.
+
+**1e — A.5 (b).** After a Confirm / MONEY purchase (`afterSave`) and after
+Reopen, each item is read again by id (`maybeSingle`) and judged on that
+row; an item deleted meanwhile is skipped. Reopen syncs only the HOME items
+of its own lines (not every HOME item).
+
+**Part 2 — the search** (Shop → "List" → "Confirm purchase ({n} in the
+cart)" → the screen "Confirm purchase" → under the store picker, directly
+above the first card, in the scroll area):
+
+| What | Exact text / look |
+|---|---|
+| The field | `ui/SearchBox`, full width, placeholder and label `Search this purchase…`; its × (`Clear search`) 36 × 36 px on this screen only |
+| Under it, only with search text | `{k} of {n} shown — the total counts all {n}.` (n = cards on the screen) |
+| Bottom bar, when a hidden card needs something (amber rule in this trip, or a number in red) | `1 of them is hidden by the search.` / `{k} of them are hidden by the search.` + button `Show all` (36 px, clears the search) |
+
+Matching (K201): the card title, the small grey card name under it, the name
+in line 1 "Name" and the names of lines 2…N (only when the card shows them);
+never the category, other names of the item, HOME or the SHOP list.
+Capitals and accents don't count; a part of a word is enough. Whole cards.
+Which cards show is worked out only when the search text changes (typing in
+a card, "+ Add another name" never hides it). Hidden cards stay mounted
+(`hidden`): half-typed numbers, their red block and K98 keep working. The
+total, "Confirm purchase · €…", the Shared box, the coupon spread, "{n}
+item(s) · {date}" and what is sent count every card. "Paid by (everything)"
+still sets every card in the trip (K203). After a refused Confirm the search
+stays; Confirm or Back ends the screen as before.
+
+**Part 3.** K195: `viewBuckets` — in a running period every month from the
+view's start up to the last month with an entry of that section inside the
+view gets its bar and chip (15/08/2026, H2 2026, an expense on 10/12/2026 →
+Expenses Jul … Dec, Sep–Nov €0.00, chips "Sep 2026" … "Dec 2026"; Income
+with data only Jul–Aug → Jul, Aug). K198: `over` = spent cents > available
+cents (Money → top card → `Available €100.00 · spent 100%` red with a full bar
+for €100.40; €100.00 not red).
+
+**Tests: 2604 → 2655 (139 → 141 files).** `lib/tableStore.test.js` (+8: a
+failed read keeps its changes; a failed first read; three overlapping
+reloads, the oldest last; an older read after a newer one with realtime
+lost; a change during two reloads; a change while an older reload still
+reads; 1a rows; removed / patched rows). New `hooks/reopenCards.test.js` (7:
+realtime silent + reloads held → all 10 cards in the cart before the toast;
+the toast "Undo"; no HOME item; a failed line read changes nothing; the
+read-back fails → follow-up + Retry; Reopen syncs only its own item on a
+fresh read; `afterSave` on a fresh read). `hooks/reopenNotes.test.js` (the
+old "lines can't be read" test now expects nothing reopened; +1 notes read
+fail). `lib/shopSync.test.js` (+2, K200). New
+`components/confirmSearch.render.test.jsx` (16: "bas" → 1 of 10, €3.39, "10
+items", 10 lines sent; accents; the grey name and a line-2 name, not an
+unshown name, not the category; never vanishing while typing; the hidden
+line + "Show all" (1 and 2); a half-typed number; the 36 px ×; K203; a
+refused Confirm; K214 with 2 cards (no RPC, both shown, then all 10 sent,
+€48.44), 1 card, "Not in this trip", with a search on, offline, a failed
+check + Retry). `lib/expensePeriods.test.js` (+1 K195), `lib/leftover.test.js`
+(+1 K198), `components/moneyLeftover.render.test.jsx` (+2: K195 H2 on
+15/08/2026, K198 red at €100.40). `supabase/migrations.test.js` (+13, a
+PGlite block with the real 032 functions and the app's own store, Reopen and
+cart check: S1, S1-cut, S2, S2-cut on the store alone; S1, S2, S3, LOST1
+through `reopenTrip`; S3 and LOST1 with the bare Reopen found by the
+Confirm check — all 10 of 10; the four timings of report A.2 keep "Pane" in
+the cart, 10 lines · €3.39). Mutation checks: 1a off → 4 hook tests fail;
+the old per-item sync → 1; K200 off → 3 PGlite timings and 3 unit tests;
+the "older read" rule off → 2.
 
 ---
 

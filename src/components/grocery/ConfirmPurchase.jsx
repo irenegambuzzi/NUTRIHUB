@@ -15,6 +15,8 @@ import { PayerPicker, UnitOptions } from './shared'
 import { PhotoPicker, PhotoThumb } from './ReceiptPhoto'
 import { NameField, NameLine } from './NameLines'
 import { ShopPicker } from '../expenses/ShopPicker'
+import { SearchBox } from '../ui/SearchBox'
+import { cardMatchesSearch } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { showToast } from '../../lib/feedback'
@@ -83,6 +85,15 @@ import { SHARED, checkSplit, emptySplit, payerLabel, spreadParts } from '../../l
 // Line 1 under another name takes that name's last price (K98) until its
 // total is typed by hand on this screen; a new name is used once per
 // purchase (K101).
+// Search (plan 9P, K201–K203): "Search this purchase…" above the first card
+// hides the cards whose shown texts (title, the small card name under it,
+// the names typed on its lines) don't match. Which cards show is worked out
+// only when the search text changes, never while typing in a card. Hidden
+// cards stay mounted (half-typed numbers and their blocks keep working) and
+// every count, total and what is sent still includes them.
+// Confirm first checks the database cart (K214): cards in the cart there
+// that this screen didn't show are put on it and named above the button,
+// and nothing is confirmed until it is pressed again.
 export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf, updatePricing, updatePayer, updateCategory = null, toggleCart, onClose, openOrderOf = () => null, onCancelOrder = () => {}, splitTrips = false, durableBudgetOf = () => false, partsReady, checkParts = checkExpenseParts, unitsReady, checkUnits = checkNewItemUnits, namesReady = false, homeCategories = null }) {
   const { confirmPurchase } = usePurchase()
   const partsFound = useExpensePartsReady()
@@ -187,6 +198,17 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (!typedPrice.has(id)) setTypedPrice((all) => new Set(all).add(id))
   }
 
+  // The search: its text, and the cards it shows (null: every card).
+  const [search, setSearch] = useState('')
+  const [shownIds, setShownIds] = useState(null)
+  // Cards the database cart had that this screen didn't show, found by the
+  // last press of Confirm (K214).
+  const [unseen, setUnseen] = useState([])
+  // Retry after a failed cart check presses Confirm again — only while this
+  // screen is still open.
+  const confirmRef = useRef(null)
+  useEffect(() => () => (confirmRef.current = null), [])
+
   const itemsFor = (allEdits) => cartItems.map((item) => editedItem(item, allEdits[item.id]))
   const lineFor = (item) => purchaseLine(item, pantryItems, answers[item.id], { durableBudget: durableBudgetOf(item), unitsReady: unitsKnown, typedName: namesReady ? typedNames[item.id] ?? item.name : undefined })
   // The lines of this trip: each card's own line, then its name lines.
@@ -232,6 +254,38 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   // automatically (lib/receiptMatch.js); empty for now.
   const mismatches = findMismatches(attached.flatMap((p) => p.parsed?.lines ?? []), cartItems)
 
+  // Every card on the screen (its line as shown), and what each one shows.
+  const screenCards = allLines.map((line) => lineOf.get(line.item.id))
+  const takesNamesHere = (line) => line.takesNames && inTrip(line.item)
+  const titleOf = (line) => (namesReady && !openOrderOf(line.item) ? cardTitle(line.item, line.takesNames ? line.pantry : null) : { title: line.item.name, subtitle: '' })
+  const laterLinesOf = (line) => (takesNamesHere(line) ? lines.filter((l) => l.item.cardId === line.item.id) : [])
+  // K201: only the texts shown on the card — its title, the small card
+  // name under it, and the names typed on line 1 and lines 2…N.
+  const searchTextsOf = (line) => {
+    const { title, subtitle } = titleOf(line)
+    const id = line.item.id
+    const typed = takesNamesHere(line) ? [typedNames[id] ?? line.item.name, ...(nameLines[id] ?? []).map((d) => d.name)] : []
+    return [title, subtitle, ...typed]
+  }
+  const changeSearch = (text) => {
+    setSearch(text)
+    setShownIds(text.trim() ? new Set(screenCards.filter((line) => cardMatchesSearch(searchTextsOf(line), text)).map((line) => line.item.id)) : null)
+  }
+  const isShown = (line) => !shownIds || shownIds.has(line.item.id)
+  const shownCount = screenCards.filter(isShown).length
+  // Hidden cards that still need something before Confirm: the amber rule
+  // of the card (in this trip), or a number typed wrong on any of its lines.
+  const hasBadNumber = (id) => [...badNumbers].some((key) => key === id || String(key).startsWith(`${id}:`))
+  const needsSomething = (line) =>
+    (inTrip(line.item) && cardNeedsAnswer({ line, twice: twice.get(line.item.id) ?? '', total: totalOf(line.item), answer: answers[line.item.id] ?? {}, later: laterLinesOf(line) })) ||
+    hasBadNumber(line.item.id)
+  const hiddenNeeding = shownIds ? screenCards.filter((line) => !isShown(line) && needsSomething(line)).length : 0
+  const showAll = () => changeSearch('')
+  const unseenNames = unseen.map((row) => {
+    const line = screenCards.find((l) => l.item.id === row.id)
+    return line ? titleOf(line).title : row.name
+  })
+
   const answer = (itemId, patch) => setAnswers((a) => ({ ...a, [itemId]: { ...a[itemId], ...patch } }))
 
   // A new name line starts at 1, in the card's unit of now, with no name
@@ -255,6 +309,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   }
 
   const confirm = async () => {
+    setUnseen([])
     const latest = editsRef.current
     const confirmedLines = tripLinesOf(itemsFor(latest).map(lineFor))
     const confirmed = confirmedLines.map((l) => l.item)
@@ -285,7 +340,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const patches = cartItems.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
     const confirmedPayers = new Set(confirmed.map((i) => i.payer || 'shared'))
     setBusy(true)
-    const { error } = await confirmPurchase({
+    const { error, unseen: found } = await confirmPurchase({
       id: tripId,
       date,
       lines: confirmedLines,
@@ -297,12 +352,25 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
       paidBy: confirmedPayers.size === 1 ? [...confirmedPayers][0] : null,
       pricing: confirmedPricing,
       partsByItem,
+      // K214: every card on the screen, in this trip or not.
+      shownIds: cartItems.map((item) => item.id),
+      again: () => confirmRef.current?.(),
     })
     setBusy(false)
+    if (found?.length) {
+      // They are on the list now, so on this screen: shown, never hidden
+      // by the search, and nothing is confirmed yet.
+      setUnseen(found)
+      changeSearch('')
+      return
+    }
     if (error) return
     if (leftInCart > 0) showToast({ message: `${leftInCart} item${leftInCart === 1 ? '' : 's'} stay in the cart — confirm ${leftInCart === 1 ? 'it' : 'them'} as another trip (e.g. the other store).` })
     onClose()
   }
+  useEffect(() => {
+    confirmRef.current = confirm
+  })
 
   const purchaseLineFor = (line) => (
     <PurchaseLine
@@ -411,8 +479,22 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           </p>
         )}
 
+        <div className="space-y-1">
+          <SearchBox value={search} onChange={changeSearch} placeholder="Search this purchase…" bigClear />
+          {shownIds && (
+            <p className="text-[11px] text-[var(--color-text-muted)]">
+              {shownCount} of {screenCards.length} shown — the total counts all {screenCards.length}.
+            </p>
+          )}
+        </div>
+
         <section className="space-y-2">
-          {allLines.map((line) => purchaseLineFor(lineOf.get(line.item.id)))}
+          {/* Hidden by the search, never unmounted (K202). */}
+          {screenCards.map((line) => (
+            <div key={line.item.id} hidden={!isShown(line)}>
+              {purchaseLineFor(line)}
+            </div>
+          ))}
           {allLines.length === 0 && <p className="text-xs text-[var(--color-text-muted)] text-center py-6">The cart is empty.</p>}
         </section>
 
@@ -483,6 +565,24 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> {splitCheck.problem}
             </p>
           )}
+          {hiddenNeeding > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+                <AlertTriangle size={12} /> {hiddenNeeding === 1 ? '1 of them is hidden by the search.' : `${hiddenNeeding} of them are hidden by the search.`}
+              </p>
+              <button type="button" onClick={showAll} className="min-h-9 px-3 rounded-xl border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]">
+                Show all
+              </button>
+            </div>
+          )}
+          {unseen.length > 0 && (
+            <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              {unseen.length === 1
+                ? `1 item in the cart was not shown here: ${unseenNames[0]}. It is shown now — check it and press Confirm again.`
+                : `${unseen.length} items in the cart were not shown here: ${unseenNames.join(', ')}. They are shown now — check them and press Confirm again.`}
+            </p>
+          )}
           <button
             type="button"
             onClick={confirm}
@@ -499,6 +599,22 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
 
 const NO_TOTAL_TEXT = "The total can't be worked out from the price's unit — type the total paid."
 
+// What makes a card amber: a question on it still to answer, or a line of
+// it not ready (`later`: its lines 2…N). Also used to tell when a card
+// hidden by the search still needs something.
+function cardNeedsAnswer({ line, twice, total, answer, later }) {
+  return (
+    line.needsPackSize ||
+    Boolean(line.oldGroup) ||
+    line.needsStockUnit ||
+    Boolean(twice) ||
+    total === null ||
+    (line.expiredStock > 0 && typeof answer.discard !== 'boolean') ||
+    Boolean(line.naming?.problem) ||
+    later.some((l) => !l.ready)
+  )
+}
+
 // One item: quantity, unit and line total to correct, payer, remove, and
 // its questions. Every change goes to the screen's edits at once (that's
 // what Confirm uses) and is also saved to the grocery entry when the field
@@ -509,7 +625,7 @@ const NO_TOTAL_TEXT = "The total can't be worked out from the price's unit — t
 // typed on this line and the card's other lines (`later`: { line, draft }),
 // with what changes them.
 function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDiscount, categoryName, onAnswer, onDateValidity, onEdit, updatePricing, updatePayer, onUpdateCategory = null, onRemove, ordered = null, onCancelOrder, inTrip = true, onToggleTrip = null, onNumberValidity = () => {}, namesReady = false, names = null }) {
-  const { item, pantry, add, needsPackSize, expired, expiredStock, stockUnit } = line
+  const { item, pantry, add, expired, expiredStock, stockUnit } = line
   // K53: the HOME item's name, with the card's own name under it.
   const { title, subtitle } = namesReady ? cardTitle(item, line.takesNames ? pantry : null) : { title: item.name, subtitle: '' }
   const home = line.target ?? { name: item.name }
@@ -559,7 +675,7 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
   }
 
   const unitPrice = formatUnitPrice(item)
-  const needsAnswer = needsPackSize || Boolean(line.oldGroup) || line.needsStockUnit || Boolean(twice) || total === null || (expiredStock > 0 && typeof answer.discard !== 'boolean') || Boolean(line.naming?.problem) || Boolean(names?.later.some((l) => !l.line.ready))
+  const needsAnswer = cardNeedsAnswer({ line, twice, total, answer, later: names ? names.later.map((l) => l.line) : [] })
 
   if (ordered) {
     return (

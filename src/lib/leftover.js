@@ -53,7 +53,9 @@ export const monthBefore = (month) => `${FULL_MONTH_NAMES[(month - 1 + 12) % 12]
 //               month" | "This range", breakdown: null | [{ code, label,
 //               amount }] }
 //   available – null, or { amount: € (leftover shown + income), percent
-//               (whole number), over: percent > 100 (full bar, red text) }
+//               (whole number), over: spent more than available, counted
+//               in cents (full bar, red text; K198: €100.40 of €100.00 is
+//               "spent 100%" and over) }
 export function leftoverCard({ view, incomePerson, expensesPerson, income, expenses, before, partsReady = true }) {
   const none = { line: null, available: null }
   // Week: never (K169). Other pill combinations: nothing (K168).
@@ -78,6 +80,7 @@ export function leftoverCard({ view, incomePerson, expensesPerson, income, expen
   // "Available €{a} · spent {p}%" (K172): a = the leftover shown + income.
   const availableCents = (line ? leftover : 0) + Math.round((Number(income) || 0) * 100)
   if (availableCents <= 0) return { line, available: null }
-  const percent = Math.round((Math.round((Number(expenses) || 0) * 100) / availableCents) * 100)
-  return { line, available: { amount: availableCents / 100, percent, over: percent > 100 } }
+  const spentCents = Math.round((Number(expenses) || 0) * 100)
+  const percent = Math.round((spentCents / availableCents) * 100)
+  return { line, available: { amount: availableCents / 100, percent, over: spentCents > availableCents } }
 }

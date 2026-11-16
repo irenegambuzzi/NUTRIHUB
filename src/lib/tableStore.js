@@ -55,7 +55,15 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
   const opts = { ...options, normalize: (row) => normalize(pick(row)) }
   let state = { rows: [], loaded: false }
   let started = false
-  let buffered = null // realtime changes that arrive while loading
+  // One buffer per reload in progress: every change that arrives while it
+  // reads (from realtime, or saved by this device) goes into each of them,
+  // so each reload puts them on top of its own read.
+  const buffers = new Set()
+  // Each reload is numbered when it starts; `applied` is the number of the
+  // newest one whose read is on screen. A read from a reload that started
+  // before it is older, so it is dropped (plan 9P, report A2.9 part 2).
+  let reloadsStarted = 0
+  let applied = 0
   let disconnected = false
   const listeners = new Set()
 
@@ -64,6 +72,15 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
     state = { rows, loaded: true }
     writeCache(options.persist, rows)
     emit()
+  }
+  const applyAll = (rows, changes) => changes.reduce((acc, change) => applyChange(acc, change, opts), rows)
+
+  // A change to the rows on screen: shown at once once the list has been
+  // read (before that, only the reloads in progress keep it, for their
+  // read), and kept by every reload still reading.
+  function change(changes) {
+    buffers.forEach((buffer) => buffer.push(...changes))
+    if (state.loaded || !buffers.size) setRows(applyAll(state.rows, changes))
   }
 
   async function load() {
@@ -81,25 +98,42 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
     // No signal, or offline changes still to send: keep showing the copy
     // we have (it includes those changes); reloaded once they're sent.
     if (isOffline() || !canRefresh()) return
-    buffered = buffered ?? []
-    const { data, error } = await load()
-    const pending = buffered
-    buffered = null
+    const number = ++reloadsStarted
+    const buffer = []
+    buffers.add(buffer)
+    let result
+    try {
+      result = await load()
+    } catch (error) {
+      result = { data: null, error }
+    } finally {
+      buffers.delete(buffer)
+    }
+    const { data, error } = result
+    // A reload that started later is already on screen: this read is older.
+    if (number < applied) return
     if (error && options.optional && isMissingTable(error)) {
+      applied = number
       state = { rows: [], loaded: true, missing: true }
       return emit()
     }
-    if (error) return toastLoadError(error, refresh, name)
+    if (error) {
+      // The changes that came in meanwhile are not thrown away: once the
+      // list was read they are on screen already; before that, they go on
+      // the rows shown (the copy kept here, if any), still "not read".
+      if (!state.loaded && buffer.length) {
+        state = { ...state, rows: applyAll(state.rows, buffer) }
+        emit()
+      }
+      return toastLoadError(error, refresh, name)
+    }
+    applied = number
     let rows = data.map(opts.normalize)
     if (opts.compare) rows.sort(opts.compare)
-    for (const change of pending) rows = applyChange(rows, change, opts)
-    setRows(rows)
+    setRows(applyAll(rows, buffer))
   }
 
-  function onChange(change) {
-    if (buffered) buffered.push(change)
-    else setRows(applyChange(state.rows, change, opts))
-  }
+  const onChange = (one) => change([one])
 
   function start() {
     if (started) return
@@ -136,14 +170,13 @@ export function createTableStore({ name, table, columns = '*', query = (q) => q,
     isStarted: () => started,
     subscribe,
     useRows: () => useSyncExternalStore(subscribe, getSnapshot, getSnapshot),
-    // Rows just saved by this phone: shown at once, without waiting for
-    // realtime (which then changes nothing).
-    upsertLocal: (rows) => setRows(rows.reduce((acc, row) => applyChange(acc, { eventType: 'UPDATE', new: row }, opts), state.rows)),
-    removeLocal: (ids) => setRows(state.rows.filter((r) => !ids.includes(r.id))),
-    patchLocal: (ids, fields) =>
-      setRows(
-        state.rows.reduce((acc, row) => (ids.includes(row.id) ? applyChange(acc, { eventType: 'UPDATE', new: { ...row, ...fields } }, opts) : acc), state.rows)
-      ),
+    // Rows just saved or read by this device: shown at once, without
+    // waiting for realtime (which then changes nothing). Like a realtime
+    // change, they also go into every reload still reading, so a read that
+    // started before them can't put the older copy back.
+    upsertLocal: (rows) => change(rows.map((row) => ({ eventType: 'UPDATE', new: row }))),
+    removeLocal: (ids) => change(state.rows.filter((r) => ids.includes(r.id)).map((r) => ({ eventType: 'DELETE', old: { id: r.id } }))),
+    patchLocal: (ids, fields) => change(state.rows.filter((r) => ids.includes(r.id)).map((r) => ({ eventType: 'UPDATE', new: { ...r, ...fields } }))),
   }
   registry.add(store)
   return store
