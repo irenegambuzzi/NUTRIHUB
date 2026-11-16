@@ -6975,7 +6975,9 @@ in line 1 "Name" and the names of lines 2…N (only when the card shows them);
 never the category, other names of the item, HOME or the SHOP list.
 Capitals and accents don't count; a part of a word is enough. Whole cards.
 Which cards show is worked out only when the search text changes (typing in
-a card, "+ Add another name" never hides it). Hidden cards stay mounted
+a card, "+ Add another name" never hides it). **Decided by rule K200:** a
+card that comes into the cart after that (e.g. from another device) is
+shown, never hidden, so it can't be confirmed unseen. Hidden cards stay mounted
 (`hidden`): half-typed numbers, their red block and K98 keep working. The
 total, "Confirm purchase · €…", the Shared box, the coupon spread, "{n}
 item(s) · {date}" and what is sent count every card. "Paid by (everything)"
@@ -6990,7 +6992,7 @@ with data only Jul–Aug → Jul, Aug). K198: `over` = spent cents > available
 cents (Money → top card → `Available €100.00 · spent 100%` red with a full bar
 for €100.40; €100.00 not red).
 
-**Tests: 2604 → 2655 (139 → 141 files).** `lib/tableStore.test.js` (+8: a
+**Tests: 2604 → 2656 (139 → 141 files).** `lib/tableStore.test.js` (+8: a
 failed read keeps its changes; a failed first read; three overlapping
 reloads, the oldest last; an older read after a newer one with realtime
 lost; a change during two reloads; a change while an older reload still
@@ -7001,11 +7003,11 @@ read-back fails → follow-up + Retry; Reopen syncs only its own item on a
 fresh read; `afterSave` on a fresh read). `hooks/reopenNotes.test.js` (the
 old "lines can't be read" test now expects nothing reopened; +1 notes read
 fail). `lib/shopSync.test.js` (+2, K200). New
-`components/confirmSearch.render.test.jsx` (16: "bas" → 1 of 10, €3.39, "10
+`components/confirmSearch.render.test.jsx` (17: "bas" → 1 of 10, €3.39, "10
 items", 10 lines sent; accents; the grey name and a line-2 name, not an
 unshown name, not the category; never vanishing while typing; the hidden
-line + "Show all" (1 and 2); a half-typed number; the 36 px ×; K203; a
-refused Confirm; K214 with 2 cards (no RPC, both shown, then all 10 sent,
+line + "Show all" (1 and 2); a half-typed number; the 36 px ×; K203; a card
+arriving while searching is shown; a refused Confirm; K214 with 2 cards (no RPC, both shown, then all 10 sent,
 €48.44), 1 card, "Not in this trip", with a search on, offline, a failed
 check + Retry). `lib/expensePeriods.test.js` (+1 K195), `lib/leftover.test.js`
 (+1 K198), `components/moneyLeftover.render.test.jsx` (+2: K195 H2 on

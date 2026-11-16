@@ -198,9 +198,13 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     if (!typedPrice.has(id)) setTypedPrice((all) => new Set(all).add(id))
   }
 
-  // The search: its text, and the cards it shows (null: every card).
+  // The search: its text, the cards it shows (null: every card) and the
+  // cards that were on the screen when it was worked out. A card that comes
+  // into the cart after that (e.g. from another device) is always shown
+  // (K200: never confirmed without being seen).
   const [search, setSearch] = useState('')
   const [shownIds, setShownIds] = useState(null)
+  const [searchedIds, setSearchedIds] = useState(() => new Set())
   // Cards the database cart had that this screen didn't show, found by the
   // last press of Confirm (K214).
   const [unseen, setUnseen] = useState([])
@@ -270,8 +274,9 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const changeSearch = (text) => {
     setSearch(text)
     setShownIds(text.trim() ? new Set(screenCards.filter((line) => cardMatchesSearch(searchTextsOf(line), text)).map((line) => line.item.id)) : null)
+    setSearchedIds(new Set(screenCards.map((line) => line.item.id)))
   }
-  const isShown = (line) => !shownIds || shownIds.has(line.item.id)
+  const isShown = (line) => !shownIds || shownIds.has(line.item.id) || !searchedIds.has(line.item.id)
   const shownCount = screenCards.filter(isShown).length
   // Hidden cards that still need something before Confirm: the amber rule
   // of the card (in this trip), or a number typed wrong on any of its lines.

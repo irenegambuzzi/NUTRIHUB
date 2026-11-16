@@ -285,6 +285,16 @@ describe('"Search this purchase…" (K201, K202)', () => {
     expect(sent().items.map((l) => l.payer)).toEqual(Array(10).fill(P2))
   })
 
+  it('a card that comes into the cart while searching (another device) is shown, never hidden (K200)', () => {
+    open(RECEIPT())
+    search('bas')
+    expect(shownCards()).toEqual(['Basilico'])
+    act(() => groceryStore.upsertLocal([card('c11', 'Mozzarella', 1.19)]))
+    expect(shownCards()).toEqual(['Basilico', 'Mozzarella'])
+    expect(screen.getByText('2 of 11 shown — the total counts all 11.')).toBeTruthy()
+    expect(confirmButton().textContent).toContain('Confirm purchase · €4.58')
+  })
+
   it('after a refused Confirm the search stays', async () => {
     confirmPurchase.mockImplementationOnce(async () => ({ error: { message: 'Failed to fetch' } }))
     open(RECEIPT())
