@@ -23,8 +23,9 @@ const JOINT_LABEL = ACCOUNT_OPTIONS.find((o) => o.value === JOINT)?.label ?? JOI
 //   rows      – the transfers of the period on screen
 //   allRows   – every transfer (the one starting balance, K229)
 //   ready     – supabase/033 there: true / false / null (not known yet)
-//   jointNow  – Joint's BALANCE at the end of the period, as the Joint card
-//               computes it, or null while not known (the line is hidden)
+//   jointNow  – Joint's money up to and including the period's last day
+//               (plan 9P K234; every period kind, also ≤ 0), or null while
+//               not known (the line is hidden)
 export function TransfersSection({ rows, allRows, ready, jointNow }) {
   // The inline card: null, { kind: 'add' }, or { kind: 'edit', row }.
   const [form, setForm] = useState(null)

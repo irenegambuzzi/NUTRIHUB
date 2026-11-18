@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { PAID_BY_OPTIONS } from '../data/constants'
 import { PEOPLE, PART_COLUMNS, SHARED, checkSplit, emptySplit, partsColumnsReady, personalExpenses, storedParts } from './sharedParts'
 import { ACCOUNTS, ACCOUNT_OPTIONS, chosenPayer, payerOptionsFor, startingPayer } from './payers'
-import { balanceCents, leftoverCard, leftoverCents, leftoverScope, periodMoves } from './leftover'
+import { balanceCents, jointCentsBefore, leftoverCard, leftoverCents, leftoverScope, periodMoves } from './leftover'
 import { accountMoves, savedMessage, transferProblem, transferRow, transferText, transfersBetween, typedAmount } from './transfers'
 import { defaultView, monthNumber } from './expensePeriods'
-import { JOINT, NOVEMBER, OCTOBER, P1, P2, PERSON_TO_PERSON, label } from './jointNovember.fixture'
+import { JOINT, JOINT_600, NOVEMBER, OCTOBER, P1, P2, PERSON_TO_PERSON, label } from './jointNovember.fixture'
 
 // Plan 9P, Update round prompt 2: the 4th payer "Joint", transfers and the
 // starting balance (K210, K216–K229). The numbers are those of section 5
@@ -104,10 +104,10 @@ describe('the transfer form (K228, K229, K231)', () => {
 // The top card of section 5, from the rows.
 const sum = (rows) => Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100
 const between = (rows, field, from, to) => rows.filter((r) => r[field] >= from && r[field] < to)
-function topCard(who, view, { transfers = NOVEMBER.transfers, extra = [], expensesWho = who } = {}) {
+function topCard(who, view, { transfers = NOVEMBER.transfers, extra = [], extraExpenses = [], expensesWho = who } = {}) {
   const start = view.start
   const end = view.end
-  const all = { expenses: [...OCTOBER.expenses, ...NOVEMBER.expenses], income: [...OCTOBER.income, ...NOVEMBER.income], transfers: [...transfers, ...extra] }
+  const all = { expenses: [...OCTOBER.expenses, ...NOVEMBER.expenses, ...extraExpenses], income: [...OCTOBER.income, ...NOVEMBER.income], transfers: [...transfers, ...extra] }
   const incomeRows = between(all.income, 'income_date', start, end).filter((i) => who === 'all' || i.received_by === who)
   const expenseRows = personalExpenses(between(all.expenses, 'expense_date', start, end), expensesWho)
   const income = sum(incomeRows)
@@ -217,5 +217,59 @@ describe('the top card, November 2026 (section 5; K221–K224)', () => {
   it('transfers not known (not read, offline, failed): no transfer number, no leftover line, no bar (K196)', () => {
     const c = leftoverCard({ view: NOV.view, incomePerson: 'all', expensesPerson: 'all', income: 4048, expenses: 1228.42, before: { expenses: OCTOBER.expenses, income: OCTOBER.income, transfers: [] }, transfers: null })
     expect(c).toEqual({ line: null, available: null, moves: null })
+  })
+})
+
+// Update round prompt 2b: Joint's money before a day (K233 the "Received
+// by: Joint" pill, K234 "Joint now").
+describe("Joint's money before a day (K233, K234; prompt 2b section 5)", () => {
+  const A = { expenses: [...OCTOBER.expenses, ...NOVEMBER.expenses], income: [...OCTOBER.income, ...NOVEMBER.income], transfers: NOVEMBER.transfers }
+  const B = { ...A, expenses: [...A.expenses, JOINT_600] }
+  const at = (rows, day) => jointCentsBefore(rows, day) / 100
+
+  it('fixture A: before 01/10 and 01/11 €0.00; before 02/11 and 09/11 €52.48 (the starting balance); before 16/11, 23/11, 01/12 and 01/01/2027 €525.67', () => {
+    expect([at(A, '2026-10-01'), at(A, '2026-11-01')]).toEqual([0, 0])
+    expect([at(A, '2026-11-02'), at(A, '2026-11-09')]).toEqual([52.48, 52.48])
+    expect([at(A, '2026-11-16'), at(A, '2026-11-23'), at(A, '2026-12-01'), at(A, '2027-01-01')]).toEqual([525.67, 525.67, 525.67, 525.67])
+  })
+
+  it('section 5 per period: K233 pill = "before the first day" ≠ 0; "Joint now" = "before the day after the last day"', () => {
+    const periods = [
+      ['October 2026', '2026-10-01', '2026-11-01', 0, 0],
+      ['November 2026', '2026-11-01', '2026-12-01', 0, 525.67],
+      ['Week 2–8 Nov', '2026-11-02', '2026-11-09', 52.48, 52.48],
+      ['Week 9–15 Nov', '2026-11-09', '2026-11-16', 52.48, 525.67],
+      ['Week 16–22 Nov', '2026-11-16', '2026-11-23', 525.67, 525.67],
+      ['December 2026', '2026-12-01', '2027-01-01', 525.67, 525.67],
+    ]
+    for (const [name, start, end, beforeStart, now] of periods) expect([name, at(A, start), at(A, end)]).toEqual([name, beforeStart, now])
+  })
+
+  it('fixture B (Joint €600.00 on 20/11): before 01/12 −€74.33 (shown, ≤ 0 is not €0.00); before 16/11 still €525.67', () => {
+    expect(at(B, '2026-12-01')).toBe(-74.33)
+    expect(at(B, '2026-11-16')).toBe(525.67)
+    expect(jointCentsBefore(B, '2026-12-01')).not.toBe(0)
+  })
+
+  it('December, both pills Joint (fixture A): Leftover from November 2026 · +€525.67, €0.00 / €0.00, BALANCE +€525.67, This month €0.00, Available €525.67 · spent 0%', () => {
+    const c = topCard(JOINT, DEC)
+    expect(c.line).toMatchObject({ amount: 525.67, month: 'November 2026', word: 'This month' })
+    expect([c.income, c.expenses, c.balance, result(c)]).toEqual([0, 0, 525.67, 0])
+    expect(c.available).toEqual({ amount: 525.67, percent: 0, over: false })
+  })
+
+  it('fixture B: November Joint/Joint BALANCE −€74.33 = "Joint now"; December: no leftover line (K166)', () => {
+    const nov = topCard(JOINT, NOV, { extraExpenses: [JOINT_600] })
+    expect(nov.balance).toBe(-74.33)
+    expect(at(B, NOV.end)).toBe(nov.balance)
+    expect(topCard(JOINT, DEC, { extraExpenses: [JOINT_600] }).line).toBeNull()
+  })
+
+  it('only Joint\'s own rows count; the other people\'s rows, Shared and transfers between the two people never do; the transfers table missing ([]) = no transfers', () => {
+    const noTransfers = { ...A, transfers: [] }
+    expect(at(noTransfers, '2026-12-01')).toBe(-146.81)
+    expect(at({ ...A, transfers: [...A.transfers, PERSON_TO_PERSON] }, '2026-12-01')).toBe(525.67)
+    expect(at({ expenses: [], income: [], transfers: [] }, '2026-12-01')).toBe(0)
+    expect(at({ ...A, income: [...A.income, { id: 'ij', amount: 10, income_date: '2026-11-30', received_by: JOINT }] }, '2026-12-01')).toBe(535.67)
   })
 })

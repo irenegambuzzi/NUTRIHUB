@@ -38,6 +38,21 @@ export function leftoverCents(expenses, income, person, { partsReady = true, tra
   return centsOf(own) - centsOf(spent) + moved.inCents - moved.outCents + moved.startCents
 }
 
+// Joint's money before `day` (YYYY-MM-DD) in cents (plan 9P K233, K234):
+// income received by Joint − expenses paid by Joint + transfers into Joint
+// − transfers out of Joint + Joint's starting balances, every row dated
+// before `day`. The sum of the Joint card's leftover, but without K166 (it
+// can be ≤ 0) and for every period kind, Week included. `rows`: { expenses,
+// income, transfers } (any dates; only those before `day` count).
+export function jointCentsBefore({ expenses = [], income = [], transfers = [] }, day) {
+  return leftoverCents(
+    expenses.filter((e) => e.expense_date < day),
+    income.filter((i) => i.income_date < day),
+    JOINT,
+    { transfers: transfers.filter((t) => t.transfer_date < day) }
+  )
+}
+
 // Whose leftover the top card may show (K168, K222): both pills "Everyone"
 // → the household ('all'); both on the same account (a person or
 // Joint) → that account; any other combination (two different pills, a

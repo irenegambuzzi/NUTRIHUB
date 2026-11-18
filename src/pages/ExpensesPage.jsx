@@ -35,7 +35,7 @@ import { PERSON_OPTIONS, usePersonFilter } from '../lib/personFilter'
 import { defaultView, localDateString, viewRange } from '../lib/expensePeriods'
 import { useFirstMoneyMonth } from '../hooks/useFirstMoneyMonth'
 import { useLeftoverRows } from '../hooks/useLeftover'
-import { balanceCents, leftoverCard } from '../lib/leftover'
+import { jointCentsBefore, leftoverCard } from '../lib/leftover'
 import { useTransfers } from '../hooks/useTransfers'
 import { transfersBetween } from '../lib/transfers'
 import { JOINT } from '../lib/payers'
@@ -209,6 +209,21 @@ export function ExpensesPage() {
   const periodTransfers = useMemo(() => (knownTransfers ? transfersBetween(knownTransfers, startDate, endDate) : null), [knownTransfers, startDate, endDate])
   const shownTransfers = useMemo(() => transfersBetween(transferRows, startDate, endDate), [transferRows, startDate, endDate])
 
+  // The rows dated before the period's first day (plan 9O K164–K172), read
+  // with only what they need, kept live, only shown, never saved: the
+  // leftover, and Joint's money before the period (plan 9P K233, K234) —
+  // so they are read for every period kind, Week too (Week still shows no
+  // leftover, K169). Until they are read (or offline): null. The transfers
+  // before the period count too (K221–K224); until they are known: null.
+  const beforeRows = useLeftoverRows(startDate, { partsReady })
+  const before = useMemo(
+    () => (beforeRows && knownTransfers ? { ...beforeRows, transfers: knownTransfers.filter((t) => t.transfer_date < startDate) } : null),
+    [beforeRows, knownTransfers, startDate]
+  )
+  // Joint's money before the period's first day, in cents (K233), or null
+  // while it isn't known.
+  const jointBeforeCents = useMemo(() => (before ? jointCentsBefore(before, startDate) : null), [before, startDate])
+
   // The Expenses / Orders "Paid by" pills (one state, K2): Everyone and the
   // accounts; "Shared" only in a period with a Shared expense (plan 9P
   // K216, the K174 way). While the expenses are still loading a chosen
@@ -231,12 +246,15 @@ export function ExpensesPage() {
   // as a tap on "Everyone" does (so the device remembers that too).
   // "Joint" the same way, shown also with a transfer to or from Joint or a
   // Joint starting balance in the period (plan 9P K216a, K222), so both
-  // pills can be on Joint: the Joint account's card.
+  // pills can be on Joint: the Joint account's card. Also when Joint's money
+  // before the period's first day is not €0.00 (K233, every period kind);
+  // while that isn't known a chosen "Joint" stays on offer.
   const sharedIncomeShown = periodIncome.some((i) => i.received_by === 'shared') || (!incomeLoaded && receivedByFilter === 'shared')
   const jointIncomeShown =
     periodIncome.some((i) => i.received_by === JOINT) ||
     (periodTransfers ?? []).some((t) => t.from_code === JOINT || t.to_code === JOINT) ||
-    ((!incomeLoaded || !periodTransfers) && receivedByFilter === JOINT)
+    (jointBeforeCents !== null && jointBeforeCents !== 0) ||
+    ((!incomeLoaded || !periodTransfers || jointBeforeCents === null) && receivedByFilter === JOINT)
   const incomePersonOptions = useMemo(
     () => PERSON_OPTIONS.filter((o) => (o.value !== 'shared' || sharedIncomeShown) && (o.value !== JOINT || jointIncomeShown)),
     [sharedIncomeShown, jointIncomeShown]
@@ -248,17 +266,10 @@ export function ExpensesPage() {
   const total = sumAmounts(filteredExpenses)
   const incomeTotal = sumAmounts(filteredIncome)
 
-  // The leftover from the months before the period (plan 9O K164–K172):
-  // computed from every row before the period's first day (read with only
-  // what it needs, kept live), only shown, never saved. Week: nothing read.
-  // Until those rows are read (or offline): no line and no bar. The
-  // transfers before the period count too (plan 9P K221–K224); until they
-  // are known: no line, no bar, no transfer number.
-  const beforeRows = useLeftoverRows(startDate, { needed: view.pill !== 'week', partsReady })
-  const before = useMemo(
-    () => (beforeRows && knownTransfers ? { ...beforeRows, transfers: knownTransfers.filter((t) => t.transfer_date < startDate) } : null),
-    [beforeRows, knownTransfers, startDate]
-  )
+  // The leftover from the months before the period (plan 9O K164–K172),
+  // from `before` (above). Until those rows are read (or offline): no line
+  // and no bar. Until the transfers are known: no line, no bar, no transfer
+  // number.
   const { line: leftoverLine, available, moves } = useMemo(
     () =>
       leftoverCard({
@@ -274,17 +285,17 @@ export function ExpensesPage() {
     [view, receivedByFilter, paidByFilter, incomeTotal, total, before, periodTransfers, partsReady]
   )
 
-  // "Joint now €…" in Transfers: Joint's BALANCE at the end of the period
-  // on screen, as the Joint card (both pills on Joint) computes it; not
-  // shown while anything it needs isn't known.
+  // "Joint now €…" in Transfers (plan 9P K234): Joint's money before the
+  // day after the period's last day — every Joint row up to and including
+  // the period's end (future-dated rows of a running period count, K192),
+  // in every period kind, also ≤ 0; not affected by the pills. The rows
+  // before the period plus the period's own; hidden while any of them isn't
+  // known (not read, offline, a failed read).
   const jointNow = useMemo(() => {
-    if (!periodTransfers || (view.pill !== 'week' && !before)) return null
-    const sumOf = (rows) => rows.reduce((s, r) => s + Math.round((Number(r.amount) || 0) * 100), 0) / 100
-    const jointIncome = sumOf(periodIncome.filter((i) => i.received_by === JOINT))
-    const jointExpenses = sumOf(periodExpenses.filter((e) => e.paid_by === JOINT))
-    const card = leftoverCard({ view, incomePerson: JOINT, expensesPerson: JOINT, income: jointIncome, expenses: jointExpenses, before, transfers: periodTransfers, partsReady: partsReady === true })
-    return balanceCents({ ...card, income: jointIncome, expenses: jointExpenses }) / 100
-  }, [view, before, periodTransfers, periodIncome, periodExpenses, partsReady])
+    if (!before || !expensesLoaded || !incomeLoaded) return null
+    const rows = { expenses: [...before.expenses, ...periodExpenses], income: [...before.income, ...periodIncome], transfers: knownTransfers }
+    return jointCentsBefore(rows, endDate) / 100
+  }, [before, expensesLoaded, incomeLoaded, periodExpenses, periodIncome, knownTransfers, endDate])
 
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
 

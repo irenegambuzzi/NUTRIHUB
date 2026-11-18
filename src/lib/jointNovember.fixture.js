@@ -37,3 +37,7 @@ export const NOVEMBER = {
 
 // The K228 example: first → second €50 in November.
 export const PERSON_TO_PERSON = moved('t-4', P1, P2, 50, '2026-11-16')
+
+// Fixture B of Update round prompt 2b (K233, K234): fixture A + one made-up
+// Joint expense €600.00 on 20/11/2026 → Joint −€74.33 (525.67 − 600.00).
+export const JOINT_600 = spent(600, JOINT, '2026-11-20', { description: 'TEST big Joint expense' })

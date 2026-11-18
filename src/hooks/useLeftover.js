@@ -7,8 +7,10 @@ import { expensesBefore, incomeBefore } from '../lib/stores'
 // expense and income entry dated before `before` (the first day of the
 // period on screen), read with only their date, amount and person (and
 // the parts of a Shared expense). Live: kept up to date by realtime and by
-// this phone's own saves, like the lists.
-//   needed      – false for the Week pill (never a leftover): nothing read
+// this device's own saves, like the lists. Money reads them for every
+// period kind, Week too: Joint's money before the period (plan 9P K233,
+// K234) needs them even where no leftover is shown.
+//   needed      – false: nothing read
 //   partsReady  – whether the part columns exist (true / false), or
 //                 null / undefined while that isn't known yet (nothing
 //                 read yet)

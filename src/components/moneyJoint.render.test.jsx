@@ -10,14 +10,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 vi.mock('../lib/supabaseClient', () => ({ supabase: {} }))
 vi.mock('../hooks/useShops', () => ({ useShops: () => ({ ready: false, missing: false, shops: [], byId: new Map() }) }))
 
-const data = vi.hoisted(() => ({ expenses: [], income: [] }))
+// `beforeLoaded`: whether the rows before the period are read (false = not
+// read yet / a failed read).
+const data = vi.hoisted(() => ({ expenses: [], income: [], beforeLoaded: true }))
 // The transfers table: rows, read or not, missing (before 033); live.
 const tr = vi.hoisted(() => ({ state: { rows: [], loaded: true }, listeners: new Set() }))
 const fake = (get) => ({ useRows: () => ({ rows: get(), loaded: true }), getSnapshot: () => ({ rows: get(), loaded: true }) })
 vi.mock('../lib/stores', async (original) => {
   const { useSyncExternalStore } = await import('react')
   const before = (kind, day) => {
-    const snap = { rows: kind === 'expenses' ? data.expenses.filter((e) => e.expense_date < day) : data.income.filter((i) => i.income_date < day), loaded: true }
+    const rows = kind === 'expenses' ? data.expenses.filter((e) => e.expense_date < day) : data.income.filter((i) => i.income_date < day)
+    const snap = data.beforeLoaded ? { rows, loaded: true } : { rows: [], loaded: false }
     return { useRows: () => snap, getSnapshot: () => snap, refresh: () => {} }
   }
   const emit = () => tr.listeners.forEach((l) => l())
@@ -97,7 +100,7 @@ const { dismissToast, getToasts, runToastAction } = await import('../lib/feedbac
 const { forgetPartsForTest } = await import('../hooks/useExpenseParts')
 const { setOnlineForTest } = await import('../lib/connection')
 const client = await import('../lib/supabaseClient')
-const { JOINT, NOVEMBER, OCTOBER, P1, P2, label } = await import('../lib/jointNovember.fixture')
+const { JOINT, JOINT_600, NOVEMBER, OCTOBER, P1, P2, label } = await import('../lib/jointNovember.fixture')
 const [L1, L2] = [label(P1), label(P2)]
 const SHARED = label('shared')
 
@@ -127,8 +130,8 @@ function fakeDatabase() {
   }
 }
 
-const load = ({ transfers = NOVEMBER.transfers, state = {} } = {}) => {
-  data.expenses = [...OCTOBER.expenses, ...NOVEMBER.expenses]
+const load = ({ transfers = NOVEMBER.transfers, state = {}, extraExpenses = [] } = {}) => {
+  data.expenses = [...OCTOBER.expenses, ...NOVEMBER.expenses, ...extraExpenses]
   data.income = [...OCTOBER.income, ...NOVEMBER.income]
   tr.state = { rows: transfers, loaded: true, ...state }
 }
@@ -147,6 +150,7 @@ afterEach(() => {
   vi.useRealTimers()
   data.expenses = []
   data.income = []
+  data.beforeLoaded = true
   tr.state = { rows: [], loaded: true }
   setOnlineForTest(true)
   localStorage.clear()
@@ -271,10 +275,9 @@ describe('Money → top card with Joint (section 5; K221–K224)', () => {
     expect(leftoverLine().textContent).toBe('Leftover from November 2026 · +€5216.83')
     expect(breakdown().textContent).toBe(`${L1} +€3798.00 · ${L2} +€893.16 · Joint +€525.67`)
     expect(screen.getByText(/^Joint now/).textContent).toBe('Joint now €525.67')
-    // K222 as written: no Joint income and no Joint transfer in December →
-    // no "Received by: Joint" pill, so no Joint card (Kata ragu 1 of the
-    // prompt-2 report).
-    expect(pills('Received by')).toEqual(['Everyone', L1, L2])
+    // K233: no Joint movement in December, but Joint's money before 01/12 is
+    // €525.67 → the "Received by: Joint" pill is on offer.
+    expect(pills('Received by')).toEqual(['Everyone', L1, L2, 'Joint'])
   })
 
   it('December with a Joint transfer: both pills on Joint → "Leftover from November 2026 · +€525.67"', () => {
@@ -530,6 +533,167 @@ describe('Money → Transfers (K228–K231)', () => {
     await waitFor(() => expect(db.calls.at(-1)).toMatchObject({ op: 'upsert' }))
     expect(db.calls.at(-1).rows[0]).toMatchObject({ id: 't-3', amount: 20 })
     expect(transfersBar().textContent).toContain('Transfers (4)')
+  })
+})
+
+// Update round prompt 2b: K233 (the "Received by: Joint" pill also when
+// Joint's money before the period isn't €0.00) and K234 ("Joint now" =
+// every Joint row up to the period's end). Today 18/11/2026 unless said.
+describe('Money → Joint before the period (K233) and "Joint now" (K234)', () => {
+  const periodPill = (name) => fireEvent.click(screen.getByRole('button', { name, pressed: false }))
+  const prev = () => fireEvent.click(screen.getByRole('button', { name: 'Previous period' }))
+  const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next period' }))
+  const jointNow = () => screen.queryByText(/^Joint now/)?.textContent ?? null
+  const chosen = (name) => within(group(name)).getAllByRole('button').find((b) => b.getAttribute('aria-pressed') === 'true')?.textContent
+  const withJoint = ['Everyone', L1, L2, 'Joint']
+  const withoutJoint = ['Everyone', L1, L2]
+  // A new copy of the transfer rows: the page reads every store again.
+  const reread = () =>
+    act(() => {
+      tr.state = { ...tr.state }
+      tr.listeners.forEach((l) => l())
+    })
+
+  it('fixture A, Month: November pill shown (K222), "Joint now €525.67"; October hidden, "Joint now €0.00"', () => {
+    load()
+    page()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €525.67')
+    prev()
+    expect(pills('Received by')).toEqual(withoutJoint)
+    expect(jointNow()).toBe('Joint now €0.00')
+  })
+
+  it('fixture A, Week: 16–22 Nov shown (K233) €525.67; 9–15 Nov shown (K222) €525.67; 2–8 Nov shown (K233) €52.48; Joint/Joint in Week: no leftover, no "This month", no bar (K169)', () => {
+    load()
+    page()
+    periodPill('Week')
+    expect(screen.getByRole('button', { name: '16 Nov – 22 Nov 2026' })).toBeTruthy()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €525.67')
+    both('Joint')
+    expect(leftoverLine()).toBeNull()
+    expect(periodResult()).toBeNull()
+    expect(availableText()).toBeNull()
+    prev()
+    expect(screen.getByRole('button', { name: '9 Nov – 15 Nov 2026' })).toBeTruthy()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €525.67')
+    prev()
+    expect(screen.getByRole('button', { name: '2 Nov – 8 Nov 2026' })).toBeTruthy()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €52.48')
+    expect(chosen('Received by')).toBe('Joint')
+  })
+
+  it('fixture A, December (today 15/12): pill shown (K233); both pills Joint → Leftover from November 2026 · +€525.67, €0.00, €0.00, +€525.67, "This month €0.00" (normal colour), Available €525.67 · spent 0%; "Joint now €525.67"', () => {
+    today(2026, 12, 15)
+    load()
+    page()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €525.67')
+    both('Joint')
+    expect(leftoverLine().textContent).toBe('Leftover from November 2026 · +€525.67')
+    expect([tile('Income').textContent, tile('Expenses').textContent, tile('Balance').textContent]).toEqual(['€0.00', '€0.00', '+€525.67'])
+    expect(periodResult().textContent).toBe('This month €0.00')
+    const tone = periodResult().querySelector('span').className
+    expect(tone).not.toContain(GREEN)
+    expect(tone).not.toContain(RED)
+    expect(availableText().textContent).toBe('Available €525.67 · spent 0%')
+    expect(jointNow()).toBe('Joint now €525.67')
+  })
+
+  it('fixture B (Joint €600.00 on 20/11; today 15/12): November Joint/Joint BALANCE −€74.33 and "Joint now −€74.33"; December: no leftover line on the Joint card (K166), the pill still shown, "Joint now −€74.33"', () => {
+    today(2026, 12, 15)
+    load({ extraExpenses: [JOINT_600] })
+    page()
+    prev()
+    both('Joint')
+    expect(tile('Balance').textContent).toBe('−€74.33')
+    expect(jointNow()).toBe('Joint now −€74.33')
+    next()
+    expect(screen.getByRole('button', { name: 'December 2026' })).toBeTruthy()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(chosen('Received by')).toBe('Joint')
+    expect(leftoverLine()).toBeNull()
+    expect(jointNow()).toBe('Joint now −€74.33')
+  })
+
+  it('remembered (today 15/12): "Joint" chosen in November → December keeps it → October: hidden → "Everyone" (remembered)', () => {
+    today(2026, 12, 15)
+    load()
+    page()
+    prev()
+    receivedBy('Joint')
+    expect(localStorage.getItem('money.incomePerson')).toBe(JOINT)
+    next()
+    expect(screen.getByRole('button', { name: 'December 2026' })).toBeTruthy()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(chosen('Received by')).toBe('Joint')
+    expect(localStorage.getItem('money.incomePerson')).toBe(JOINT)
+    prev()
+    prev()
+    expect(pills('Received by')).toEqual(withoutJoint)
+    expect(chosen('Received by')).toBe('Everyone')
+    expect(localStorage.getItem('money.incomePerson')).toBe('all')
+  })
+
+  it('offline in December with "Joint" chosen: it stays "Joint" (remembered too); "Joint now" hidden; back online → shown again', () => {
+    today(2026, 12, 15)
+    load()
+    page()
+    receivedBy('Joint')
+    act(() => setOnlineForTest(false))
+    expect(chosen('Received by')).toBe('Joint')
+    expect(localStorage.getItem('money.incomePerson')).toBe(JOINT)
+    expect(jointNow()).toBeNull()
+    act(() => setOnlineForTest(true))
+    expect(chosen('Received by')).toBe('Joint')
+    expect(jointNow()).toBe('Joint now €525.67')
+  })
+
+  it('the rows before the period not read yet (transfers known): no K233 pill of its own, but a remembered "Joint" is never reset (October); "Joint now" hidden; once read → October hides it → "Everyone"', () => {
+    localStorage.setItem('money.incomePerson', JOINT)
+    data.beforeLoaded = false
+    load()
+    page()
+    prev()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(chosen('Received by')).toBe('Joint')
+    expect(localStorage.getItem('money.incomePerson')).toBe(JOINT)
+    expect(jointNow()).toBeNull()
+    data.beforeLoaded = true
+    reread()
+    expect(pills('Received by')).toEqual(withoutJoint)
+    expect(chosen('Received by')).toBe('Everyone')
+    expect(localStorage.getItem('money.incomePerson')).toBe('all')
+    expect(jointNow()).toBe('Joint now €0.00')
+  })
+
+  it('the rows before the period not read yet, nothing chosen, December: the pill only by K222 (hidden); read → shown (K233)', () => {
+    today(2026, 12, 15)
+    data.beforeLoaded = false
+    load()
+    page()
+    expect(pills('Received by')).toEqual(withoutJoint)
+    expect(jointNow()).toBeNull()
+    data.beforeLoaded = true
+    reread()
+    expect(pills('Received by')).toEqual(withJoint)
+    expect(jointNow()).toBe('Joint now €525.67')
+  })
+
+  it('before 033 (the table missing = no transfers, known): no crash; December shows the pill (Joint −€146.81 before 01/12) with no leftover line on the Joint card; November hides it (€0.00 before 01/11, no Joint income or transfer)', () => {
+    today(2026, 12, 15)
+    load({ transfers: [], state: { missing: true } })
+    page()
+    expect(screen.getByText('This needs the database update supabase/033_transfers.sql')).toBeTruthy()
+    expect(jointNow()).toBeNull()
+    expect(pills('Received by')).toEqual(withJoint)
+    both('Joint')
+    expect(leftoverLine()).toBeNull()
+    prev()
+    expect(pills('Received by')).toEqual(withoutJoint)
   })
 })
 

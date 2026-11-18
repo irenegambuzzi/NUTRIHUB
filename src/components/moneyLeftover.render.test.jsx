@@ -279,7 +279,7 @@ describe('Money → top card: the leftover (K164–K172)', () => {
     expect(availableText()).toBeNull()
   })
 
-  it('the Week pill: no line, no bar, and nothing is read for it', () => {
+  it('the Week pill: no line, no bar; only the rows before the week are read (Joint\'s money before it, plan 9P K233 / K234)', () => {
     load(OCTOBER, NOVEMBER)
     page()
     live.reads = []
@@ -287,7 +287,7 @@ describe('Money → top card: the leftover (K164–K172)', () => {
     expect(screen.getByRole('button', { name: '9 Nov – 15 Nov 2026' })).toBeTruthy()
     expect(leftoverLine()).toBeNull()
     expect(availableText()).toBeNull()
-    expect(live.reads).toEqual([])
+    expect([...new Set(live.reads)].sort()).toEqual(['expenses < 2026-11-09', 'income < 2026-11-09'])
   })
 
   it('3 Months Sep – Nov 2026 (today 15/11/2026): no line (starts before the first data); BALANCE +€1900.00', () => {

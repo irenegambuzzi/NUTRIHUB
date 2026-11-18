@@ -6888,6 +6888,9 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K230** (a) a new section "Transfers" in Money between Income and Orders (order: Income, Transfers, Orders, Expenses).
 - **K231** the "Add transfer" form and its texts as in report Part C.3 / C.4, with K229 (b).
 - **K232** (process) build prompt 2 written in chat 9; its report, SQL check and test go to the next chat.
+- **K233** (18/11; Kata ragu 1 = b) "Joint's money before day D" = income received by Joint − expenses paid by Joint + transfers into Joint − transfers out of Joint + Joint starting balances, every row dated before D (cents; the Joint card's leftover sum without K166, every period kind). The Income "Received by" pill "Joint" shows by K222 OR when Joint's money before the period's first day is not €0.00 — every period kind, Week too. While that money is not known (rows not read, offline, a failed read): the pill only by K222, but a chosen (or remembered) "Joint" is never reset; known and hidden → "Everyone" the K174 way (remembered). The transfers table missing (before 033) = no transfers (known). Nothing else of the top card changes (Week: no leftover, no "This month", no bar, K169; K166 on the Joint card).
+- **K234** (18/11; Kata ragu 2 = b) Money → Transfers `Joint now €…` = Joint's money before the day after the period's last day (every Joint row up to and including the period's end; future-dated rows of a running period count, K192). Every period kind, Week too; not affected by the person pills; shown also ≤ 0 (`Joint now −€74.33`), same look; hidden while not known. It no longer follows the Joint card's BALANCE.
+- **K235** (18/11; A) the Money "Shared" pill stays by data (K216): shown in a period with a Shared expense. November 2026 shows it today because the two 14/11 purchases (40 expenses, €146.81) are still Shared; it goes by itself once they are changed to Joint (the household's manual step after prompt 3). No date rule; nothing to build.
 
 **Order of work (decided 16/11).**
 
@@ -7206,6 +7209,10 @@ answered.
    (b) `Joint now` = every Joint row up to the end of the period (in every
    pill, also ≤ 0); (c) hide it in Week. Suggestion: (b).
 
+(Answered 18/11: 1 → K233, 2 → K234.)
+
+SQL 033 run 18/11/2026: all 16 checks ok.
+
 Decided by rule: PEOPLE stays the two people (9K); Joint gets no K4 note
 (A1/K4); Shared kept in Edit of a Shared expense, income, order and order
 group (K216); the Orders pills follow the Expenses pills (K2); a SHOP card
@@ -7213,6 +7220,80 @@ on Shared counts as not chosen, so the Shared parts box of "Confirm
 purchase" never shows (K225); the starting balance shows in every period
 containing its date, Week too (K218); "+ Add to SHOP list" keeps writing
 `shared` = not chosen (K225, K227).
+
+### Update round prompt 2b as built (18/11; code and tests only, no SQL)
+
+Built: K233 and K234 (two fixes to prompt 2), and the plan (K233–K235;
+K235 has nothing to build). No file in `supabase/` changed. No new browser
+storage, no new offline queue. No other screen, text or number changed.
+
+**Files.** Changed: `lib/leftover.js` (new `jointCentsBefore`),
+`pages/ExpensesPage.jsx` (the rows before the period read in every period
+kind; the K233 pill rule; `jointNow` = K234), `hooks/useLeftover.js`
+(comment), `components/expenses/TransfersSection.jsx` (comment of
+`jointNow`), `lib/jointNovember.fixture.js` (fixture B: `JOINT_600`, a
+made-up Joint expense €600.00 on 20/11/2026). Tests: `lib/transfers.test.js`,
+`components/moneyJoint.render.test.jsx`,
+`components/moneyLeftover.render.test.jsx`.
+
+**How the rows are read.** "Joint's money before day D" =
+`jointCentsBefore({ expenses, income, transfers }, D)` (only rows dated
+before D count; Joint's own expenses whole, its income, its transfers in /
+out and its starting balance; in cents). The rows are those the leftover
+already uses: `useLeftoverRows(startDate)` (the live, paginated stores
+`expensesBefore` / `incomeBefore`, not kept on the device) — now read for
+every period kind, **Week too** (before: nothing read in Week); plus every
+transfer from `transferStore` (as before). Nothing new is read offline;
+read again when the connection comes back (as `useLeftoverRows` did).
+
+- **K233** (Money → section Income → pills "Received by"): `Joint` shows by
+  K222, or when `jointCentsBefore(rows before the period, first day)` is not
+  0. Not known (the rows before the period not read yet / offline / a
+  failed read, or the transfers not known, or the income still loading): no
+  K233 pill of its own, but a chosen "Joint" stays (on offer and pressed).
+  Known and hidden → "Everyone" (the existing K174 effect, so the device
+  remembers `all`). Before 033 (`missing`): transfers = [] (known).
+- **K234** (Money → section Transfers → grey line under the title): `Joint
+  now €…` = `jointCentsBefore(rows before the period + the period's own
+  expenses and income + every transfer, the day after the period's last
+  day)`. Hidden while the rows before the period, the transfers, the
+  period's expenses or its income are not known. A minus shows as `Joint
+  now −€74.33` (the existing look).
+
+**Section 5 numbers** (fixtures only): October 2026 hidden / `Joint now
+€0.00`; November shown (K222) / €525.67; Week 2–8 Nov shown (K233, €52.48
+before 02/11) / €52.48; Week 9–15 Nov shown (K222) / €525.67 (was
+€473.19); Week 16–22 Nov shown (K233) / €525.67 (was €0.00); December
+(today in December) shown (K233) / €525.67, both pills Joint: `Leftover
+from November 2026 · +€525.67`, €0.00, €0.00, +€525.67, `This month €0.00`
+(normal colour), `Available €525.67 · spent 0%`. Fixture B: November
+Joint/Joint BALANCE −€74.33 and `Joint now −€74.33`; December no leftover
+line on the Joint card (K166), the pill shown, `Joint now −€74.33`. Every
+November card of prompt 2 unchanged.
+
+**Tests: 2708 → 2723 (143 files, unchanged).** `lib/transfers.test.js` (+6:
+fixture A before each day; the six periods of section 5; fixture B −€74.33;
+December Joint/Joint; fixture B November BALANCE = `Joint now` and no
+December line; only Joint's rows count, the table missing = no transfers).
+`components/moneyJoint.render.test.jsx` (+9: Month November / October;
+the three weeks, and Joint/Joint in Week without leftover, "This month" or
+bar; December both Joint; fixture B; the remembered pill November →
+December → October; offline in December keeps "Joint", `Joint now` hidden;
+the rows before not read: a remembered "Joint" kept in October, then reset
+once read; not read and nothing chosen → K222 only, then K233; before 033;
+the old December test now expects the Joint pill).
+`components/moneyLeftover.render.test.jsx` (the Week test: now only the
+rows before the week's first day are read, still no line and no bar). The
+four November cards and chips of prompt 2 are covered by the existing tests,
+unchanged and green. Mutation checks (each put back with Edit, `git diff`
+clean of it): K233 off (pill by K222 only) → 9 fail; K234 off (`Joint now`
+from the Joint card again) → 2 fail.
+
+**Kata ragu (18/11 prompt 2b): none.** Decided by rule: the Week pill now
+reads the rows before the week (the prompt allows it; nothing else of Week
+changes, K169); before 033 the table missing counts as no transfers, so in
+December the pill shows from Joint's own expenses alone (K233 text);
+future-dated rows inside a running period count in `Joint now` (K192).
 
 ---
 
