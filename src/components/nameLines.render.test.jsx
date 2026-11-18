@@ -68,7 +68,7 @@ const group = item('g', 'Teas', [], { is_group: true })
 const trail = item('trail', 'Trail Mix', ['Frutta secca'], { unit: 'gr', current_stock: 200 })
 data.pantry = [chips, crackers, yogurt, tea, group, trail]
 
-const card = (id, name, pantryId, extra = {}) => ({ id, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, price_qty: 1, price_unit: 'pcs', payer: 'shared', category_id: 'snacks', in_cart: true, ...extra })
+const card = (id, name, pantryId, extra = {}) => ({ id, name, pantry_item_id: pantryId, quantity: 1, unit: 'pcs', price: 0, price_qty: 1, price_unit: 'pcs', payer: P1, category_id: 'snacks', in_cart: true, ...extra })
 
 afterEach(() => {
   cleanup()
@@ -194,22 +194,28 @@ describe('Confirm purchase: name lines (stage 3)', () => {
     expect(sent().items.map((l) => [l.grocery_item_id, l.discard_expired])).toEqual([['y1', true], ['y1', undefined], ['y2', undefined]])
   })
 
-  it('J.9: Shared with name lines — the box counts the lines; €2.00 of €3.87 → 0.72 + 0.51 + 0.77, the rest 0.67 + 0.48 + 0.72', async () => {
+  // Changed in plan 9P (K225): a card on "Shared" is "not chosen yet" — no
+  // parts box any more; Confirm waits, one tap on "Paid by (everything)"
+  // sets the card and every one of its lines.
+  it('J.9 (K225): a card on Shared with name lines — no parts box, Confirm waits; "Joint" under "Paid by (everything)" → all 3 lines paid by Joint', async () => {
     data.lastPrices = { 'Nuvole di drago': { price: 0.99, quantity: 1, unit: 'pcs', source: 'name', at: 1 } }
-    confirmScreen([card('e1', 'Corn Snack', 'chips', { price: 1.39 })], { partsReady: true })
+    confirmScreen([card('e1', 'Corn Snack', 'chips', { price: 1.39, payer: 'shared' })], { partsReady: true })
     fireEvent.click(screen.getByRole('button', { name: 'Add another name' }))
     typeIn('Name of line 2 of Corn Snack', 'Nuvole di drago')
     fireEvent.click(screen.getByRole('button', { name: 'Add another name' }))
     typeIn('Name of line 3 of Corn Snack', 'Patatine paprika')
     typeIn('Total for line 3 of Corn Snack', '1.49')
-    expect(screen.getByText(`What each one paid of the 3 ${SHARED} items (€3.87).`)).toBeTruthy()
-    typeIn(`${label(P1)} paid (€)`, '2')
-    expect(screen.getByLabelText(`${label(P2)} paid (€)`).value).toBe('1.87')
+    expect(screen.queryByText(/What each one paid/)).toBeNull()
+    expect(screen.queryByText(`${SHARED} €`)).toBeNull()
+    expect(screen.getByText('Choose who paid: tap a name under "Paid by (everything)".')).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+    fireEvent.click(within(screen.getByRole('group', { name: 'Paid by (everything)' })).getByRole('button', { name: 'Joint' }))
+    expect(confirmButton().disabled).toBe(false)
     fireEvent.click(confirmButton())
     await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
     const items = sent().items
-    expect(items.map((l) => l[`part_${P1}`])).toEqual([0.72, 0.51, 0.77])
-    expect(items.map((l) => l[`part_${P2}`])).toEqual([0.67, 0.48, 0.72])
+    expect(items.map((l) => l.payer)).toEqual(['joint', 'joint', 'joint'])
+    expect(items.every((l) => l[`part_${P1}`] === undefined && l[`part_${P2}`] === undefined)).toBe(true)
   })
 
   it('J.1: a new item, "Biscotti" 1 pack counted in pcs (10), then "Gocciole" 1 pack with its own required "pcs per pack" (12) → "= 22 pcs added to the stock"', async () => {
@@ -292,8 +298,9 @@ describe('K53: the SHOP card in the List view, in Shop mode and in the cart', ()
 })
 
 describe('MONEY "Add expense": "It\'s another name of…" (K54)', () => {
-  const form = (namesReady = true) =>
-    render(
+  // No default payer (plan 9P K217): the form chooses one first.
+  const form = (namesReady = true) => {
+    const view = render(
       <PurchaseForm
         expenseCategories={[{ id: 'groceries', name: 'Groceries', parent_id: null }]}
         mainCategories={[{ id: 'groceries', name: 'Groceries', parent_id: null }]}
@@ -308,6 +315,9 @@ describe('MONEY "Add expense": "It\'s another name of…" (K54)', () => {
         namesReady={namesReady}
       />
     )
+    typeIn('Paid by', P1)
+    return view
+  }
 
   const typeRow = () => {
     typeIn('Name', 'Darjeeling Tin')

@@ -12,6 +12,7 @@ import { showToast } from '../../lib/feedback'
 import { orderUnits } from '../../lib/orders'
 import { isDurableBudget, isServiceBudget } from '../../lib/durable'
 import { isDurable } from '../../lib/inventory'
+import { chosenPayer } from '../../lib/payers'
 
 // "Order online" for a SHOP list entry: the order form, filled in from the
 // entry and its HOME item — store (its usual one), quantity,
@@ -42,7 +43,9 @@ export function OrderOnlineDialog({ entry, pantry, total, onClose }) {
     itemName: entry.name,
     shopId: pantry?.usual_shop_id ?? '',
     price: total > 0 ? Math.round(total * 100) / 100 : '',
-    paidBy: entry.payer || 'shared',
+    // The card's payer only when one was chosen (plan 9P K217, K225): a
+    // card "not chosen yet" starts the order with nobody chosen.
+    paidBy: chosenPayer(entry.payer),
     categoryId,
     quantity: entry.quantity,
     unit: entry.unit,

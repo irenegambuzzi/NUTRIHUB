@@ -32,7 +32,7 @@ export const ORDERS_NOTICE = 'Orders need a one-time database update (supabase/0
 // With supabase/028 (plan 9I) orders that were one order at the store can
 // be an order group: "Group orders" ticks them, each card of a group has a
 // tag that opens the "Order group" sheet (its discount, store, date, payer).
-export function OrdersSection({ person, onPerson, shopById, categories, mainCategories, subsOf, namesOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor }) {
+export function OrdersSection({ person, onPerson, personOptions, shopById, categories, mainCategories, subsOf, namesOf, addCategory, renameCategory, moveCategory, deleteCategory, styleFor }) {
   const { orders, ready, missing } = useOrders()
   const location = useLocation()
   const navigate = useNavigate()
@@ -185,7 +185,7 @@ export function OrdersSection({ person, onPerson, shopById, categories, mainCate
 
       {ready && (
         <>
-          <PersonSelector value={person} onChange={onPerson} label="Paid by" />
+          <PersonSelector value={person} onChange={onPerson} label="Paid by" options={personOptions} />
 
           {grouping && groupsOn && (
             <GroupOrdersBar

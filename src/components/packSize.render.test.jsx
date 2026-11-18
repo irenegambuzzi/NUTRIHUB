@@ -80,7 +80,7 @@ const text = () => document.body.textContent
 
 describe('SHOP Confirm purchase', () => {
   // Before supabase/029 (no "What each one paid" box; plan 9K).
-  const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'box', price: 20, price_qty: 1, price_unit: 'box', payer: 'shared', in_cart: true, category_id: 'pet', ...fields })
+  const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'box', price: 20, price_qty: 1, price_unit: 'box', payer: 'joint', in_cart: true, category_id: 'pet', ...fields })
   const confirm = (cartItems) =>
     render(
       <ConfirmPurchase
@@ -156,9 +156,16 @@ describe('SHOP Confirm purchase', () => {
   })
 })
 
+const withPayer = (ui) => {
+  const view = render(ui)
+  fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: 'joint' } })
+  return view
+}
+
 describe('MONEY Add expense', () => {
+  // No default payer (plan 9P K217): the form chooses one first.
   const form = () =>
-    render(
+    withPayer(
       <PurchaseForm
         expenseCategories={[{ id: 'groceries', name: 'Groceries', parent_id: null }]}
         mainCategories={[{ id: 'groceries', name: 'Groceries', parent_id: null }]}
@@ -250,7 +257,7 @@ describe('Order online: the order form, creating and editing', () => {
 
   it('creating: may stay empty ("You can fill this in when it arrives."), saved with no pack size; no first-time text', async () => {
     const onSubmit = vi.fn(async () => ({ error: null }))
-    render(<OrderForm {...picker} prefill={{ itemName: 'Tuna', quantity: 1, unit: 'box', price: 9 }} units={['box', 'pcs']} packItem={tuna()} onSubmit={onSubmit} />)
+    render(<OrderForm {...picker} prefill={{ itemName: 'Tuna', quantity: 1, unit: 'box', price: 9, paidBy: 'joint' }} units={['box', 'pcs']} packItem={tuna()} onSubmit={onSubmit} />)
     expect(screen.getByLabelText('pcs per box').value).toBe('')
     expect(text()).toContain('You can fill this in when it arrives.')
     expect(text()).not.toContain('Type how many')
@@ -261,7 +268,7 @@ describe('Order online: the order form, creating and editing', () => {
 
   it('creating: typed 24 → saved with it; never "saved as the usual size" here', async () => {
     const onSubmit = vi.fn(async () => ({ error: null }))
-    render(<OrderForm {...picker} prefill={{ itemName: 'Tuna', quantity: 1, unit: 'box', price: 9 }} units={['box', 'pcs']} packItem={tuna()} onSubmit={onSubmit} />)
+    render(<OrderForm {...picker} prefill={{ itemName: 'Tuna', quantity: 1, unit: 'box', price: 9, paidBy: 'joint' }} units={['box', 'pcs']} packItem={tuna()} onSubmit={onSubmit} />)
     type('pcs per box', '24')
     expect(text()).toContain('= 24 pcs')
     expect(text()).not.toContain('It will be saved')
@@ -293,7 +300,7 @@ describe('Order online: the order form, creating and editing', () => {
 
   it('an order not linked to HOME (or durable): no field, nothing sent for it', async () => {
     const onSubmit = vi.fn(async () => ({ error: null }))
-    render(<OrderForm {...picker} prefill={{ itemName: 'Sofa', quantity: 1, unit: 'box', price: 300 }} onSubmit={onSubmit} />)
+    render(<OrderForm {...picker} prefill={{ itemName: 'Sofa', quantity: 1, unit: 'box', price: 300, paidBy: 'joint' }} onSubmit={onSubmit} />)
     expect(screen.queryByLabelText(/ per /)).toBeNull()
     submit()
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))

@@ -8,6 +8,7 @@ import { PayerPicker } from './shared'
 import { EntryEditor, PriceButton, QuantityStepper } from './EntryControls'
 import { useEntryEditing } from '../../hooks/useEntryEditing'
 import { payerLabel } from '../../lib/grocery'
+import { chosenPayer } from '../../lib/payers'
 import { cardTitle } from '../../lib/itemNames'
 import { GROCERY_LIST_LABELS, listOf } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
@@ -105,8 +106,8 @@ export function GroceryItemTile({ item, showList = false, hint = null, reason, p
 
       {edit.editing ? <EntryEditor item={item} pack={pack} edit={edit} /> : <PriceButton item={item} pack={pack} total={total} edit={edit} />}
 
-      <div className="mt-1.5" title={`Paid by ${payerLabel(item.payer)}`}>
-        <PayerPicker value={item.payer || 'shared'} onChange={(value) => onUpdatePayer(item, value)} size="sm" />
+      <div className="mt-1.5" title={chosenPayer(item.payer) ? `Paid by ${payerLabel(item.payer)}` : 'Paid by: not chosen yet'}>
+        <PayerPicker value={item.payer} onChange={(value) => onUpdatePayer(item, value)} size="sm" />
       </div>
 
       {onOrderOnline && !item.in_cart && (

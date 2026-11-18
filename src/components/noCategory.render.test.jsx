@@ -12,6 +12,8 @@ const { GroceryItemTile } = await import('./grocery/GroceryItemTile')
 const { ItemTile } = await import('./inventory/ItemTile')
 const { NoCategoryLabel } = await import('./ui/NoCategoryLabel')
 const { NO_CATEGORY, RESTOCK_LABELS, SMALL_LABEL } = await import('../lib/inventoryStyles')
+const { PAID_BY_OPTIONS } = await import('../data/constants')
+const { payerTotals } = await import('../lib/payers')
 
 afterEach(cleanup)
 
@@ -48,5 +50,40 @@ describe('the grey "No category" label', () => {
     cleanup()
     render(<ItemTile item={{ ...item, category_id: 'dairy' }} onAdjust={vi.fn()} onDiscard={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onSendToGrocery={vi.fn()} />)
     expect(screen.queryByText('No category')).toBeNull()
+  })
+})
+
+// Plan 9P K225: a SHOP card's payer.
+describe('a SHOP card\'s "Paid by" pills', () => {
+  const lit = () => [...screen.getByRole('group', { name: 'Paid by' }).querySelectorAll('button')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent)
+  it('the three accounts only; "shared" or empty = not chosen yet (nothing lit, title "Paid by: not chosen yet"); Joint lit with "Paid by Joint"', () => {
+    for (const payer of ['shared', '', null]) {
+      tile(entry({ payer }))
+      expect([...screen.getByRole('group', { name: 'Paid by' }).querySelectorAll('button')].map((b) => b.textContent)).toEqual(PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.label))
+      expect(lit()).toEqual([])
+      expect(screen.getByRole('group', { name: 'Paid by' }).parentElement.getAttribute('title')).toBe('Paid by: not chosen yet')
+      cleanup()
+    }
+    tile(entry({ payer: 'joint' }))
+    expect(lit()).toEqual(['Joint'])
+    expect(screen.getByRole('group', { name: 'Paid by' }).parentElement.getAttribute('title')).toBe('Paid by Joint')
+  })
+})
+
+describe('the SHOP budget card\'s bottom line (K225)', () => {
+  it('each account, then "No payer yet" only when above €0.00', () => {
+    const items = [
+      { payer: 'joint', cost: 2.5 },
+      { payer: 'shared', cost: 1.2 },
+      { payer: '', cost: 0.3 },
+      { payer: PAID_BY_OPTIONS[0].value, cost: 4 },
+    ]
+    expect(payerTotals(items, (i) => i.cost).map((p) => [p.label, Math.round(p.total * 100) / 100])).toEqual([
+      [PAID_BY_OPTIONS[0].label, 4],
+      [PAID_BY_OPTIONS[1].label, 0],
+      ['Joint', 2.5],
+      ['No payer yet', 1.5],
+    ])
+    expect(payerTotals(items.filter((i) => i.payer === 'joint'), (i) => i.cost).map((p) => p.label)).not.toContain('No payer yet')
   })
 })

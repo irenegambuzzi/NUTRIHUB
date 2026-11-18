@@ -135,7 +135,7 @@ export function deleteExpenses(ids, message = ids.length === 1 ? 'Expense delete
 // Expenses from `since` on (by default the start of this week, month and
 // year: what the Expenses page opens on), plus the categories.
 export function useExpenses(since = currentExpensesSince()) {
-  const { rows: expenses } = expensesSince(since).useRows()
+  const { rows: expenses, loaded } = expensesSince(since).useRows()
   const { categories, addCategory, renameCategory, moveCategory, deleteCategory } = useExpenseCategories()
 
   const addExpense = useCallback(
@@ -176,7 +176,7 @@ export function useExpenses(since = currentExpensesSince()) {
 
   const deleteExpense = useCallback((id) => deleteExpenses([id]), [])
 
-  return { expenses, categories, addExpense, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense, deleteExpenses }
+  return { expenses, loaded, categories, addExpense, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense, deleteExpenses }
 }
 
 // Every expense in one category (the Groceries receipts); nothing is

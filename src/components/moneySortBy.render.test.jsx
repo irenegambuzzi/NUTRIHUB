@@ -23,6 +23,7 @@ vi.mock('../lib/stores', async (original) => {
     expensesBefore: () => notRead,
     incomeBefore: () => notRead,
     pantryStore: fake(() => []),
+    transferStore: fake(() => []),
     groceryStore: fake(() => []),
     orderStore: fake(() => []),
     budgetMapStore: fake(() => []),

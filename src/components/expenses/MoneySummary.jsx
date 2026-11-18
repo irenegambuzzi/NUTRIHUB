@@ -21,9 +21,16 @@ const toneOf = (n) => (n > 0 ? 'text-[var(--color-money-in)]' : n < 0 ? 'text-[v
 // it and "This month" / "This range" under it gives the period's own
 // result. `available`: null, or the thin bar under the tiles "Available
 // €{a} · spent {p}%".
-export function MoneySummary({ income, expenses, incomePerson = 'all', expensesPerson = 'all', expensesNote = '', leftover = null, available = null }) {
-  const result = toCents(income - expenses)
-  const balance = leftover ? toCents(leftover.amount + income - expenses) : result
+// `moves` (plan 9P K221–K223, lib/leftover `periodMoves`): null, or the
+// period's transfers and starting balance of this account (or the
+// household's starting balances): BALANCE and "This month" include them,
+// and each has a grey line under the tiles ("Transfers · {label} −€320.00",
+// "Starting balance · Joint +€52.48"). They are never in INCOME or
+// EXPENSES.
+export function MoneySummary({ income, expenses, incomePerson = 'all', expensesPerson = 'all', expensesNote = '', leftover = null, available = null, moves = null }) {
+  const net = (moves?.netCents ?? 0) / 100
+  const result = toCents(income - expenses + net)
+  const balance = leftover ? toCents(leftover.amount + income - expenses + net) : result
   const tiles = [
     { label: 'Income', who: incomePerson, value: money(income), tone: 'text-[var(--color-money-in)]' },
     { label: 'Expenses', who: expensesPerson, value: money(expenses), tone: 'text-[var(--color-accent)]' },
@@ -60,6 +67,11 @@ export function MoneySummary({ income, expenses, incomePerson = 'all', expensesP
             </p>
           )}
         </div>
+      ))}
+      {moves?.lines.map((m) => (
+        <p key={m.key} className="col-span-3 text-[10px] text-[var(--color-text-muted)] break-words">
+          {m.text} <span className={cn('font-mono', toneOf(toCents(m.amount)))}>{signed(toCents(m.amount))}</span>
+        </p>
       ))}
       {available && (
         <div className="col-span-3 space-y-1">

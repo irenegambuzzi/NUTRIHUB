@@ -11,6 +11,7 @@ vi.mock('../../hooks/useShops', () => ({ useShops: () => ({ ready: false, missin
 const { OrderForm } = await import('./OrderForm')
 const { RestockForm } = await import('../inventory/RestockForm')
 const { orderRowFrom } = await import('../../hooks/useOrders')
+const { PAID_BY_OPTIONS } = await import('../../data/constants')
 
 afterEach(() => {
   cleanup()
@@ -25,6 +26,8 @@ const setup = (props = {}) => {
   const onSubmit = vi.fn(async () => ({ error: null }))
   render(<OrderForm {...picker} onSubmit={onSubmit} {...props} />)
   if (!props.initial) type('Item name', 'Cat Wet Food')
+  // No default payer (plan 9P K217): a new order chooses one.
+  if (!props.initial && !props.prefill?.paidBy) type('Paid by', PAID_BY_OPTIONS[0].value)
   return onSubmit
 }
 
@@ -239,5 +242,52 @@ describe('the order form: a discount of its own', () => {
     expect(field('Total price').value).toBe('80.00')
     expect(field('Discount').value).toBe('30')
     expect(screen.getByText('€80 → €56 (−30%)')).toBeTruthy()
+  })
+})
+
+// Plan 9P K216 / K217: no default payer, the accounts only; "Order online"
+// brings the card's payer only when it was chosen.
+describe('who paid for an order (K216, K217)', () => {
+  const accounts = PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.value)
+  const fill = () => {
+    type('Item name', 'TEST cat food')
+    type('Total price', '12')
+  }
+
+  it('"Add order": "Choose…" and the accounts; refused with "Choose who paid.", nothing sent; then saved', () => {
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    render(<OrderForm {...picker} onSubmit={onSubmit} />)
+    expect(field('Paid by').value).toBe('')
+    expect([...field('Paid by').options].map((o) => o.value)).toEqual(['', ...accounts])
+    fill()
+    submit()
+    expect(screen.getByText('Choose who paid.')).toBeTruthy()
+    expect(onSubmit).not.toHaveBeenCalled()
+    type('Paid by', 'joint')
+    submit()
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ paidBy: 'joint', price: 12 })
+  })
+
+  it('"Order online": a card not chosen yet starts empty (same refusal); a card on Joint starts on Joint', () => {
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    render(<OrderForm {...picker} prefill={{ itemName: 'TEST cat food', price: 12, paidBy: '' }} onSubmit={onSubmit} />)
+    expect(field('Paid by').value).toBe('')
+    submit()
+    expect(screen.getByText('Choose who paid.')).toBeTruthy()
+    expect(onSubmit).not.toHaveBeenCalled()
+    cleanup()
+    render(<OrderForm {...picker} prefill={{ itemName: 'TEST cat food', price: 12, paidBy: 'joint' }} onSubmit={onSubmit} />)
+    expect(field('Paid by').value).toBe('joint')
+    submit()
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ paidBy: 'joint' })
+  })
+
+  it('"Edit order": a Shared order keeps Shared on offer; a Joint order offers no Shared', () => {
+    render(<OrderForm {...picker} initial={{ item_name: 'TEST old', price: 5, order_date: '2026-10-17', paid_by: 'shared', category_id: null }} onSubmit={vi.fn()} />)
+    expect([...field('Paid by').options].map((o) => o.value)).toEqual([...accounts, 'shared'])
+    cleanup()
+    render(<OrderForm {...picker} initial={{ item_name: 'TEST new', price: 5, order_date: '2026-11-14', paid_by: 'joint', category_id: null }} onSubmit={vi.fn()} />)
+    expect(field('Paid by').value).toBe('joint')
+    expect([...field('Paid by').options].map((o) => o.value)).toEqual(accounts)
   })
 })

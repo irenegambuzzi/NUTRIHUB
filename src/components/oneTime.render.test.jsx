@@ -261,7 +261,8 @@ describe('Confirm purchase', () => {
   })
 
   it("each variant's card is its own line with its own price, in no group box; Confirm open", () => {
-    const cart = [variantEntry(variantById.get('cv'), { in_cart: true, price: 1.99 }), variantEntry(variantById.get('pr'), { in_cart: true, price: 2.49 })]
+    // Payers chosen (plan 9P K217: Confirm waits for one).
+    const cart = [variantEntry(variantById.get('cv'), { in_cart: true, price: 1.99, payer: 'joint' }), variantEntry(variantById.get('pr'), { in_cart: true, price: 2.49, payer: 'joint' })]
     render(<ConfirmPurchase cartItems={cart} pantryItems={chips} categoryName={() => 'Misc'} totalOf={(e) => Number(e.price)} updatePricing={vi.fn()} updatePayer={vi.fn()} toggleCart={vi.fn()} onClose={() => {}} />)
     expect(screen.queryByRole('group', { name: /\(group\)/ })).toBeNull()
     expect(screen.getByRole('textbox', { name: 'Total for Patatine teriyaki' }).value).toBe('2.49')

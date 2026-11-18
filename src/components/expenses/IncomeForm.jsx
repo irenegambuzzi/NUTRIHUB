@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { Plus, Check } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
-import { Label, Input, Select } from '../ui/Field'
+import { Label, Input } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { MoneyCategorySelect } from '../ui/MoneyCategorySelect'
 import { moneyText, parseDecimal } from '../../lib/decimal'
-import { PAID_BY_OPTIONS } from '../../data/constants'
+import { RECEIVER_MISSING, payerOptionsFor, startingPayer } from '../../lib/payers'
+import { PayerSelect } from './PayerSelect'
 import { localDateString } from '../../lib/expensePeriods'
 
 // The income fields, for adding an entry or editing one (`initial`).
@@ -20,7 +21,10 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
   const initialMain = initial ? tree.mainOf(initial.category_id) : tree.mainCategories.find((c) => c.name === 'Salary') ?? tree.mainCategories[0]
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
   const [subId, setSubId] = useState(initial && initial.category_id !== initialMain?.id ? initial.category_id ?? '' : '')
-  const [receivedBy, setReceivedBy] = useState(initial?.received_by ?? 'shared')
+  // The accounts, plus "Shared" only for an entry that is Shared (plan 9P
+  // K216a); a new entry starts with nobody chosen (K217).
+  const receiverOptions = payerOptionsFor(initial?.received_by)
+  const [receivedBy, setReceivedBy] = useState(() => startingPayer(initial?.received_by))
   const [source, setSource] = useState(initial?.source ?? '')
   const [dateOk, setDateOk] = useState(true)
   const [dateError, setDateError] = useState('')
@@ -30,6 +34,7 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
     const value = parseDecimal(amount)
     if (!(value > 0)) return setDateError(amount.trim() ? 'Enter an amount above 0, like 13,60.' : 'Enter the amount.')
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
+    if (!receivedBy) return setDateError(RECEIVER_MISSING)
     const { error } = await onSubmit({ amount: value, incomeDate, categoryId: subId || mainId || null, receivedBy, source: source.trim() })
     if (error) return
     if (!initial) {
@@ -72,13 +77,7 @@ export function IncomeForm({ initial, submitLabel, onSubmit, onCancel, tree, onM
 
       <div>
         <Label>Received by</Label>
-        <Select value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} aria-label="Received by">
-          {PAID_BY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        <PayerSelect value={receivedBy} onChange={(v) => { setReceivedBy(v); setDateError('') }} options={receiverOptions} label="Received by" />
       </div>
 
       <div>

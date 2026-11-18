@@ -67,6 +67,7 @@ const addExpenseOnce = vi.fn()
 vi.mock('../../hooks/useExpenses', () => ({ addExpenseOnce: (...args) => addExpenseOnce(...args) }))
 
 const { PurchaseForm } = await import('./PurchaseForm')
+const { PAID_BY_OPTIONS } = await import('../../data/constants')
 const { categoryTree } = await import('../../lib/moneyList')
 
 afterEach(() => {
@@ -82,8 +83,10 @@ const expenseCategories = [
   { id: 'groceries', name: 'Groceries', parent_id: null },
   { id: 'dining', name: 'Dining', parent_id: null },
 ]
-const form = (props = {}) =>
-  render(
+// No default payer (plan 9P K217): the form chooses one first ("Joint"),
+// unless `payer` is '' (nothing chosen).
+const form = (props = {}, { payer = 'joint' } = {}) => {
+  const view = render(
     <PurchaseForm
       expenseCategories={expenseCategories}
       mainCategories={expenseCategories}
@@ -97,6 +100,9 @@ const form = (props = {}) =>
       {...props}
     />
   )
+  if (payer) fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: payer } })
+  return view
+}
 const type = (label, value) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
 
 describe('MONEY Add expense: the purchase form', () => {
@@ -109,7 +115,7 @@ describe('MONEY Add expense: the purchase form', () => {
     expect(screen.getByLabelText('Add to HOME').checked).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Add expense · €13.60' }))
     await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 13.6, description: 'Dinner out', categoryId: 'dining', paidBy: 'shared' })
+    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 13.6, description: 'Dinner out', categoryId: 'dining', paidBy: 'joint' })
     expect(recordMoneyPurchase).not.toHaveBeenCalled()
   })
 
@@ -259,6 +265,22 @@ describe('MONEY Add expense: the purchase form', () => {
     expect(screen.getByLabelText('Minimum stock').value).toBe('0')
     fireEvent.click(screen.getByRole('checkbox', { name: /One-time purchase/ }))
     expect(screen.queryByLabelText('Minimum stock')).toBeNull()
+  })
+
+  it('K217: "Paid by" starts on "Choose…" with the accounts only (no Shared); saving is refused with "Choose who paid." and nothing is sent', async () => {
+    addExpenseOnce.mockClear()
+    form({}, { payer: '' })
+    const select = screen.getByLabelText('Paid by')
+    expect(select.value).toBe('')
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Choose…', ...PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.label)])
+    type('Name', 'TEST Dinner')
+    type('Price', '13,60')
+    fireEvent.click(screen.getByRole('button', { name: /Add expense ·|Save purchase/ }))
+    expect(await screen.findByText('Choose who paid.')).toBeTruthy()
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    expect(recordMoneyPurchase).not.toHaveBeenCalled()
+    fireEvent.change(select, { target: { value: PAID_BY_OPTIONS[0].value } })
+    expect(screen.queryByText('Choose who paid.')).toBeNull()
   })
 
   it('says what is missing instead of saving', async () => {

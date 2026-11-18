@@ -3489,9 +3489,9 @@ describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (n
     }
   }, 120000)
 
-  it('no SQL file after 028 touches them (029, 030 and 032 never do; 031 replaces unarrive_order, tested in its own block, and never arrive_order), and here arrive_order / unarrive_order are still the ones of 021', async () => {
+  it('no SQL file after 028 touches them (029, 030, 032 and 033 never do; 031 replaces unarrive_order, tested in its own block, and never arrive_order), and here arrive_order / unarrive_order are still the ones of 021', async () => {
     const later = fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f) && f >= '029').sort()
-    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql', '031_reopen_created_items.sql', '032_item_names.sql'])
+    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql', '031_reopen_created_items.sql', '032_item_names.sql', '033_transfers.sql'])
     for (const f of later.filter((f) => f !== '031_reopen_created_items.sql')) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/arrive_order/)
     const v031 = fs.readFileSync(path.join(dir, '031_reopen_created_items.sql'), 'utf8').replace(/--.*$/gm, '')
     expect([...v031.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['reopen_shopping_trip', 'unarrive_order'])
@@ -7664,5 +7664,204 @@ describe('9P: "Reopen purchase" / "Undo" never loses a card — the real 032 fun
       deliver(await newEvents())
       await expectAllTen(p, 'T3')
     })
+  })
+})
+
+describe('033: transfers between the accounts and Joint\'s starting balance — one new table, nothing else changes', () => {
+  const file = '033_transfers.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  // The two people as PAID_BY_OPTIONS lists them (never written out here), and Joint.
+  const [P1, P2] = PEOPLE
+  const JOINT = 'joint'
+  let fx
+  let card, balanceCents, transferRow
+  const rows = async (text, params) => (await fx.query(text, params)).rows
+  async function as(d, role, userId, fn) {
+    await d.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await d.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await d.exec('reset role')
+    }
+  }
+  const member = (fn) => as(fx, 'authenticated', MEMBER, fn)
+  const fails = async (fn) => {
+    try {
+      await fn()
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }
+  // Up to (not including) `stopAt`, like the other blocks build it.
+  async function databaseBefore(stopAt) {
+    const d = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2\d|3[0-2])_.*\.sql$/.test(f) && !f.includes('ROLLBACK') && f < stopAt).sort()) await d.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    return d
+  }
+  const run = async () => (await fx.exec(sql)).at(-1).rows
+  // Everything but the new table: rows, columns, constraints, functions,
+  // policies, grants, live sync, row level security.
+  const everythingElse = async () => ({
+    tables: await rows(`select c.relname as t, (xpath('/row/h/text()', query_to_xml(format('select md5(coalesce(string_agg(x::text, ''|'' order by x::text), '''')) as h from public.%I x', c.relname), false, true, '')))[1]::text as h
+      from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r' and c.relname <> 'transfers' order by 1`),
+    columns: await rows(`select table_name, column_name, data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name <> 'transfers' order by 1, 2`),
+    constraints: await rows(`select conrelid::regclass::text as t, conname, pg_get_constraintdef(c.oid) as d from pg_constraint c join pg_namespace s on s.oid = c.connamespace where s.nspname = 'public' and c.conrelid <> coalesce(to_regclass('public.transfers'), 0) order by 1, 2`),
+    functions: await rows(`select p.oid::regprocedure::text as f, md5(p.prosrc) as src, p.prosecdef, p.proconfig::text as cfg, p.proacl::text as acl from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public' order by 1`),
+    policies: await rows(`select tablename, policyname, cmd, roles::text, qual, with_check from pg_policies where tablename <> 'transfers' order by 1, 2`),
+    grants: await rows(`select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name <> 'transfers' order by 1, 2, 3`),
+    realtime: await rows(`select tablename from pg_publication_tables where pubname = 'supabase_realtime' and tablename <> 'transfers' order by 1`),
+    rls: await rows(`select relname, relrowsecurity from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r' and relname <> 'transfers' order by 1`),
+  })
+  let before
+  let category
+
+  beforeAll(async () => {
+    fx = await databaseBefore('033')
+    ;({ leftoverCard: card, balanceCents } = await import('../src/lib/leftover.js'))
+    ;({ transferRow } = await import('../src/lib/transfers.js'))
+    category = (await rows(`insert into expense_categories (name) values ('Groceries 033') returning id`))[0].id
+    before = await everythingElse()
+  }, 180000)
+
+  it('the file: one transaction, the guard, no data written, no other object named, ends with "-- End of 033"', () => {
+    expect(sql.match(/^begin;$/gm)).toHaveLength(1)
+    expect(sql.match(/^commit;$/gm)).toHaveLength(1)
+    expect(sql.trimEnd().split('\n').pop()).toBe('-- End of 033')
+    expect(sql).toContain("raise exception 'Run 032_item_names.sql first.'")
+    const writes = sql.replace(/--.*$/gm, '').match(/\binsert\s+into\b|\bupdate\s+\w+\s+set\b|\bdelete\s+from\b|\btruncate\b/gi) ?? []
+    expect(writes).toEqual([])
+    expect(sql).not.toMatch(/create\s+(or\s+replace\s+)?function/i)
+    // No household name anywhere in it.
+    for (const code of PEOPLE) expect(sql.toLowerCase()).not.toContain(code)
+  })
+
+  it('before 032: refused with "Run 032_item_names.sql first.", nothing made', async () => {
+    const d = await databaseBefore('032')
+    const error = await (async () => {
+      try {
+        await d.exec(sql)
+        return null
+      } catch (e) {
+        return e.message
+      }
+    })()
+    expect(error).toContain('Run 032_item_names.sql first.')
+    await d.exec('rollback')
+    expect((await d.query(`select to_regclass('public.transfers') as t`)).rows[0].t).toBeNull()
+  }, 180000)
+
+  it('before 033: "joint" is a payer everywhere with no SQL — expenses, income, SHOP cards, orders, and confirm_shopping_trip keeps it', async () => {
+    const tripId = '33000000-0000-4000-8000-0000000000c1'
+    await member(async () => {
+      await fx.query(`insert into expenses (category_id, amount, description, paid_by, expense_date) values ($1, 1, 'TEST before 033', $2, '2026-09-01')`, [category, JOINT])
+      await fx.query(`insert into income (amount, income_date, received_by) values (1, '2026-09-01', $1)`, [JOINT])
+      await fx.query(`insert into grocery_items (name, payer) values ('TEST card 033', $1)`, [JOINT])
+      await fx.query(`insert into orders (item_name, order_date, price, paid_by, status) values ('TEST order 033', '2026-09-01', 5, $1, 'on_the_way')`, [JOINT])
+      await fx.query(`select confirm_shopping_trip($1::jsonb)`, [
+        JSON.stringify({
+          id: tripId, trip_date: '2026-09-01', at: '2026-09-01T10:00:00Z', source: 'money', shop_id: null, paid_by: JOINT, photo_ids: [],
+          items: [{ name: 'TEST milk 033', category_id: null, subcategory_id: null, quantity: 1, unit: 'pcs', price: 1.2, price_qty: 1, price_unit: 'pcs', line_total: 1.2, payer: JOINT, expense_category_id: category, durable: true }],
+        }),
+      ])
+    })
+    const [trip] = await rows(`select t.paid_by, e.paid_by as expense_payer from shopping_trips t join expenses e on e.trip_id = t.id where t.id = $1`, [tripId])
+    expect(trip).toEqual({ paid_by: JOINT, expense_payer: JOINT })
+    // Taken away again (Undo the purchase, the rest by hand), so the
+    // November numbers below start from the plan's rows only.
+    expect(await member(async () => (await fx.query(`select reopen_shopping_trip($1) as n`, [tripId])).rows[0].n)).toBeGreaterThan(0)
+    await rows(`delete from orders where paid_by = $1`, [JOINT])
+    await rows(`delete from expenses where paid_by = $1`, [JOINT])
+    await rows(`delete from income where received_by = $1`, [JOINT])
+    await rows(`delete from grocery_items where payer = $1`, [JOINT])
+    before = await everythingElse()
+  })
+
+  it('run twice: 16 check rows, each "ok"; everything else unchanged after each run', async () => {
+    const first = await run()
+    expect(first).toHaveLength(16)
+    expect(first.filter((r) => r.status !== 'ok')).toEqual([])
+    expect(await everythingElse()).toEqual(before)
+    const second = await run()
+    expect(second.map((r) => r.status)).toEqual(Array(16).fill('ok'))
+    expect(await everythingElse()).toEqual(before)
+  }, 60000)
+
+  it('the member adds (the app\'s own rows), reads, changes and deletes; the checks refuse 0, a minus, the same account, empty codes', async () => {
+    const add = (row) => member(() => fx.query(`insert into transfers (id, transfer_date, from_code, to_code, amount, note) values (gen_random_uuid(), $1, $2, $3, $4, $5) returning *`, [row.transfer_date, row.from_code, row.to_code, row.amount, row.note]))
+    const start = transferRow({ kind: 'start', amountText: '52,48', date: '2026-11-01', note: '' })
+    expect(start).toEqual({ transfer_date: '2026-11-01', from_code: null, to_code: JOINT, amount: 52.48, note: null })
+    await add(start)
+    await add(transferRow({ kind: 'transfer', from: P2, to: JOINT, amountText: '300', date: '2026-11-13', note: 'TEST deposit' }))
+    await add(transferRow({ kind: 'transfer', from: P1, to: JOINT, amountText: '300', date: '2026-11-13', note: '' }))
+    await add(transferRow({ kind: 'transfer', from: P2, to: JOINT, amountText: '20', date: '2026-11-14', note: '' }))
+    expect((await member(() => fx.query(`select * from transfers`))).rows).toHaveLength(4)
+    expect((await member(() => fx.query(`update transfers set note = 'TEST changed' where amount = 20 returning id`))).rows).toHaveLength(1)
+    const extra = (await add(transferRow({ kind: 'transfer', from: JOINT, to: P1, amountText: '5', date: '2026-11-15', note: '' }))).rows[0]
+    expect((await member(() => fx.query(`delete from transfers where id = $1 returning id`, [extra.id]))).rows).toHaveLength(1)
+    for (const [from, to, amount] of [
+      [P2, JOINT, 0],
+      [P2, JOINT, -5],
+      [JOINT, JOINT, 5],
+      [P2, '', 5],
+      [P2, null, 5],
+      ['', JOINT, 5],
+    ]) {
+      expect(await fails(() => add({ transfer_date: '2026-11-15', from_code: from, to_code: to, amount, note: null }))).not.toBeNull()
+    }
+    expect((await rows(`select count(*)::int as n from transfers`))[0].n).toBe(4)
+  })
+
+  it('anon can do nothing; a logged-in stranger sees nothing and can add, change or delete nothing', async () => {
+    const anonRead = await fails(() => as(fx, 'anon', null, () => fx.query('select * from transfers')))
+    const anonAdd = await fails(() => as(fx, 'anon', null, () => fx.query(`insert into transfers (transfer_date, to_code, amount) values ('2026-11-15', 'joint', 1)`)))
+    expect(anonRead).toMatch(/permission denied/)
+    expect(anonAdd).toMatch(/permission denied/)
+    await as(fx, 'authenticated', STRANGER, async () => {
+      expect((await fx.query('select * from transfers')).rows).toHaveLength(0)
+      expect(await fails(() => fx.query(`insert into transfers (transfer_date, to_code, amount) values ('2026-11-15', 'joint', 1)`))).toMatch(/row-level security/)
+      expect((await fx.query(`update transfers set amount = 1 returning id`)).rows).toHaveLength(0)
+      expect((await fx.query(`delete from transfers returning id`)).rows).toHaveLength(0)
+    })
+    expect((await rows(`select count(*)::int as n from transfers`))[0].n).toBe(4)
+  })
+
+  it('"joint" through confirm_shopping_trip after 033 too; the November 2026 cards from the rows, with the app\'s own leftoverCard', async () => {
+    // Made-up expenses with the plan's totals (9P section 5): October
+    // leftover per person, November per payer; the 14/11 purchases as Joint.
+    await rows(
+      `insert into expenses (category_id, amount, description, paid_by, expense_date) values
+        ($1, 1000.00, 'TEST oct 1', $2, '2026-10-10'), ($1, 961.59, 'TEST oct 2', $3, '2026-10-10'),
+        ($1, 456.36, 'TEST nov 1', $2, '2026-11-10'), ($1, 625.25, 'TEST nov 2', $3, '2026-11-10'), ($1, 111.05, 'TEST shop A', $4, '2026-11-14')`,
+      [category, P1, P2, JOINT]
+    )
+    await member(() =>
+      fx.query(`select confirm_shopping_trip($1::jsonb)`, [
+        JSON.stringify({
+          id: '33000000-0000-4000-8000-0000000000c2', trip_date: '2026-11-14', at: '2026-11-14T10:00:00Z', source: 'money', shop_id: null, paid_by: JOINT, photo_ids: [],
+          items: [{ name: 'TEST shop B', category_id: null, subcategory_id: null, quantity: 1, unit: 'pcs', price: 35.76, price_qty: 1, price_unit: 'pcs', line_total: 35.76, payer: JOINT, expense_category_id: category, durable: true }],
+        }),
+      ])
+    )
+    await rows(`insert into income (amount, income_date, received_by) values (2906.36, '2026-10-05', $1), (1400.00, '2026-10-05', $2), (2648.00, '2026-11-05', $1), (1400.00, '2026-11-05', $2)`, [P1, P2])
+    const expenses = (await rows(`select id, expense_date::text, amount::float as amount, paid_by from expenses`)).map((e) => ({ ...e, ...Object.fromEntries(PEOPLE.map((c) => [partColumn(c), null])) }))
+    const income = await rows(`select id, income_date::text, amount::float as amount, received_by from income`)
+    const transfers = await rows(`select id, transfer_date::text, from_code, to_code, amount::float as amount from transfers`)
+    const view = { pill: 'month', from: 2026 * 12 + 10, months: 1, choice: null }
+    const inMonth = (d) => d >= '2026-11-01' && d < '2026-12-01'
+    const before = { expenses: expenses.filter((e) => e.expense_date < '2026-11-01'), income: income.filter((i) => i.income_date < '2026-11-01'), transfers: transfers.filter((t) => t.transfer_date < '2026-11-01') }
+    const sum = (list) => Math.round(list.reduce((s, r) => s + r.amount, 0) * 100) / 100
+    const cardOf = (who) => {
+      const i = sum(income.filter((r) => inMonth(r.income_date) && (who === 'all' || r.received_by === who)))
+      const e = sum(expenses.filter((r) => inMonth(r.expense_date) && (who === 'all' || r.paid_by === who)))
+      const c = card({ view, incomePerson: who, expensesPerson: who, income: i, expenses: e, before, transfers: transfers.filter((t) => inMonth(t.transfer_date)) })
+      return { income: i, expenses: e, balance: balanceCents({ ...c, income: i, expenses: e }) / 100, line: c.line?.amount ?? null, available: c.available }
+    }
+    expect(cardOf(JOINT)).toEqual({ income: 0, expenses: 146.81, balance: 525.67, line: null, available: { amount: 672.48, percent: 22, over: false } })
+    expect(cardOf(P2)).toEqual({ income: 1400, expenses: 625.25, balance: 893.16, line: 438.41, available: { amount: 1518.41, percent: 41, over: false } })
+    expect(cardOf(P1)).toEqual({ income: 2648, expenses: 456.36, balance: 3798, line: 1906.36, available: { amount: 4254.36, percent: 11, over: false } })
+    expect(cardOf('all')).toEqual({ income: 4048, expenses: 1228.42, balance: 5216.83, line: 2344.77, available: { amount: 6445.25, percent: 19, over: false } })
   })
 })

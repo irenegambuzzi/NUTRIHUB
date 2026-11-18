@@ -35,7 +35,11 @@ import { PERSON_OPTIONS, usePersonFilter } from '../lib/personFilter'
 import { defaultView, localDateString, viewRange } from '../lib/expensePeriods'
 import { useFirstMoneyMonth } from '../hooks/useFirstMoneyMonth'
 import { useLeftoverRows } from '../hooks/useLeftover'
-import { leftoverCard } from '../lib/leftover'
+import { balanceCents, leftoverCard } from '../lib/leftover'
+import { useTransfers } from '../hooks/useTransfers'
+import { transfersBetween } from '../lib/transfers'
+import { JOINT } from '../lib/payers'
+import { TransfersSection } from '../components/expenses/TransfersSection'
 import { currentExpensesSince } from '../lib/stores'
 import { sortNewestFirst } from '../lib/recency'
 import { categoryTotals, sumAmounts } from '../lib/moneySummary'
@@ -47,7 +51,7 @@ const expenseDate = (expense) => expense.expense_date
 export function ExpensesPage() {
   // Data is loaded from `since`; looking further back moves it earlier.
   const [since, setSince] = useState(currentExpensesSince)
-  const { expenses, categories, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
+  const { expenses, loaded: expensesLoaded, categories, updateExpense, addCategory, renameCategory, moveCategory, deleteCategory, deleteExpense } = useExpenses(since)
   // Each person's part of a Shared expense (plan 9K) once supabase/029 has
   // run: the expenses read then carry the part columns (with none loaded
   // yet, one expense is read to see).
@@ -199,6 +203,23 @@ export function ExpensesPage() {
   // What a person's total leaves out: the Shared expenses without parts.
   const partsNote = partsReady && PEOPLE.includes(paidByFilter) ? withoutPartsNote(periodExpenses) : ''
 
+  // The transfers (supabase/033, plan 9P K221–K231): the period's, and
+  // every one (null while they can't be trusted; [] before 033).
+  const { rows: transferRows, ready: transfersReady, known: knownTransfers } = useTransfers()
+  const periodTransfers = useMemo(() => (knownTransfers ? transfersBetween(knownTransfers, startDate, endDate) : null), [knownTransfers, startDate, endDate])
+  const shownTransfers = useMemo(() => transfersBetween(transferRows, startDate, endDate), [transferRows, startDate, endDate])
+
+  // The Expenses / Orders "Paid by" pills (one state, K2): Everyone and the
+  // accounts; "Shared" only in a period with a Shared expense (plan 9P
+  // K216, the K174 way). While the expenses are still loading a chosen
+  // "Shared" stays on offer; when it goes while chosen, the pill becomes
+  // "Everyone" as a tap on "Everyone" does (so the device remembers that).
+  const sharedExpensesShown = periodExpenses.some((e) => e.paid_by === 'shared') || (!expensesLoaded && paidByFilter === 'shared')
+  const expensePersonOptions = useMemo(() => (sharedExpensesShown ? PERSON_OPTIONS : PERSON_OPTIONS.filter((o) => o.value !== 'shared')), [sharedExpensesShown])
+  useEffect(() => {
+    if (!sharedExpensesShown && paidByFilter === 'shared') setPaidByFilter('all')
+  }, [sharedExpensesShown, paidByFilter, setPaidByFilter])
+
   const periodIncome = useMemo(() => income.filter((i) => i.income_date >= startDate && i.income_date < endDate), [income, startDate, endDate])
   const filteredIncome = useMemo(
     () => periodIncome.filter((i) => receivedByFilter === 'all' || i.received_by === receivedByFilter),
@@ -207,12 +228,22 @@ export function ExpensesPage() {
   // Income's "Shared" pill only in a period with Shared income (plan 9O
   // K174); while the income is still loading a chosen "Shared" stays on
   // offer. When it goes while chosen, the pill becomes "Everyone" exactly
-  // as a tap on "Everyone" does (so the phone remembers that too).
+  // as a tap on "Everyone" does (so the device remembers that too).
+  // "Joint" the same way, shown also with a transfer to or from Joint or a
+  // Joint starting balance in the period (plan 9P K216a, K222), so both
+  // pills can be on Joint: the Joint account's card.
   const sharedIncomeShown = periodIncome.some((i) => i.received_by === 'shared') || (!incomeLoaded && receivedByFilter === 'shared')
-  const incomePersonOptions = useMemo(() => (sharedIncomeShown ? PERSON_OPTIONS : PERSON_OPTIONS.filter((o) => o.value !== 'shared')), [sharedIncomeShown])
+  const jointIncomeShown =
+    periodIncome.some((i) => i.received_by === JOINT) ||
+    (periodTransfers ?? []).some((t) => t.from_code === JOINT || t.to_code === JOINT) ||
+    ((!incomeLoaded || !periodTransfers) && receivedByFilter === JOINT)
+  const incomePersonOptions = useMemo(
+    () => PERSON_OPTIONS.filter((o) => (o.value !== 'shared' || sharedIncomeShown) && (o.value !== JOINT || jointIncomeShown)),
+    [sharedIncomeShown, jointIncomeShown]
+  )
   useEffect(() => {
-    if (!sharedIncomeShown && receivedByFilter === 'shared') setReceivedByFilter('all')
-  }, [sharedIncomeShown, receivedByFilter, setReceivedByFilter])
+    if ((!sharedIncomeShown && receivedByFilter === 'shared') || (!jointIncomeShown && receivedByFilter === JOINT)) setReceivedByFilter('all')
+  }, [sharedIncomeShown, jointIncomeShown, receivedByFilter, setReceivedByFilter])
 
   const total = sumAmounts(filteredExpenses)
   const incomeTotal = sumAmounts(filteredIncome)
@@ -220,12 +251,40 @@ export function ExpensesPage() {
   // The leftover from the months before the period (plan 9O K164–K172):
   // computed from every row before the period's first day (read with only
   // what it needs, kept live), only shown, never saved. Week: nothing read.
-  // Until those rows are read (or offline): no line and no bar.
-  const before = useLeftoverRows(startDate, { needed: view.pill !== 'week', partsReady })
-  const { line: leftoverLine, available } = useMemo(
-    () => leftoverCard({ view, incomePerson: receivedByFilter, expensesPerson: paidByFilter, income: incomeTotal, expenses: total, before, partsReady: partsReady === true }),
-    [view, receivedByFilter, paidByFilter, incomeTotal, total, before, partsReady]
+  // Until those rows are read (or offline): no line and no bar. The
+  // transfers before the period count too (plan 9P K221–K224); until they
+  // are known: no line, no bar, no transfer number.
+  const beforeRows = useLeftoverRows(startDate, { needed: view.pill !== 'week', partsReady })
+  const before = useMemo(
+    () => (beforeRows && knownTransfers ? { ...beforeRows, transfers: knownTransfers.filter((t) => t.transfer_date < startDate) } : null),
+    [beforeRows, knownTransfers, startDate]
   )
+  const { line: leftoverLine, available, moves } = useMemo(
+    () =>
+      leftoverCard({
+        view,
+        incomePerson: receivedByFilter,
+        expensesPerson: paidByFilter,
+        income: incomeTotal,
+        expenses: total,
+        before,
+        transfers: periodTransfers,
+        partsReady: partsReady === true,
+      }),
+    [view, receivedByFilter, paidByFilter, incomeTotal, total, before, periodTransfers, partsReady]
+  )
+
+  // "Joint now €…" in Transfers: Joint's BALANCE at the end of the period
+  // on screen, as the Joint card (both pills on Joint) computes it; not
+  // shown while anything it needs isn't known.
+  const jointNow = useMemo(() => {
+    if (!periodTransfers || (view.pill !== 'week' && !before)) return null
+    const sumOf = (rows) => rows.reduce((s, r) => s + Math.round((Number(r.amount) || 0) * 100), 0) / 100
+    const jointIncome = sumOf(periodIncome.filter((i) => i.received_by === JOINT))
+    const jointExpenses = sumOf(periodExpenses.filter((e) => e.paid_by === JOINT))
+    const card = leftoverCard({ view, incomePerson: JOINT, expensesPerson: JOINT, income: jointIncome, expenses: jointExpenses, before, transfers: periodTransfers, partsReady: partsReady === true })
+    return balanceCents({ ...card, income: jointIncome, expenses: jointExpenses }) / 100
+  }, [view, before, periodTransfers, periodIncome, periodExpenses, partsReady])
 
   const totals = useMemo(() => categoryTotals(filteredExpenses, mainOf), [filteredExpenses, mainOf])
 
@@ -335,6 +394,7 @@ export function ExpensesPage() {
           expensesNote={partsNote}
           leftover={leftoverLine}
           available={available}
+          moves={moves}
         />
       </div>
 
@@ -358,9 +418,12 @@ export function ExpensesPage() {
         deleteCategory={deleteIncomeCategory}
       />
 
+      <TransfersSection rows={shownTransfers} allRows={transferRows} ready={transfersReady} jointNow={jointNow} />
+
       <OrdersSection
         person={paidByFilter}
         onPerson={setPaidByFilter}
+        personOptions={expensePersonOptions}
         shopById={shopById}
         categories={categories}
         mainCategories={mainCategories}
@@ -393,7 +456,7 @@ export function ExpensesPage() {
           </div>
         </div>
 
-        <PersonSelector value={paidByFilter} onChange={setPaidByFilter} label="Paid by" />
+        <PersonSelector value={paidByFilter} onChange={setPaidByFilter} label="Paid by" options={expensePersonOptions} />
 
         {flow.ready && (
           <button type="button" onClick={() => setBulkStore(true)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">

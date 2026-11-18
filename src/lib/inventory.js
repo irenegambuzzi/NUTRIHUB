@@ -348,8 +348,10 @@ export async function syncShoppingForItem(item) {
   await removeSpareEntries(item.id)
 }
 
-// An automatic SHOP entry for a HOME item: its name, category, last price
-// and payer.
+// An automatic SHOP entry for a HOME item: its name, category and last
+// price. Who pays is never taken from the item (plan 9P K226): the card is
+// "not chosen yet" (stored as 'shared', the column's default, K225) and is
+// asked at "Confirm purchase".
 function autoEntry(item, quantity, unit) {
   return {
     name: item.name,
@@ -358,7 +360,7 @@ function autoEntry(item, quantity, unit) {
     quantity,
     unit,
     ...priceFields(item),
-    payer: item.payer || 'shared',
+    payer: 'shared',
     completed: false,
     pantry_item_id: item.id,
     auto_generated: true,

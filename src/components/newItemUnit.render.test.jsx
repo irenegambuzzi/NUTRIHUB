@@ -83,7 +83,7 @@ const text = () => document.body.textContent
 const toastTexts = () => getToasts().map((t) => t.message)
 
 describe('SHOP Confirm purchase: "Count it at home in" (K1–K4)', () => {
-  const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'pack', price: 3, price_qty: 1, price_unit: 'pack', payer: 'shared', in_cart: true, category_id: 'beverages', pantry_item_id: null, ...fields })
+  const entry = (fields) => ({ id: fields.name, quantity: 1, unit: 'pack', price: 3, price_qty: 1, price_unit: 'pack', payer: 'joint', in_cart: true, category_id: 'beverages', pantry_item_id: null, ...fields })
   const confirm = (cartItems, props = {}) =>
     render(
       <ConfirmPurchase
@@ -268,7 +268,7 @@ describe('SHOP Confirm purchase: a total that can\'t be worked out (K9)', () => 
       />
     )
   const button = () => screen.getByRole('button', { name: /Confirm purchase · / })
-  const tuna = (fields = {}) => ({ id: 'tuna-entry', name: 'Tuna', quantity: 2, unit: 'pack', price: 0.75, price_qty: 1, price_unit: 'pcs', payer: 'shared', in_cart: true, category_id: 'canned', pantry_item_id: 'tuna', ...fields })
+  const tuna = (fields = {}) => ({ id: 'tuna-entry', name: 'Tuna', quantity: 2, unit: 'pack', price: 0.75, price_qty: 1, price_unit: 'pcs', payer: 'joint', in_cart: true, category_id: 'canned', pantry_item_id: 'tuna', ...fields })
 
   it('"2 pack" at €0.75 per pcs with no usual size: "?" — Confirm blocked until the total is typed', async () => {
     confirm([tuna()])
@@ -292,9 +292,16 @@ describe('SHOP Confirm purchase: a total that can\'t be worked out (K9)', () => 
   })
 })
 
+const withPayer = (ui) => {
+  const view = render(ui)
+  fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: 'joint' } })
+  return view
+}
+
 describe('MONEY "+ Add expense": "Count it at home in" (K1–K4, K10)', () => {
+  // No default payer (plan 9P K217): the form chooses one first.
   const form = (props = {}) =>
-    render(
+    withPayer(
       <>
         <PurchaseForm
           expenseCategories={[{ id: 'groceries', name: 'Groceries', parent_id: null }]}

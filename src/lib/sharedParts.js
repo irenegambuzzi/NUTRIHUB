@@ -17,8 +17,10 @@ import { round2, spreadCoupon } from './discounts'
 
 export const SHARED = 'shared'
 // The two people, in the order of PAID_BY_OPTIONS: the cents left over
-// always go to the second one.
-export const PEOPLE = PAID_BY_OPTIONS.filter((o) => o.value !== SHARED).map((o) => o.value)
+// always go to the second one. Only the payers of kind 'person': "Joint"
+// (an account, plan 9P K210) and "Shared" are never one of them, so the
+// part columns and fields stay the two people's (rule 9K).
+export const PEOPLE = PAID_BY_OPTIONS.filter((o) => o.kind === 'person').map((o) => o.value)
 const [FIRST, SECOND] = PEOPLE
 
 export const payerLabel = (code) => PAID_BY_OPTIONS.find((o) => o.value === code)?.label ?? code

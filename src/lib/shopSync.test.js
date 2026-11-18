@@ -70,7 +70,8 @@ describe('a group row from an older app version and its variants on the SHOP lis
     fakeDb(tables)
     for (const item of tables.pantry_items) await syncShoppingForItem(item)
     expect(listed(tables)).toEqual(['Pringles'])
-    expect(tables.grocery_items[0]).toMatchObject({ name: 'Pringles', auto_generated: true, quantity: 1, unit: 'pcs', price: 2.49, payer: PERSON, category_id: 'snacks' })
+    // Never the item's last payer: "not chosen yet" (plan 9P K225, K226).
+    expect(tables.grocery_items[0]).toMatchObject({ name: 'Pringles', auto_generated: true, quantity: 1, unit: 'pcs', price: 2.49, payer: 'shared', category_id: 'snacks' })
   })
 
   it('a group row judged alone writes nothing, whatever its stock and minimum', async () => {

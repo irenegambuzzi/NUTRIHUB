@@ -16,7 +16,8 @@ async function createExpense(item, amount, when = new Date()) {
   const data = must(
     await supabase
       .from('expenses')
-      .insert([{ category_id: categoryId, amount, description: item.name, paid_by: item.payer || 'shared', expense_date: localDateString(when) }])
+      // The card's own payer, never a default of the app's (plan 9P K217).
+      .insert([{ category_id: categoryId, amount, description: item.name, paid_by: item.payer, expense_date: localDateString(when) }])
       .select()
       .single()
   )
@@ -52,6 +53,7 @@ export function useGroceryItems() {
       priceUnit = null,
       quantity = 1,
       unit = DEFAULT_UNIT,
+      // 'shared' = "not chosen yet" on a SHOP card (plan 9P K225).
       payer = 'shared',
       pantryItemId = null,
       oneTime = false,

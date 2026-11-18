@@ -79,11 +79,13 @@ describe('leftoverCard (K166–K172)', () => {
   })
 
   it('other pill combinations, the Week pill, rows not read: nothing', () => {
-    const none = { line: null, available: null }
+    const none = { line: null, available: null, moves: null }
+    const noTransfers = { netCents: 0, lines: [] }
     expect(card({ incomePerson: P1, expensesPerson: P2 })).toEqual(none)
     expect(card({ expensesPerson: 'shared' })).toEqual(none)
-    expect(card({ view: defaultView('week', new Date(2026, 10, 15)) })).toEqual(none)
-    expect(card({ before: null })).toEqual(none)
+    expect(card({ view: defaultView('week', new Date(2026, 10, 15)) })).toEqual({ ...none, moves: noTransfers })
+    expect(card({ before: null })).toEqual({ ...none, moves: noTransfers })
+    expect(card({ transfers: null })).toEqual(none)
   })
 
   it('a leftover ≤ 0: no line; the bar counts only the income (K166, K172)', () => {

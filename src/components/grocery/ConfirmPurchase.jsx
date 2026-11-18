@@ -18,7 +18,7 @@ import { ShopPicker } from '../expenses/ShopPicker'
 import { SearchBox } from '../ui/SearchBox'
 import { cardMatchesSearch } from '../../lib/grocerySearch'
 import { cn } from '../../lib/cn'
-import { PAID_BY_OPTIONS } from '../../data/constants'
+import { ACCOUNT_OPTIONS, chosenPayer } from '../../lib/payers'
 import { showToast } from '../../lib/feedback'
 import { decimalProblem, parseDecimal } from '../../lib/decimal'
 import { formatUnitPrice, money } from '../../lib/pricing'
@@ -236,13 +236,18 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
   const unknown = items.filter((i) => totalOf(i) === null).length
   // Cards (not lines) left for another trip.
   const leftInCart = allLines.filter((l) => !inTrip(l.item)).length
-  // Who paid for the whole trip; null when it was shared out differently.
-  const payers = new Set(items.map((i) => i.payer || 'shared'))
-  const tripPayer = payers.size === 1 ? [...payers][0] : null
-  // The Shared lines that cost something, and what each person paid of
-  // them: required, checked again whenever a price, discount, coupon or
-  // payer changes. No Shared line → no fields (and what was typed goes).
-  const sharedOf = (trip, priced) => trip.filter((i) => (i.payer || SHARED) === SHARED && priced.byItem.get(i.id)?.paid > 0)
+  // Who paid (plan 9P K217, K225): only the three accounts count as
+  // chosen; a card on "Shared" (the database's default) or empty is "not
+  // chosen yet". Confirm waits until every card in this trip has one.
+  const tripCards = allLines.filter((l) => inTrip(l.item))
+  const noPayerCount = tripCards.filter((l) => !chosenPayer(l.item.payer)).length
+  // The payer of the whole trip, lit in "Paid by (everything)" only when
+  // every card in it has that one.
+  const payers = new Set(tripCards.map((l) => chosenPayer(l.item.payer)))
+  const tripPayer = payers.size === 1 ? [...payers][0] || null : null
+  // The Shared lines (plan 9K): none any more — a card's "Shared" means
+  // "not chosen yet" (K225), so the parts box never shows here.
+  const sharedOf = () => []
   const sharedTotalOf = (shared, priced) => round2(shared.reduce((sum, i) => sum + priced.byItem.get(i.id).paid, 0))
   const sharedItems = sharedOf(items, pricing)
   const sharedTotal = sharedTotalOf(sharedItems, pricing)
@@ -319,6 +324,8 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const confirmedLines = tripLinesOf(itemsFor(latest).map(lineFor))
     const confirmed = confirmedLines.map((l) => l.item)
     if (confirmedLines.length === 0 || confirmedLines.some((l) => !l.ready) || twiceProblems(confirmedLines).some(Boolean)) return
+    // Never a line without a payer, nor one on "Shared" (K217, K225).
+    if (confirmed.some((i) => !chosenPayer(i.payer))) return
     const confirmedPricing = purchasePricing(confirmed, totalOf, discounts, coupon)
     if (confirmedPricing.priced.problem) return
     if (confirmed.some((i) => totalOf(i) === null)) return
@@ -343,7 +350,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
     const partsByItem = spread.length ? new Map(confirmedShared.map((i, k) => [i.id, spread[k]])) : null
     const ids = new Set(confirmed.map((i) => i.id))
     const patches = cartItems.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, patch: editPatch(item, latest[item.id]) })).filter((p) => Object.keys(p.patch).length)
-    const confirmedPayers = new Set(confirmed.map((i) => i.payer || 'shared'))
+    const confirmedPayers = new Set(confirmed.map((i) => i.payer))
     setBusy(true)
     const { error, unseen: found } = await confirmPurchase({
       id: tripId,
@@ -445,11 +452,14 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           </div>
           <div>
             <Label>Paid by (everything)</Label>
-            <div className="flex gap-1 flex-wrap">
-              {PAID_BY_OPTIONS.map((o) => (
+            {/* The accounts only (K216); sets every card in this trip, also
+                the ones hidden by the search (K203). */}
+            <div role="group" aria-label="Paid by (everything)" className="flex gap-1 flex-wrap">
+              {ACCOUNT_OPTIONS.map((o) => (
                 <button
                   key={o.value}
                   type="button"
+                  aria-pressed={tripPayer === o.value}
                   onClick={() => {
                     const trip = cartItems.filter(inTrip)
                     trip.forEach((i) => edit(i.id, { payer: o.value }))
@@ -560,6 +570,14 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
               <AlertTriangle size={12} /> {NO_TOTAL_TEXT}
             </p>
           )}
+          {noPayerCount > 0 && (
+            <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle size={12} />{' '}
+              {noPayerCount === tripCards.length
+                ? 'Choose who paid: tap a name under "Paid by (everything)".'
+                : `Choose who paid for ${noPayerCount} item${noPayerCount === 1 ? '' : 's'}: tap a name under "Paid by (everything)" or on each card.`}
+            </p>
+          )}
           {open > 0 && (
             <p className="text-[11px] text-amber-300 flex items-center gap-1.5">
               <AlertTriangle size={12} /> Answer the {open === 1 ? 'question' : `${open} questions`} above to confirm.
@@ -591,7 +609,7 @@ export function ConfirmPurchase({ cartItems, pantryItems, categoryName, totalOf,
           <button
             type="button"
             onClick={confirm}
-            disabled={busy || open > 0 || unknown > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || Boolean(splitCheck?.problem) || lines.length === 0}
+            disabled={busy || noPayerCount > 0 || open > 0 || unknown > 0 || badDates.size > 0 || badNumbers.size > 0 || Boolean(pricing.priced.problem) || Boolean(splitCheck?.problem) || lines.length === 0}
             className="w-full py-3 rounded-2xl bg-[var(--color-primary)] text-white font-bold flex items-center justify-center gap-2 disabled:opacity-40"
           >
             <Check size={18} /> {busy ? 'Saving…' : `Confirm purchase · ${money(total)}`}
@@ -780,7 +798,8 @@ function PurchaseLine({ line, twice = '', answer, total, discount, priced, onDis
         </div>
         <div className="ml-auto">
           <PayerPicker
-            value={item.payer || 'shared'}
+            value={item.payer}
+            label={`Paid by for ${item.name}`}
             onChange={(value) => {
               onEdit({ payer: value })
               updatePayer(item, value)

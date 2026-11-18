@@ -39,9 +39,11 @@ const both = [
 const withParts = (amount, a, b, extra = {}) => ({ id: 'e1', paid_by: 'shared', amount, [partColumn(P1)]: a, [partColumn(P2)]: b, ...extra })
 
 describe('who the parts are for', () => {
-  it('the two people are the payers of PAID_BY_OPTIONS other than Shared, and name the columns', () => {
-    expect(PEOPLE).toEqual(PAID_BY_OPTIONS.map((o) => o.value).filter((v) => v !== 'shared'))
+  it('the two people are the payers of kind "person" of PAID_BY_OPTIONS (never Joint, never Shared), and name the columns', () => {
+    expect(PEOPLE).toEqual(PAID_BY_OPTIONS.filter((o) => o.kind === 'person').map((o) => o.value))
     expect(PEOPLE).toHaveLength(2)
+    expect(PEOPLE).not.toContain('joint')
+    expect(PEOPLE).not.toContain('shared')
     expect(partColumn(P1)).toBe(`part_${P1}`)
     expect(PARTS_NOTICE).toBe('This needs the database update supabase/029_shared_parts.sql')
   })

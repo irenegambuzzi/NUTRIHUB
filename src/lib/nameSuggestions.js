@@ -13,7 +13,9 @@ export const suggestionFrom = (row, source) => ({
   price: Number(row.price) > 0 ? Number(row.price) : 0,
   priceQty: Number(row.price) > 0 ? row.price_qty ?? null : null,
   priceUnit: Number(row.price) > 0 ? row.price_unit ?? null : null,
-  payer: row.payer || 'shared',
+  // Who pays is never suggested (plan 9P K226): a new card is "not chosen
+  // yet" until "Confirm purchase".
+  payer: '',
   pantryItemId: source === 'pantry' ? row.id : row.pantry_item_id ?? null,
   source,
 })

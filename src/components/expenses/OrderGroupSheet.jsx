@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom'
 import { Check, Layers, LogOut, Ungroup, X } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
-import { Label, Select } from '../ui/Field'
+import { Label } from '../ui/Field'
 import { DiscountField } from '../ui/DiscountField'
 import { ShopPicker } from './ShopPicker'
+import { PayerSelect } from './PayerSelect'
 import { PAID_BY_OPTIONS } from '../../data/constants'
+import { PAYER_MISSING, payerOptionsFor, startingPayer } from '../../lib/payers'
 import { confirmDialog } from '../../lib/feedback'
 import { couponText, discountProblem, parseDiscount } from '../../lib/discounts'
 import { ORDER_STATUS } from '../../lib/orders'
@@ -67,7 +69,9 @@ function GroupForm({ group, members, label, onClose }) {
   const [shopId, setShopId] = useState(group.shop_id ?? '')
   const [orderDate, setOrderDate] = useState(group.order_date)
   const [dateValid, setDateValid] = useState(true)
-  const [paidBy, setPaidBy] = useState(group.paid_by)
+  // The accounts, plus "Shared" only for a group that is Shared (plan 9P K216).
+  const payerOptions = payerOptionsFor(group.paid_by)
+  const [paidBy, setPaidBy] = useState(() => startingPayer(group.paid_by))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -79,7 +83,7 @@ function GroupForm({ group, members, label, onClose }) {
 
   const save = async () => {
     if (busy) return
-    const problem = typedProblem || (!shopId ? 'Choose the store of the order.' : !orderDate || !dateValid ? 'Fix the order date first (DD/MM/YYYY).' : '')
+    const problem = typedProblem || (!shopId ? 'Choose the store of the order.' : !orderDate || !dateValid ? 'Fix the order date first (DD/MM/YYYY).' : !paidBy ? PAYER_MISSING : '')
     setError(problem)
     if (problem) return
     setBusy(true)
@@ -167,13 +171,7 @@ function GroupForm({ group, members, label, onClose }) {
           </div>
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} aria-label="Paid by">
-              {PAID_BY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            <PayerSelect value={paidBy} onChange={(v) => { setPaidBy(v); setError('') }} options={payerOptions} label="Paid by" />
           </div>
         </div>
         {placeChanged && (

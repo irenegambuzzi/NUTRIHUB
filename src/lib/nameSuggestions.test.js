@@ -11,7 +11,7 @@ const list = [
 ]
 
 describe('buildSuggestions', () => {
-  it('fills in what the pantry knows: category, unit, last price, payer', () => {
+  it('fills in what the pantry knows: category, unit, last price — never its payer (plan 9P K226)', () => {
     const milk = buildSuggestions(pantry, list).find((s) => s.name === 'Milk')
     expect(milk).toMatchObject({
       categoryId: 'beverages',
@@ -20,7 +20,7 @@ describe('buildSuggestions', () => {
       price: 1.2,
       priceQty: 1,
       priceUnit: 'btl',
-      payer: 'akbar',
+      payer: '',
       pantryItemId: 'p1',
       source: 'pantry',
     })
@@ -31,8 +31,9 @@ describe('buildSuggestions', () => {
     expect(names).toEqual(['Milk', 'Oat milk', 'Vacuum cleaner'])
   })
 
-  it('falls back to "shared" and no price', () => {
-    expect(buildSuggestions(pantry, []).find((s) => s.name === 'Oat milk')).toMatchObject({ payer: 'shared', price: 0, priceQty: null })
+  it('no payer and no price', () => {
+    expect(buildSuggestions(pantry, []).find((s) => s.name === 'Oat milk')).toMatchObject({ payer: '', price: 0, priceQty: null })
+    expect(buildSuggestions([], list).find((s) => s.name === 'Vacuum cleaner')).toMatchObject({ payer: '' })
   })
 })
 

@@ -22,6 +22,7 @@ vi.mock('../lib/stores', async (original) => {
     expensesBefore: () => notRead,
     incomeBefore: () => notRead,
     pantryStore: fake(() => []),
+    transferStore: fake(() => []),
     groceryStore: fake(() => []),
     orderStore: fake(() => []),
     budgetMapStore: fake(() => []),
@@ -318,8 +319,10 @@ describe('Money → section Income: "Income (N)" and the "Shared" pill (K174)', 
     expect(within(chip('Income')).getByText('€2000.00')).toBeTruthy()
     expect(within(receivedBy()).queryByRole('button', { name: SHARED })).toBeNull()
     expect(within(receivedBy()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Everyone', L1, L2])
-    // The "Paid by" pills keep "Shared".
-    expect(within(screen.getByRole('group', { name: 'Paid by' })).getByRole('button', { name: SHARED })).toBeTruthy()
+    // The "Paid by" pills: the accounts; "Shared" only with a Shared expense
+    // in the period (plan 9P K216) — none here.
+    expect(within(screen.getByRole('group', { name: 'Paid by' })).queryByRole('button', { name: SHARED })).toBeNull()
+    expect(within(screen.getByRole('group', { name: 'Paid by' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['Everyone', ...PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.label)])
 
     data.income = [...octoberIncome(), { id: 'i3', amount: 50, income_date: '2026-10-15', category_id: 'other', received_by: 'shared', source: 'TEST shared' }]
     rerender(<ExpensesPage />)

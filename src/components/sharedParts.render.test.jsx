@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 // Round 9K: "Shared" with each person's part on screen — Money "Add
 // expense" (one expense and a purchase with a coupon), "Edit expense",
@@ -32,6 +32,7 @@ vi.mock('../lib/stores', async (original) => {
     expensesBefore: () => notRead,
     incomeBefore: () => notRead,
     pantryStore: fake(() => data.pantry),
+    transferStore: fake(() => []),
     groceryStore: fake(() => []),
     orderStore: fake(() => []),
     budgetMapStore: fake(() => []),
@@ -147,92 +148,32 @@ const purchaseForm = (partsReady = true, checkParts) =>
     />
   )
 
-describe('Money → Expenses → "+ Add expense": one Shared expense', () => {
-  it.each(both)('the fields are under "Paid by", empty; saving is refused until they are typed; typing %s 100 fills the other with 168.58', async (p100, p168) => {
-    purchaseForm()
-    type('Name', 'SPESE CONDOMINIO')
+// Plan 9P K216 / K217: "Shared" is not used for new data. "+ Add expense"
+// offers the accounts only, starts on "Choose…", and never shows the parts
+// fields (the parts stay for the Shared expenses that already exist: "Edit
+// expense" below, and the personal pills).
+describe('Money → Expenses → "+ Add expense": no Shared for new data (K216, K217)', () => {
+  it.each([true, false])('partsReady %s: "Paid by" offers the accounts only, no parts fields; saving waits for a payer', async (ready) => {
+    purchaseForm(ready)
+    type('Name', 'TEST condo fees')
     type('Price', '268,58')
-    expect(screen.getByLabelText('Paid by').value).toBe('shared')
-    expect(field(P1).value).toBe('')
-    expect(field(P2).value).toBe('')
-    expect(screen.getByText('What each one paid of €268.58.')).toBeTruthy()
-    // Right under "Paid by" (before the item rows).
-    const group = screen.getByRole('group', { name: 'What each one paid' })
-    expect(screen.getByLabelText('Paid by').compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(group.compareDocumentPosition(screen.getByLabelText('Name')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
-    expect(addExpenseOnce).not.toHaveBeenCalled()
-    expect(screen.getAllByText(`Type what ${L1} and ${L2} paid.`).length).toBeGreaterThan(0)
-
-    typeIn(field(p100), '100')
-    expect(field(p168).value).toBe('168.58')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 268.58, paidBy: 'shared', parts: { [p100]: 100, [p168]: 168.58 } })
-  })
-
-  it('"Split equally" fills both (the odd cent to the second); parts not adding up are refused, and "Put the difference on …" fixes it', async () => {
-    purchaseForm()
-    type('Name', 'Electricity')
-    type('Price', '10,01')
-    fireEvent.click(screen.getByRole('button', { name: 'Split equally' }))
-    expect([field(P1).value, field(P2).value]).toEqual(['5.00', '5.01'])
-    typeIn(field(P1), '4')
-    typeIn(field(P2), '5')
-    expect(screen.getAllByText('The parts add up to €9.00, not €10.01.').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €10.01' }))
-    expect(addExpenseOnce).not.toHaveBeenCalled()
-    // Typed last on the second: the difference goes on the first.
-    fireEvent.click(screen.getByRole('button', { name: `Put the difference on ${L1}` }))
-    expect(field(P1).value).toBe('5.01')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €10.01' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0].parts).toEqual({ [P1]: 5.01, [P2]: 5 })
-  })
-
-  it('a part of €0 is allowed, with the hint; nothing changes by itself', async () => {
-    purchaseForm()
-    type('Name', 'Water bill')
-    type('Price', '42,10')
-    typeIn(field(P2), '0')
-    expect(field(P1).value).toBe('42.10')
-    expect(screen.getByText(`Only ${L1} paid — you could choose Paid by ${L1} instead.`)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €42.10' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ paidBy: 'shared', parts: { [P1]: 42.1, [P2]: 0 } })
-  })
-
-  it('Paid by a person: no fields, the parts typed are cleared, saved as before', async () => {
-    purchaseForm()
-    type('Name', 'Haircut')
-    type('Price', '25')
-    typeIn(field(P1), '10')
-    type('Paid by', P2)
-    expect(screen.queryByLabelText(`${L1} paid (€)`)).toBeNull()
-    type('Paid by', 'shared')
-    expect(field(P1).value).toBe('')
-    type('Paid by', P2)
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €25.00' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ paidBy: P2 })
-    expect('parts' in addExpenseOnce.mock.calls[0][0]).toBe(false)
-  })
-
-  it('before 029: no fields, no requirement — Shared is saved exactly as before', async () => {
-    purchaseForm(false)
-    type('Name', 'SPESE CONDOMINIO')
-    type('Price', '268,58')
+    const select = screen.getByLabelText('Paid by')
+    expect(select.value).toBe('')
+    expect([...select.options].map((o) => o.value)).toEqual(['', ...PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.value)])
     expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Split equally' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
+    expect(addExpenseOnce).not.toHaveBeenCalled()
+    expect(screen.getByText('Choose who paid.')).toBeTruthy()
+    type('Paid by', P2)
+    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
     await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 268.58, paidBy: 'shared' })
+    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 268.58, paidBy: P2 })
     expect('parts' in addExpenseOnce.mock.calls[0][0]).toBe(false)
   })
 })
 
-describe('Money → "+ Add expense": a purchase of several rows with a coupon — one split for the whole receipt', () => {
+describe('Money → "+ Add expense": a purchase of several rows with a coupon', () => {
   const fill = () => {
     purchaseForm()
     type('Name', 'Cat litter')
@@ -246,41 +187,6 @@ describe('Money → "+ Add expense": a purchase of several rows with a coupon �
     type('Price of item 3', '20')
     type('Purchase discount', '5')
   }
-
-  it('€38.40 −30% on one, coupon −€5 → €33.40 to split; typed 20.00 → 13.40; each line keeps its share (each adds up, totals as typed)', async () => {
-    fill()
-    expect(screen.getByText('What each one paid of €33.40.')).toBeTruthy()
-    typeIn(field(P1), '20')
-    expect(field(P2).value).toBe('13.40')
-    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €33.40' }))
-    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
-    const { items } = recordMoneyPurchase.mock.calls[0][0].payload
-    expect(items.map((i) => [i.name, i.line_total, i[`part_${P1}`], i[`part_${P2}`]])).toEqual([
-      ['Cat litter', 8.7, 5.21, 3.49],
-      ['Sun cream', 7.31, 4.38, 2.93],
-      ['Dinner', 17.39, 10.41, 6.98],
-    ])
-    for (const i of items) expect(round(i[`part_${P1}`] + i[`part_${P2}`])).toBe(i.line_total)
-    expect(round(items.reduce((s, i) => s + i[`part_${P1}`], 0))).toBe(20)
-    expect(round(items.reduce((s, i) => s + i[`part_${P2}`], 0))).toBe(13.4)
-  })
-
-  it('the coupon changes after the parts were typed: refused until they add up again; the one-tap fix works', async () => {
-    fill()
-    typeIn(field(P2), '13,40')
-    expect(field(P1).value).toBe('20.00')
-    type('Purchase discount', '6')
-    expect(screen.getAllByText('The parts add up to €33.40, not €32.40.').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €32.40' }))
-    expect(recordMoneyPurchase).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: `Put the difference on ${L1}` }))
-    expect(field(P1).value).toBe('19.00')
-    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €32.40' }))
-    await waitFor(() => expect(recordMoneyPurchase).toHaveBeenCalledTimes(1))
-    const { items } = recordMoneyPurchase.mock.calls[0][0].payload
-    expect(round(items.reduce((s, i) => s + i[`part_${P1}`], 0))).toBe(19)
-    expect(round(items.reduce((s, i) => s + i[`part_${P2}`], 0))).toBe(13.4)
-  })
 
   it('paid by one person: no fields and no parts on any line', async () => {
     fill()
@@ -360,16 +266,21 @@ describe('Money → Expenses → a row → pencil "Edit expense"', () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ paidBy: P1, parts: null })
   })
 
-  it('a person → Shared: the parts are required', async () => {
-    const onSubmit = edit({ ...base, paid_by: P2, amount: 54.2, description: 'Pharmacy' })
-    type('Paid by', 'shared')
-    save()
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(screen.getByText(`Type what ${L1} and ${L2} paid.`)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Split equally' }))
-    save()
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ paidBy: 'shared', parts: { [P1]: 27.1, [P2]: 27.1 } })
+  // Plan 9P K216: only a Shared expense keeps "Shared" on offer; a person's
+  // or a Joint expense can't become Shared.
+  it('a Shared expense offers the accounts + Shared; a person\'s or a Joint expense offers no Shared', () => {
+    const accounts = PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.value)
+    edit(base)
+    expect([...screen.getByLabelText('Paid by').options].map((o) => o.value)).toEqual([...accounts, 'shared'])
+    cleanup()
+    for (const payer of [P2, 'joint']) {
+      edit({ ...base, paid_by: payer, amount: 54.2, description: 'TEST pharmacy' })
+      const select = screen.getByLabelText('Paid by')
+      expect(select.value).toBe(payer)
+      expect([...select.options].map((o) => o.value)).toEqual(accounts)
+      expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
+      cleanup()
+    }
   })
 
   it('before 029: no fields, and nothing about parts is sent', async () => {
@@ -405,56 +316,46 @@ describe('Shop → "Confirm purchase": lines paid by each person and Shared line
     )
   const confirmButton = () => screen.getByRole('button', { name: /^Confirm purchase · / })
 
-  it('one box for the 2 Shared lines; Confirm waits for the parts; only the Shared lines get theirs (each adds up)', async () => {
-    screenFor()
-    expect(screen.getByText(`What each one paid of the 2 ${SHARED} items (€19.79).`)).toBeTruthy()
+  // Plan 9P K225: a card on "Shared" is "not chosen yet" — no parts box any
+  // more; Confirm waits until every card has one of the three accounts.
+  it.each([true, false])('partsReady %s: the 2 cards on Shared are "not chosen": nothing lit on them, no box, Confirm waits with the line', (ready) => {
+    screenFor(ready)
+    expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
+    expect(screen.queryByText(/What each one paid/)).toBeNull()
+    for (const name of ['Olive oil', 'Coffee']) {
+      const pills = screen.getByRole('group', { name: `Paid by for ${name}` })
+      expect(within(pills).getAllByRole('button').some((b) => b.getAttribute('aria-pressed') === 'true')).toBe(false)
+      expect(within(pills).queryByRole('button', { name: SHARED })).toBeNull()
+    }
+    expect(screen.getByText('Choose who paid for 2 items: tap a name under "Paid by (everything)" or on each card.')).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
-    expect(screen.getAllByText(`Type what ${L1} and ${L2} paid.`).length).toBeGreaterThan(0)
-    typeIn(field(P1), '10')
-    expect(field(P2).value).toBe('9.79')
-    expect(confirmButton().disabled).toBe(false)
+  })
+
+  it('a tap on a card\'s pill chooses it; the last one chosen frees Confirm; nothing is split', async () => {
+    screenFor()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Paid by for Olive oil' })).getByRole('button', { name: L1 }))
+    expect(screen.getByText('Choose who paid for 1 item: tap a name under "Paid by (everything)" or on each card.')).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Paid by for Coffee' })).getByRole('button', { name: 'Joint' }))
+    expect(screen.queryByText(/^Choose who paid/)).toBeNull()
     fireEvent.click(confirmButton())
     await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
     const args = confirmPurchase.mock.calls[0][0]
-    expect([...args.partsByItem.keys()]).toEqual(['oil', 'coffee'])
+    expect(args.partsByItem).toBeNull()
     const items = confirmationPayload({ ...args, expenseCategoryFor: () => 'groceries' }).items
-    const byId = Object.fromEntries(items.map((i) => [i.grocery_item_id, i]))
-    expect(byId.yogurt[`part_${P1}`]).toBeUndefined()
-    expect(byId.bulb[`part_${P1}`]).toBeUndefined()
-    for (const id of ['oil', 'coffee']) expect(round(byId[id][`part_${P1}`] + byId[id][`part_${P2}`])).toBe(byId[id].line_total)
-    expect(round(byId.oil[`part_${P1}`] + byId.coffee[`part_${P1}`])).toBe(10)
-    expect(round(byId.oil[`part_${P2}`] + byId.coffee[`part_${P2}`])).toBe(9.79)
+    expect(Object.fromEntries(items.map((i) => [i.grocery_item_id, i.payer]))).toEqual({ oil: P1, yogurt: P1, coffee: 'joint', bulb: P2 })
   })
 
-  it('a discount after the parts were typed: refused until they add up; "Put the difference on …" fixes it', async () => {
+  it('"Paid by (everything)" → a person: every card takes it, nothing lit before; Confirm sends it on every line', async () => {
     screenFor()
-    typeIn(field(P1), '10')
-    type('Discount for Olive oil', '10')
-    expect(screen.getAllByText('The parts add up to €19.79, not €18.89.').length).toBeGreaterThan(0)
-    expect(confirmButton().disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: `Put the difference on ${L2}` }))
-    expect(field(P2).value).toBe('8.89')
-    fireEvent.click(confirmButton())
-    await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
-  })
-
-  it('"Paid by (everything)" → a person: the box goes, nothing is sent; no Shared line → no box', async () => {
-    screenFor()
-    typeIn(field(P1), '10')
-    const everything = screen.getByText('Paid by (everything)').parentElement
+    const everything = screen.getByRole('group', { name: 'Paid by (everything)' })
+    expect(within(everything).getAllByRole('button').map((b) => b.textContent)).toEqual(PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.label))
+    expect(within(everything).getAllByRole('button').some((b) => b.getAttribute('aria-pressed') === 'true')).toBe(false)
     fireEvent.click(within(everything).getByRole('button', { name: L2 }))
-    expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
+    expect(within(everything).getByRole('button', { name: L2 }).getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(confirmButton())
     await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
     expect(confirmPurchase.mock.calls[0][0].partsByItem).toBeNull()
-  })
-
-  it('before 029: no box, Confirm as before', async () => {
-    screenFor(false)
-    expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
-    fireEvent.click(confirmButton())
-    await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
-    expect(confirmPurchase.mock.calls[0][0].partsByItem).toBeNull()
+    expect(confirmPurchase.mock.calls[0][0].paidBy).toBe(P2)
   })
 })
 
@@ -556,11 +457,12 @@ describe('Money → section Expenses → the personal pills (A1)', () => {
     expect(within(bill.parentElement).getByText(`${L1} €96.81 · ${L2} €163.19`)).toBeTruthy()
   })
 
-  it('"+ Add expense" shows the fields once 029 has run', () => {
+  it('"+ Add expense" never shows the fields, also once 029 has run (plan 9P K216: no Shared for new data)', () => {
     data.expenses = month(P1, P2)
     page()
     fireEvent.click(screen.getByRole('button', { name: 'Add expense' }))
-    expect(screen.getByRole('group', { name: 'What each one paid' })).toBeTruthy()
+    expect(screen.queryByRole('group', { name: 'What each one paid' })).toBeNull()
+    expect([...screen.getByRole('combobox', { name: 'Paid by' }).options].map((o) => o.value)).not.toContain('shared')
   })
 
   it('before 029 (no part columns): a person sees only their own expenses, no note, no fields — exactly as before', () => {
@@ -650,67 +552,19 @@ describe('follow-up 01/11: not known yet whether 029 has run (K18)', () => {
   const found = (answer) => vi.fn(async () => answer)
   const box = () => screen.queryByRole('group', { name: 'What each one paid' })
 
-  it('Money "+ Add expense": pressing it checks first; 029 there → the fields show and nothing is saved yet; then saved with the parts', async () => {
-    const checkParts = found(true)
-    purchaseForm(null, checkParts)
-    type('Name', 'Window cleaner')
-    type('Price', '42,60')
-    expect(box()).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €42.60' }))
-    await waitFor(() => expect(box()).toBeTruthy())
-    expect(checkParts).toHaveBeenCalledTimes(1)
-    expect(addExpenseOnce).not.toHaveBeenCalled()
-    expect(screen.getAllByText(`Type what ${L1} and ${L2} paid.`).length).toBeGreaterThan(0)
-    typeIn(field(P2), '12,60')
-    expect(field(P1).value).toBe('30.00')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €42.60' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0]).toMatchObject({ amount: 42.6, paidBy: 'shared', parts: { [P1]: 30, [P2]: 12.6 } })
-    expect(checkParts).toHaveBeenCalledTimes(1)
-  })
-
-  it('029 truly not there → saved as before (no parts); paid by a person → no check at all', async () => {
-    const checkParts = found(false)
-    purchaseForm(null, checkParts)
-    type('Name', 'Garden hose')
-    type('Price', '19,90')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €19.90' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect('parts' in addExpenseOnce.mock.calls[0][0]).toBe(false)
-    expect(box()).toBeNull()
-    cleanup()
+  // "+ Add expense" offers no Shared (plan 9P K216), so it never needs to
+  // check for 029.
+  it('Money "+ Add expense": an account chosen → no check at all, saved without parts', async () => {
     const notAsked = found(true)
     purchaseForm(null, notAsked)
-    type('Name', 'Phone case')
+    type('Name', 'TEST cover')
     type('Price', '9')
     fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: P2 } })
     fireEvent.click(screen.getByRole('button', { name: 'Add expense · €9.00' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
     expect(notAsked).not.toHaveBeenCalled()
-  })
-
-  it('offline: nothing is saved, the usual offline message', async () => {
-    setOnlineForTest(false)
-    purchaseForm(null, found(null))
-    type('Name', 'Pizza night')
-    type('Price', '27,50')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €27.50' }))
-    await waitFor(() => expect(getToasts().at(-1)?.message).toBe("You're offline — this needs a connection."))
-    expect(addExpenseOnce).not.toHaveBeenCalled()
+    expect('parts' in addExpenseOnce.mock.calls[0][0]).toBe(false)
     expect(box()).toBeNull()
-  })
-
-  it('a purchase of several rows ("Save purchase"): checked first, the box shows, nothing is saved yet', async () => {
-    purchaseForm(null, found(true))
-    type('Name', 'Pasta')
-    type('Price', '1,89')
-    fireEvent.click(screen.getByRole('button', { name: 'Add item' }))
-    type('Name of item 2', 'Tomato sauce')
-    type('Price of item 2', '2,40')
-    fireEvent.click(screen.getByRole('button', { name: 'Save purchase · €4.29' }))
-    await waitFor(() => expect(box()).toBeTruthy())
-    expect(recordMoneyPurchase).not.toHaveBeenCalled()
-    expect(screen.getByText('What each one paid of €4.29.')).toBeTruthy()
   })
 
   it('"Edit expense": an expense read with the part columns tells by itself; otherwise Save checks first', async () => {
@@ -756,68 +610,41 @@ describe('follow-up 01/11: not known yet whether 029 has run (K18)', () => {
       )
     const confirmButton = () => screen.getByRole('button', { name: /^Confirm purchase · / })
 
-    it('pressed with a Shared line while not known: checked first; 029 there → the box, not confirmed yet', async () => {
-      const checkParts = found(true)
-      confirmScreen(checkParts)
-      expect(box()).toBeNull()
-      fireEvent.click(confirmButton())
-      await waitFor(() => expect(box()).toBeTruthy())
-      expect(confirmPurchase).not.toHaveBeenCalled()
-      expect(screen.getByText(`What each one paid of the 1 ${SHARED} item (€2.70).`)).toBeTruthy()
-      expect(confirmButton().disabled).toBe(true)
-      typeIn(field(P1), '2,70')
-      fireEvent.click(confirmButton())
-      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
-      expect([...confirmPurchase.mock.calls[0][0].partsByItem.keys()]).toEqual(['milk'])
-    })
-
-    it('029 not there → confirmed as before; offline → nothing confirmed, the usual message; no Shared line → no check', async () => {
-      confirmScreen(found(false))
-      fireEvent.click(confirmButton())
-      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
-      expect(confirmPurchase.mock.calls[0][0].partsByItem).toBeNull()
-      cleanup()
-      setOnlineForTest(false)
-      confirmScreen(found(null))
-      fireEvent.click(confirmButton())
-      await waitFor(() => expect(getToasts().at(-1)?.message).toBe("You're offline — this needs a connection."))
-      expect(confirmPurchase).toHaveBeenCalledTimes(1)
-      cleanup()
-      setOnlineForTest(true)
+    // No card is Shared any more (plan 9P K225), so Confirm never checks
+    // for 029; a card on "Shared" waits for a payer instead.
+    it('every card with an account: confirmed with no check; a card on Shared: Confirm waits, nothing checked', async () => {
       const notAsked = found(true)
       confirmScreen(notAsked, cart().map((i) => ({ ...i, payer: P1 })))
       fireEvent.click(confirmButton())
-      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
       expect(notAsked).not.toHaveBeenCalled()
-    })
-
-    it('opened offline: no box; the connection comes back → read again, the box appears without reopening', async () => {
-      setOnlineForTest(false)
-      client.supabase.from = () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) })
-      confirmScreen()
-      await new Promise((done) => setTimeout(done, 20))
-      expect(box()).toBeNull()
-      act(() => setOnlineForTest(true))
-      await waitFor(() => expect(box()).toBeTruthy())
+      expect(confirmPurchase.mock.calls[0][0].partsByItem).toBeNull()
+      cleanup()
+      const waits = found(true)
+      confirmScreen(waits)
       expect(confirmButton().disabled).toBe(true)
+      fireEvent.click(confirmButton())
+      expect(waits).not.toHaveBeenCalled()
+      expect(box()).toBeNull()
+      expect(confirmPurchase).toHaveBeenCalledTimes(1)
     })
   })
 })
 
 describe('follow-up 01/11: parts with more than 2 decimals (K21)', () => {
-  it('Money "+ Add expense": 100,555 fills 168.02 and saves cents that add up; 100,555 + 168,025 is refused (€268.59)', async () => {
-    purchaseForm()
-    type('Name', 'Roof repair')
-    type('Price', '268,58')
+  it('"Edit expense" of a Shared expense: 100,555 fills 168.02 and saves cents that add up; 100,555 + 168,025 is refused (€268.59)', async () => {
+    const onSubmit = vi.fn(async () => ({ error: null }))
+    const bill = { id: 'e1', amount: 268.58, description: 'TEST roof repair', category_id: 'housing', expense_date: '2026-10-27', paid_by: 'shared', ...parts(null, null) }
+    render(<ExpenseForm initial={bill} submitLabel="Save" categories={categories} mainCategories={categories} subsOf={() => []} onSubmit={onSubmit} onCancel={vi.fn()} partsReady />)
     typeIn(field(P1), '100,555')
     expect(field(P2).value).toBe('168.02')
     typeIn(field(P2), '168,025')
     expect(screen.getAllByText('The parts add up to €268.59, not €268.58.').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
-    expect(addExpenseOnce).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSubmit).not.toHaveBeenCalled()
     typeIn(field(P2), '168,02')
-    fireEvent.click(screen.getByRole('button', { name: 'Add expense · €268.58' }))
-    await waitFor(() => expect(addExpenseOnce).toHaveBeenCalledTimes(1))
-    expect(addExpenseOnce.mock.calls[0][0].parts).toEqual({ [P1]: 100.56, [P2]: 168.02 })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0][0].parts).toEqual({ [P1]: 100.56, [P2]: 168.02 })
   })
 })

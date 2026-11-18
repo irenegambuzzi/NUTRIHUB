@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { PAID_BY_OPTIONS } from '../data/constants'
+import { payerTotals as payerTotalsOf } from '../lib/payers'
 import { inCartOrder, normName, PRIORITY, sortGroceryItems } from '../lib/grocery'
 import { isDurable, restockReason } from '../lib/inventory'
 import { lineTotal } from '../lib/pricing'
@@ -73,10 +73,9 @@ export function useGroceryList() {
   const listTotal = groceryItems.reduce((sum, i) => sum + costOf(i), 0)
   // What's in the cart counts as bought for the budget.
   const boughtTotal = groceryItems.filter((i) => i.in_cart).reduce((sum, i) => sum + costOf(i), 0)
-  const payerTotals = PAID_BY_OPTIONS.map((o) => ({
-    ...o,
-    total: groceryItems.filter((i) => (i.payer || 'shared') === o.value).reduce((sum, i) => sum + costOf(i), 0),
-  }))
+  // Per account (plan 9P K225), plus "No payer yet" for the cards not
+  // chosen yet ('shared' or empty), shown only when above €0.00.
+  const payerTotals = payerTotalsOf(groceryItems, costOf)
   const unpricedCount = groceryItems.filter((i) => !i.in_cart && !(Number(i.price) > 0)).length
   const unknownTotalCount = groceryItems.filter((i) => totalOf(i) === null).length
 

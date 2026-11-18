@@ -1,5 +1,6 @@
 import { cn } from '../../lib/cn'
-import { PAID_BY_OPTIONS, UNIT_GROUPS } from '../../data/constants'
+import { UNIT_GROUPS } from '../../data/constants'
+import { ACCOUNT_OPTIONS, chosenPayer } from '../../lib/payers'
 import { EXTRA_PACKAGING_UNITS } from '../../lib/grocery'
 
 // Small pieces shared by the grocery list's components.
@@ -27,13 +28,18 @@ export function UnitOptions() {
   )
 }
 
-export function PayerPicker({ value, onChange, size = 'md' }) {
+// Who pays for a SHOP card (plan 9P K216, K225): the accounts only. A card
+// whose payer is "Shared" (the database's default) or empty is "not chosen
+// yet": no pill is lit.
+export function PayerPicker({ value, onChange, size = 'md', label = 'Paid by' }) {
+  const chosen = chosenPayer(value)
   return (
-    <div className="flex gap-1 bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-full p-0.5">
-      {PAID_BY_OPTIONS.map((o) => (
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1 bg-[var(--color-surface-soft)] border border-[var(--color-border)] rounded-full p-0.5">
+      {ACCOUNT_OPTIONS.map((o) => (
         <button
           key={o.value}
           type="button"
+          aria-pressed={chosen === o.value}
           onClick={(e) => {
             e.stopPropagation()
             onChange(o.value)
@@ -41,7 +47,7 @@ export function PayerPicker({ value, onChange, size = 'md' }) {
           className={cn(
             'rounded-full font-bold transition-all',
             size === 'sm' ? 'px-1.5 py-0.5 text-[9px]' : 'px-3 py-1 text-[11px]',
-            value === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
+            chosen === o.value ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-muted)]'
           )}
         >
           {o.label}

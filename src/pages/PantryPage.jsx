@@ -115,7 +115,8 @@ export function PantryPage() {
       categoryId: item.category_id,
       subcategoryId: item.subcategory_id,
       price: Number(item.price) || 0,
-      payer: item.payer || 'shared',
+      // "Not chosen yet" (plan 9P K225, K226): never the item's last payer.
+      payer: 'shared',
       quantity,
       unit,
       pantryItemId: item.id,

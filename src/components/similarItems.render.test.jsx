@@ -233,6 +233,17 @@ describe('SHOP "Add to SHOP list" form', () => {
     expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'Milk', pantryItemId: 'milk', unit: 'btl' })
   })
 
+  it('K227: "Paid by" is optional — the accounts, none lit at the start; saved "not chosen yet" (shared), asked at "Confirm purchase"', async () => {
+    const { onAdd } = form()
+    const pills = screen.getByRole('group', { name: 'Paid by' })
+    expect(within(pills).getAllByRole('button').map((b) => b.textContent)).toEqual(PAID_BY_OPTIONS.filter((o) => o.kind !== 'split').map((o) => o.label))
+    expect(within(pills).getAllByRole('button').some((b) => b.getAttribute('aria-pressed') === 'true')).toBe(false)
+    typeName('TEST paper towels')
+    press()
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1))
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ name: 'TEST paper towels', payer: 'shared' })
+  })
+
   it('"Save & add another" saves and keeps the form open, every field empty except Paid by', async () => {
     const { onAdd, onAdded } = form()
     const payer = PAID_BY_OPTIONS[0]
@@ -351,8 +362,9 @@ describe('SHOP "Add to SHOP list" form', () => {
 
 describe('MONEY Add expense: rows with Add to HOME on', () => {
   const expenseCategories = [{ id: 'groceries', name: 'Groceries', parent_id: null }]
-  const form = () =>
-    render(
+  // No default payer (plan 9P K217): the form chooses one first.
+  const form = () => {
+    const view = render(
       <PurchaseForm
         expenseCategories={expenseCategories}
         mainCategories={expenseCategories}
@@ -365,6 +377,9 @@ describe('MONEY Add expense: rows with Add to HOME on', () => {
         onClose={vi.fn()}
       />
     )
+    fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: 'joint' } })
+    return view
+  }
   const type = (label, value) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
   const save = () => fireEvent.click(screen.getByRole('button', { name: /Save purchase|Add expense ·/ }))
 

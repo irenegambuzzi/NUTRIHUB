@@ -445,3 +445,57 @@ describe('Confirm checks the database cart first (K214)', () => {
     vi.restoreAllMocks()
   })
 })
+
+// Plan 9P, Update round prompt 2: who paid in "Confirm purchase" (K203,
+// K217, K225). A card on "Shared" (the database's default) or empty is "not
+// chosen yet"; Confirm waits; never a line without a payer or with Shared.
+describe('"Paid by (everything)" with Joint, and no default payer', () => {
+  const notChosen = () => RECEIPT().map((c, i) => ({ ...c, payer: i === 9 ? '' : 'shared' }))
+  const everything = () => screen.getByRole('group', { name: 'Paid by (everything)' })
+  const lit = (groupEl) => within(groupEl).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent)
+  const NOBODY = 'Choose who paid: tap a name under "Paid by (everything)".'
+
+  it('cards not chosen: nothing lit (the three accounts, no Shared), no Shared box, Confirm waits with the line; one tap on Joint while searching sets every card, hidden ones too; every line sent with Joint', async () => {
+    open(notChosen())
+    expect(within(everything()).getAllByRole('button').map((b) => b.textContent)).toEqual([label(P1), label(P2), 'Joint'])
+    expect(lit(everything())).toEqual([])
+    expect(lit(screen.getByRole('group', { name: 'Paid by for Latte' }))).toEqual([])
+    expect(screen.queryByText(/What each one paid/)).toBeNull()
+    expect(screen.getByText(NOBODY)).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+    search('bas')
+    fireEvent.click(within(everything()).getByRole('button', { name: 'Joint' }))
+    expect(lit(everything())).toEqual(['Joint'])
+    expect(screen.queryByText(/^Choose who paid/)).toBeNull()
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    expect(sent().items).toHaveLength(10)
+    expect(sent().items.every((l) => l.payer === 'joint')).toBe(true)
+    expect(sent().paid_by).toBe('joint')
+  })
+
+  it('some cards chosen: "Choose who paid for 2 items: …"; then 1 item; the card\'s own pill', () => {
+    open(RECEIPT().map((c, i) => (i < 2 ? { ...c, payer: 'shared' } : c)))
+    expect(screen.getByText('Choose who paid for 2 items: tap a name under "Paid by (everything)" or on each card.')).toBeTruthy()
+    expect(lit(everything())).toEqual([])
+    fireEvent.click(within(screen.getByRole('group', { name: 'Paid by for Latte' })).getByRole('button', { name: label(P1) }))
+    expect(screen.getByText('Choose who paid for 1 item: tap a name under "Paid by (everything)" or on each card.')).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+    fireEvent.click(within(screen.getByRole('group', { name: 'Paid by for Pane' })).getByRole('button', { name: label(P1) }))
+    expect(lit(everything())).toEqual([label(P1)])
+    expect(confirmButton().disabled).toBe(false)
+  })
+
+  it('the 14/11 case: 36 cards and one infant-formula card, all not chosen → one tap on Joint → 37 lines paid by Joint', async () => {
+    const cards = Array.from({ length: 36 }, (_, i) => card(`l${i}`, `TEST item ${i + 1}`, 1, { payer: 'shared' }))
+    cards.push(card('formula', 'TEST infant formula', 19.52, { payer: 'shared' }))
+    open(cards)
+    expect(screen.getByText(NOBODY)).toBeTruthy()
+    fireEvent.click(within(everything()).getByRole('button', { name: 'Joint' }))
+    fireEvent.click(confirmButton())
+    await vi.waitFor(() => expect(confirmPurchase).toHaveBeenCalledTimes(1))
+    expect(sent().items).toHaveLength(37)
+    expect(new Set(sent().items.map((l) => l.payer))).toEqual(new Set(['joint']))
+    expect(sent().items.reduce((s, l) => s + l.line_total, 0)).toBeCloseTo(55.52, 2)
+  })
+})

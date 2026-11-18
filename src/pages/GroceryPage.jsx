@@ -14,7 +14,7 @@ import { ConfirmPurchase } from '../components/grocery/ConfirmPurchase'
 import { cn } from '../lib/cn'
 import { useGroceryList } from '../hooks/useGroceryList'
 import { useInventoryCategories } from '../hooks/useInventoryCategories'
-import { PAID_BY_OPTIONS } from '../data/constants'
+import { ACCOUNT_OPTIONS } from '../lib/payers'
 import { inventoryCategoryColor } from '../lib/categoryColors'
 import { restockReason, syncShoppingForItem } from '../lib/inventory'
 import { entryIsOneTime } from '../lib/oneTime'
@@ -457,8 +457,9 @@ export function GroceryPage() {
                 <option value="all">All open items</option>
               </Select>
               <span className="text-[11px] text-[var(--color-text-muted)]">({bulkTargets.length}) →</span>
-              <div className="flex gap-1">
-                {PAID_BY_OPTIONS.map((o) => (
+              <div className="flex flex-wrap gap-1">
+                {/* The accounts only (plan 9P K216). */}
+                {ACCOUNT_OPTIONS.map((o) => (
                   <button
                     key={o.value}
                     type="button"

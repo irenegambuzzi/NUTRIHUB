@@ -173,6 +173,21 @@ export const incomeBefore = storeFamily((before) =>
   })
 )
 
+// Transfers between the household's accounts and Joint's starting balance
+// (supabase/033, plan 9P K210, K218). Every row (a few a month): the
+// period's ones and those before it (the leftover) both come from here.
+// Live like every store; not kept on the device. Until 033 has been run the
+// table is missing: nothing counts transfers and the Transfers section
+// says so.
+export const transferStore = createTableStore({
+  name: 'transfers',
+  table: 'transfers',
+  query: (q) => q.order('transfer_date', { ascending: false }).order('id'),
+  paginate: true,
+  optional: true,
+  compare: newestFirst('transfer_date'),
+})
+
 export const allIncomeStores = () => [...incomeSince.all(), ...incomeBefore.all(), incomeUsageStore].filter((s) => s.isStarted())
 
 // The saved color of each expense category (supabase/016).

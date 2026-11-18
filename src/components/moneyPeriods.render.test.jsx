@@ -23,6 +23,7 @@ vi.mock('../lib/stores', async (original) => {
     // Only November is loaded when Money opens (to see `since` move back).
     currentExpensesSince: () => '2026-11-01',
     pantryStore: fake(() => []),
+    transferStore: fake(() => []),
     groceryStore: fake(() => []),
     orderStore: fake(() => []),
     budgetMapStore: fake(() => []),

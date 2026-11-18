@@ -41,7 +41,7 @@ Contents
      as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
    - 9P. Update round (decided 15–16/11): the search in "Confirm purchase", the
      date and payer of a whole purchase, the Reopen / Undo bug report, the
-     shared bank account; K200–K218, prompt 1 as built
+     shared bank account; K200–K232, prompts 1 and 2 as built (SQL 033)
 10. Risks and decisions
 
 ---
@@ -86,7 +86,9 @@ toasts, code, comments, commit messages — is English.
   (comma or dot) and show the hint with `DecimalInput` / `DecimalHint`.
 - Dates: `DateField` everywhere (typed DD/MM/YYYY), stored as `YYYY-MM-DD`
   local dates (`localDateString`).
-- Payers: `PAID_BY_OPTIONS` = irene, akbar, shared.
+- Payers: `PAID_BY_OPTIONS` = irene, akbar, joint, shared, each with a
+  `kind` (person / account / split); new data offers only the accounts
+  (`lib/payers.js`, plan 9P K216).
 - Phone first: tap targets ≥ 36 px (`min-h-9`), no horizontal scroll, inline
   rows rather than popups where the brief says "no popups".
 
@@ -6871,7 +6873,21 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K215** Facts (16/11): the two Shared purchases of 14/11 (Lidl 36 expenses + Iper Coop 4; €111.05 + €35.76 = €146.81) were paid from the shared account and are changed to Joint by hand after prompt 3; deposits Akbar €300 (13/11) + €20 (14/11), Irene €300 (13/11); the shared account held €35.67 on 31/10/2026 and €525.67 on 16/11/2026 (the household's figure; a gap with the app comes from entries not recorded yet, which the household adds).
 - **K216** (A) "Shared" is not used for new data: forms offer Irene / Akbar / Joint; the Money "Shared" pill shows only in a period with Shared expenses (today only 27/10/2026 "SPESE CONDOMINIO"), like K174; an existing Shared expense keeps "Shared" in its "Edit expense". K216a: income "Received by" offers Irene / Akbar / Joint; the Joint income pill only with Joint income (K174 rule). Built in prompt 2.
 - **K217** (a) No default payer: saving waits until a payer is chosen (in "Confirm purchase" one tap on "Paid by (everything)"). Data 1–15/11: Irene 92 expenses, Akbar 15, shared account 40. Built in prompt 2.
-- **K218** (open, decided before prompt 2): how the shared account's starting balance €35.67 is recorded.
+- **K218** (b) the shared account's starting balance is a "Starting balance" (stored as a transfer from no one to Joint), NEVER income: not in the INCOME tile, chip, charts or income list; it counts in the Joint pill's BALANCE and in the household's money (BALANCE, leftover). Income = only money really earned.
+- **K219** (Version 2) the starting balance is €52.48 dated 01/11/2026, computed so the Joint pill equals the real Revolut balance of 16/11/2026 (€525.67): 525.67 − 300.00 − 20.00 − 300.00 + 146.81 = 52.48. The €16.81 gap (unrecorded movements) is absorbed in it on purpose; nothing is searched. Recompute with the real balance if the shared account moves before it is recorded: S = Revolut balance − deposits recorded + Joint expenses recorded (+ transfers out).
+- **K220** (process) prompt 2 started with a read-only analysis (`tmp-export/joint-readonly-report.md`).
+- **K221** (b) a person's transfers out are NOT in the EXPENSES tile. The tile, the € chip, every chart, Totals per category and the list keep expenses only. A grey line `Transfers · {label} −€320.00` (the account's net transfers in the period, signed; amount coloured by K181/K194: plus green, minus red, €0.00 normal; shown when the account has at least one transfer in the period). BALANCE includes them.
+- **K222** (b) the Income "Received by" pill "Joint" shows when the period (before the pill filter) has Joint income OR a transfer to or from Joint OR a Joint Starting balance (this widens K216a). A chosen hidden one → Everyone (the K174 way). Both pills on the same ACCOUNT (Irene, Akbar or Joint) = that account's card; `leftoverScope` accepts the three accounts.
+- **K223** (a) "Available" and "This month" / "This range" include transfers and the Starting balance; "spent" = the EXPENSES tile. The existing rules stay: "This month" / "This range" only with a leftover line; the bar only for the allowed pill combinations and a > 0; red when spent > available in cents (K198).
+- **K224** (a) the household leftover breakdown is "Irene … · Akbar … · Joint …"; Joint only when its amount is not €0.00 (in cents); the parts add up to the line.
+- **K225** (a) on a SHOP card only irene / akbar / joint count as chosen; 'shared' (the database default) or an empty text = "not chosen yet": no payer pill lit, "Confirm purchase" waits, the SHOP budget card shows "No payer yet €…" (only when above €0.00). No SQL for this. The app keeps writing 'shared' for "not chosen" on SHOP cards (the column is not null default 'shared').
+- **K226** (a) automatic cards, HOME "Send to SHOP" and name suggestions never take the HOME item's last payer: "not chosen".
+- **K227** (a) "+ Add to SHOP list": the payer is optional; pills none lit at the start; saved "not chosen"; asked at "Confirm purchase".
+- **K228** (a) transfers between ANY two of Irene / Akbar / Joint (all six directions, also person → person), From ≠ To. "Shared" is never From or To.
+- **K229** (b) a Starting balance only for Joint, at most one (the app refuses a second; no SQL rule). It is a transfer with from_code empty and to_code 'joint'.
+- **K230** (a) a new section "Transfers" in Money between Income and Orders (order: Income, Transfers, Orders, Expenses).
+- **K231** the "Add transfer" form and its texts as in report Part C.3 / C.4, with K229 (b).
+- **K232** (process) build prompt 2 written in chat 9; its report, SQL check and test go to the next chat.
 
 **Order of work (decided 16/11).**
 
@@ -7019,6 +7035,184 @@ Confirm check — all 10 of 10; the four timings of report A.2 keep "Pane" in
 the cart, 10 lines · €3.39). Mutation checks: 1a off → 4 hook tests fail;
 the old per-item sync → 1; K200 off → 3 PGlite timings and 3 unit tests;
 the "older read" rule off → 2.
+
+iPhone test of Update round prompt 1 done 16/11/2026: all OK (part C, the K214 test in Chrome, skipped: Chrome's request blocking did not reach the app's realtime connection; covered by the automated tests).
+
+### Update round prompt 2 as built (18/11; SQL 033 written, not run)
+
+Built: K210, K211 (October unchanged), K216, K216a, K217, K218 (b), K219,
+K221–K231 (and the plan). One new SQL file, `supabase/033_transfers.sql`
+(the draft of `tmp-export/033-draft.sql`, body unchanged, header rewritten;
+never run by Claude). No other file in `supabase/` changed except
+`supabase/migrations.test.js` (tests). No new browser storage, no new
+offline queue. Deployed before 033 is run: it works before and after it.
+
+**Files.** New: `lib/payers.js` (ACCOUNTS / ACCOUNT_OPTIONS, `chosenPayer`,
+`payerOptionsFor`, `startingPayer`, `payerTotals`, the two refusal texts),
+`lib/transfers.js` (the form checks and texts, `transferRow`,
+`accountMoves`, `transfersBetween`, `TRANSFERS_FILE` / `TRANSFERS_NOTICE`),
+`hooks/useTransfers.js` (`useTransfers`, `useTransfersReady`,
+`addTransfer`, `updateTransfer`, `deleteTransfer`),
+`components/expenses/TransfersSection.jsx`,
+`components/expenses/PayerSelect.jsx`, `lib/jointNovember.fixture.js`
+(tests only). Changed: `data/constants.js` (Joint, the kinds),
+`lib/sharedParts.js` (PEOPLE = kind 'person'), `lib/leftover.js`
+(transfers in the leftover, `periodMoves`, `balanceCents`, the scope of
+the three accounts, the K224 breakdown), `lib/stores.js`
+(`transferStore`: all rows, paginated, optional, live, not kept on the
+device), `pages/ExpensesPage.jsx`, `components/expenses/MoneySummary.jsx`,
+`PersonSelector.jsx`, `OrdersSection.jsx`, `PurchaseForm.jsx`,
+`ExpenseForm.jsx`, `IncomeForm.jsx`, `OrderForm.jsx`,
+`OrderGroupSheet.jsx`, `hooks/useExpenses.js` (`loaded`),
+`components/grocery/shared.jsx` (`PayerPicker`), `GroceryItemTile.jsx`,
+`AddItemForm.jsx`, `ConfirmPurchase.jsx`, `OrderOnlineDialog.jsx`,
+`hooks/useGroceryList.js`, `hooks/useGroceryItems.js`,
+`pages/GroceryPage.jsx`, `pages/PantryPage.jsx`, `lib/inventory.js`
+(`autoEntry`), `lib/nameSuggestions.js`, `lib/purchase.js` (no
+`'shared'` fallback in the payload).
+
+**The payers.** `PAID_BY_OPTIONS` = the two people (kind `person`), Joint
+(`account`), Shared (`split`). `PEOPLE` = the kind `person` only, so
+`PART_COLUMNS`, `partsColumnsReady`, `storedParts`, `checkSplit` and the
+parts fields stay the two people's (rule 9K). Joint never has parts or the
+K4 note; its pill = its own expenses whole.
+
+**Where Joint and "no default" show** (tap paths):
+
+| Place | What it offers / does |
+|---|---|
+| Money → Expenses → "Add expense" → "Paid by" (select) | "Choose…" (can't be picked again), then the three accounts; Save refused under the form with `Choose who paid.` |
+| Money → Expenses → "Expenses (N)" → pencil "Edit expense" → "Paid by" | the accounts; + "Shared" only for a Shared expense (its parts as before) |
+| Money → Income → "Add income" / pencil "Edit income" → "Received by" | the same; refusal `Choose who received it.` in the form's red line |
+| Money → Orders → "Add order" / an order → edit → "Paid by" | the same; refusal `Choose who paid.` (after the name check) |
+| Shop → a card → "Order online" | the card's payer only when chosen (one of the accounts), else "Choose…" |
+| Money → an order group → "Order group" sheet → "Paid by" | the accounts + Shared only for a Shared group |
+| Money → Expenses / Orders → pills "Paid by" (one state) | Everyone · the two people · Joint, + Shared only in a period with a Shared expense (October 2026: 27/10); a hidden chosen Shared → Everyone (remembered) |
+| Money → Income → pills "Received by" | Everyone · the two people, + Joint with Joint income or a Joint transfer / starting balance in the period (K222), + Shared with Shared income (K174) |
+| Pill rows | `flex-wrap`, each pill `min-h-9` (36 px) |
+| Shop → List → each card → the small pills | the three accounts (`aria-pressed`, group "Paid by"); none lit when not chosen; the card's title `Paid by: not chosen yet` |
+| Shop → List → "+ Add to SHOP list" → "Paid by" | the accounts, none lit; saved not chosen (`shared`) |
+| Shop → List → row "Paid by for [scope] (n) →" | the three accounts |
+| Shop → List → budget card, bottom line | `{label} €… {label} €… Joint €…` + `No payer yet €…` only above €0.00 |
+| Shop → "Confirm purchase ({n} in the cart)" → "Paid by (everything)" | the accounts (group "Paid by (everything)", `aria-pressed`); lit only when every card in this trip has it; sets every card in the trip, hidden ones too (K203) |
+| the same screen, bottom (amber, the place of "Answer the question above to confirm.") | `Choose who paid: tap a name under "Paid by (everything)".` (no card has one) / `Choose who paid for {n} items: tap a name under "Paid by (everything)" or on each card.` (`1 item`); "Confirm purchase · €…" disabled; no Shared parts box any more |
+| automatic cards, HOME → "Send to SHOP", name suggestions | never the HOME item's payer: not chosen |
+
+**The top card** (`lib/leftover.leftoverCard`, `MoneySummary`). One account
+(both pills on the same person or both on Joint): BALANCE = L + I − E + Tin
+− Tout + S; "This month" / "This range" (only with a leftover line) = I −
+E + Tin − Tout + S; Available = L + I + Tin − Tout + S, spent = E; grey
+lines under the tiles `Transfers · {label} ±€…` (net, K181 colours) and
+`Starting balance · Joint +€52.48`. Household: BALANCE = L + I − E + S;
+grey `Starting balance · Joint +€52.48`; no transfer line. Other pill
+combinations: as before. Week: the transfers / starting balance in
+BALANCE with their grey lines, no leftover, no "This month", no bar. The
+leftover of an account counts its transfers and starting balances before
+the period; the household's all starting balances. Breakdown: the two
+people always (K168a), Joint only when not €0.00. Transfers not read /
+offline / failed → no transfer number, no leftover line, no bar; read again
+when the connection comes back. Before 033 (`missing`): no transfers, as
+before. Never in a chip, chart, Totals per category, TREND, list, filter
+total or Select.
+
+**Money → Transfers** (between Income and Orders): title "Transfers",
+button "+ Add transfer" (36 px), grey `Joint now €525.67` (Joint's BALANCE
+at the end of the period on screen as the Joint card computes it; hidden
+while not known), the ClosedBar "Transfers (N)" (closed at every mount,
+kept through period / pill changes); open: the period's transfers newest
+first — `{From} → {To}` / `Starting balance → Joint`, the date DD/MM/YYYY,
+the note (grey), the amount in the normal text colour, pencil "Edit
+transfer" and trash "Delete transfer" (36 × 36 px); empty `No transfers in
+this period.`. Not affected by the person pills. Before 033: the title and
+`This needs the database update supabase/033_transfers.sql` in place of the
+button and the bar.
+
+The inline card "Add transfer" / "Edit transfer": the choices "Transfer" /
+"Starting balance" (new rows only; a row keeps its kind), "Date"
+(DateField, today), "From" and "To" pills of the three accounts, none lit,
+the "To" equal to "From" disabled ("Starting balance": no "From", the text
+"To Joint"), "Amount (€)" (DecimalInput), "Note (optional)" (`e.g. Deposit
+for the groceries`), "Cancel" / "Save transfer" ("Save starting balance").
+One id per form (upsert: a second press or Retry saves once). Refusals in
+the card's red line, in this order: `Choose where the money came from.` ·
+`Choose where the money went.` · `"From" and "To" must be different.` ·
+`Enter the amount.` · `Enter an amount above 0, like 300 or 19,52.` · `Fix
+the date first (DD/MM/YYYY).` · `A transfer can't be after today.` ·
+`Joint already has a starting balance (€52.48 on 01/11/2026). Change that
+one instead.` Offline: the toast `You're offline — this needs a
+connection.` (nothing queued); a failed save `Couldn't save — check your
+connection.` + Retry; a missing table the 033 notice; the card keeps what
+was typed. Toasts with Undo (20 s): `Transfer saved · {From} → {To} ·
+€300.00` (Undo deletes it), `Starting balance saved · Joint · €52.48`,
+`Transfer changed` (Undo puts the old values back), `Transfer deleted`
+(Undo puts the same row back, same id).
+
+**SQL 033** (`supabase/033_transfers.sql`): table `transfers` (id,
+transfer_date, from_code — null = starting balance —, to_code, amount
+numeric(12, 2), note, created_at), `transfers_amount_ok` (> 0),
+`transfers_codes_ok` (codes never empty, never from = to), index on the
+date, RLS + one policy `household_only`, nothing for anon, select / insert
+/ update / delete to authenticated, realtime; one transaction; guard (015
+and 032); safe twice; no data written; no function replaced; the check
+SELECT has 16 rows, each "ok"; last line `-- End of 033`.
+
+**Tests: 2656 → 2708 (141 → 143 files).** New `lib/transfers.test.js`
+(22: the payer kinds, PEOPLE / part columns with Joint present, Joint's
+pill €146.81, K225 / K216 helpers, the form texts in order, the six
+directions, K229, rounding, row texts and toasts, the period's rows, every
+card of section 5 — Joint +€525.67, the two people +€893.16 / +€3798.00,
+Everyone +€5216.83 with This month, Available and the grey lines —,
+December +€5216.83 = the three accounts, October unchanged, the K228
+example, other combinations, Week, Year 2026, transfers not known). New
+`components/moneyJoint.render.test.jsx` (24: the four cards on screen with
+K181 colours, a mixed card +€3901.19, the € chips and Totals / TREND
+€625.25, December, not read / offline, the pills and their wrap, the
+October Shared pill and its parts €100.00 / €168.58, K222 on and off, the
+Transfers section, before 033 (+€5164.35), add / failed / missing table /
+offline / starting balance / K229 / edit / delete with Undo, "Add income"
+K217). `supabase/migrations.test.js` (+7, block "033": the file's shape,
+the guard without 032, "joint" before 033 and through
+confirm_shopping_trip, run twice with 16 ok rows and everything else
+unchanged, the member and the checks, anon and a stranger, the November
+cards from the rows with the app's own `leftoverCard`; the 9J file list now
+includes 033). `confirmSearch.render.test.jsx` (+3: not chosen → Joint
+while searching sets every card, 10 lines Joint; "for 2 items" / "1 item";
+the 14/11 case 37 lines Joint). `expenses/orderForm.test.jsx` (+3),
+`noCategory.render.test.jsx` (+2: card pills and title, the budget line),
+`similarItems.render.test.jsx` (+1, K227),
+`expenses/purchaseForm.render.test.jsx` (+1, K217).
+`sharedParts.render.test.jsx` 39 → 28: the tests of a NEW Shared expense in
+"Add expense" and of the Shared parts box in "Confirm purchase" no longer
+apply (K216, K225) and were replaced by K216 / K225 tests; Edit expense of a
+Shared expense, its parts, K9, K14, K18 for Edit and K21 (now on Edit) stay.
+Older fixtures now choose a payer (moneyFields, decimalFields, nameLines,
+newItemUnit, packSize, itemNames, oneTime, similarItems; the Money render
+tests give a `transferStore`). Mutation checks (each put back, `git diff`
+clean of it): PEOPLE built the old way → 46 fail; transfers left out of
+BALANCE → 5; the starting balance counted as income → 6; the K217 default
+put back → 5; the K222 rule off → 3.
+
+**Kata ragu (18/11 prompt 2, tanya Zidane).** Built the safe way until
+answered.
+
+1. December without any Joint movement: K222 hides the "Received by: Joint"
+   pill, so the Joint card (`Leftover from November 2026 · +€525.67`, section
+   5) can't be opened; only `Joint now €525.67` shows. Options: (a) as built;
+   (b) the Joint pill also when Joint's leftover before the period isn't
+   €0.00; (c) always. Suggestion: (b).
+2. `Joint now` follows the Joint card, which has no leftover in Week (K169)
+   and hides a leftover ≤ 0 (K166): Week 9–15 Nov shows `Joint now €473.19`
+   (620.00 − 146.81) while the account holds €525.67. Options: (a) as built;
+   (b) `Joint now` = every Joint row up to the end of the period (in every
+   pill, also ≤ 0); (c) hide it in Week. Suggestion: (b).
+
+Decided by rule: PEOPLE stays the two people (9K); Joint gets no K4 note
+(A1/K4); Shared kept in Edit of a Shared expense, income, order and order
+group (K216); the Orders pills follow the Expenses pills (K2); a SHOP card
+on Shared counts as not chosen, so the Shared parts box of "Confirm
+purchase" never shows (K225); the starting balance shows in every period
+containing its date, Week too (K218); "+ Add to SHOP list" keeps writing
+`shared` = not chosen (K225, K227).
 
 ---
 

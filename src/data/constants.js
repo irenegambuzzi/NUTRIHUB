@@ -185,10 +185,18 @@ export const HIDDEN_CATEGORY_IDS = ['automotive']
 export const CATEGORY_NAME_OVERRIDES = { 'personal-care': 'Beauty Care' }
 export const CATEGORY_ORIGINAL_NAMES = { 'personal-care': 'Personal Care & Beauty' }
 
+// The payers (plan 9P K210, K216). Each has a kind:
+//   'person'   one of the two people (their own bank account; plan 9K
+//              parts are theirs)
+//   'account'  an account that is no person: "Joint", the household's
+//              shared bank account (never parts)
+//   'split'    "Shared": one expense split between the two people; kept for
+//              old rows, never offered for new data (K216)
 export const PAID_BY_OPTIONS = [
-  { value: 'irene', label: 'Irene' },
-  { value: 'akbar', label: 'Akbar' },
-  { value: 'shared', label: 'Shared' },
+  { value: 'irene', label: 'Irene', kind: 'person' },
+  { value: 'akbar', label: 'Akbar', kind: 'person' },
+  { value: 'joint', label: 'Joint', kind: 'account' },
+  { value: 'shared', label: 'Shared', kind: 'split' },
 ]
 
 export const EXPENSE_PERIODS = ['week', 'month', '3months', '6months', 'year']

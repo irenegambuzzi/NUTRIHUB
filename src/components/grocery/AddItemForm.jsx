@@ -73,6 +73,8 @@ export function AddItemForm({ parents, subsByParent, categoryName, pantryByName,
   const [priceDraft, setPriceDraft] = useState(initial.priceDraft ?? EMPTY_PRICE)
   const [quantity, setQuantity] = useState('1')
   const [unit, setUnit] = useState(initial.unit ?? DEFAULT_UNIT)
+  // Optional (plan 9P K227): no pill lit at the start; saved as "not chosen
+  // yet" ('shared', K225) and asked at "Confirm purchase".
   const [payer, setPayer] = useState('shared')
   // One-time purchase (1×), for something not in HOME yet: Confirm
   // purchase makes its new HOME item one-time too.

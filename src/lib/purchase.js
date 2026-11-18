@@ -274,7 +274,9 @@ export function confirmationPayload({ id, date, at, lines, answers, totalOf, exp
         line_total: priced && Number.isFinite(priced.paid) ? priced.paid : (totalOf(item) ?? 0),
         ...(priced ? lineDiscountFields(priced) : {}),
         ...partFields(partsByItem?.get(item.id)),
-        payer: item.payer || 'shared',
+        // The card's chosen payer: "Confirm purchase" never gets here
+        // without one (plan 9P K217), so no default of the app's.
+        payer: item.payer,
         expense_category_id: expenseCategoryFor(item),
         durable,
         pantry_item_id: target?.id ?? null,

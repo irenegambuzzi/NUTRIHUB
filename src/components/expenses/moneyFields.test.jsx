@@ -12,8 +12,13 @@ const { IncomeForm } = await import('./IncomeForm')
 const { OrderForm } = await import('./OrderForm')
 const { DECIMAL_MESSAGE } = await import('../../lib/decimal')
 const { categoryTree } = await import('../../lib/moneyList')
+const { PAID_BY_OPTIONS } = await import('../../data/constants')
 
 afterEach(cleanup)
+
+// No default payer (plan 9P K217): a new entry chooses one first.
+const PERSON = PAID_BY_OPTIONS[0].value
+const choosePayer = (label) => fireEvent.change(screen.getByLabelText(label), { target: { value: PERSON } })
 
 const picker = { categories: [], mainCategories: [], subsOf: () => [], styleFor: () => ({}), addCategory() {}, renameCategory() {}, moveCategory() {}, deleteCategory() {} }
 const tree = { mainCategories: [{ id: 'salary', name: 'Salary' }], mainOf: () => null, subsOf: () => [] }
@@ -23,6 +28,7 @@ const forms = [
     name: 'an expense',
     label: 'Amount (€)',
     render: (onSubmit, initial) => render(<ExpenseForm {...picker} initial={initial} onSubmit={onSubmit} />),
+    payer: 'Paid by',
     value: (call) => call[0].amount,
     initial: { amount: 13.6, category_id: null, description: '', paid_by: 'shared', expense_date: '2026-10-17' },
   },
@@ -30,6 +36,7 @@ const forms = [
     name: 'an income',
     label: 'Amount (€)',
     render: (onSubmit, initial) => render(<IncomeForm tree={tree} submitLabel="Add" initial={initial} onSubmit={onSubmit} />),
+    payer: 'Received by',
     value: (call) => call[0].amount,
     initial: { amount: 13.6, income_date: '2026-10-17', category_id: null, received_by: 'shared', source: '' },
   },
@@ -41,6 +48,7 @@ const forms = [
       if (!initial) fireEvent.change(screen.getByLabelText('Item name'), { target: { value: 'Jacket' } })
       return view
     },
+    payer: 'Paid by',
     value: (call) => call[0].price,
     initial: { item_name: 'Jacket', price: 13.6, order_date: '2026-10-17', paid_by: 'shared', category_id: null },
   },
@@ -60,6 +68,7 @@ describe.each(forms)('the money field of $name', (form) => {
     const onSubmit = vi.fn(async () => ({ error: null }))
     form.render(onSubmit)
     fireEvent.change(field(), { target: { value: typed } })
+    choosePayer(form.payer)
     submit()
     expect(onSubmit).toHaveBeenCalledTimes(1)
     expect(form.value(onSubmit.mock.calls[0])).toBe(13.6)
@@ -118,6 +127,7 @@ describe('round 6C2: edit expense and income pick main | sub, and keep saving on
     fireEvent.change(screen.getByLabelText('Income category'), { target: { value: 'other' } })
     fireEvent.change(screen.getByLabelText('Income category: sub-category'), { target: { value: 'refunds' } })
     fireEvent.change(screen.getByLabelText('Amount (€)'), { target: { value: '12' } })
+    choosePayer('Received by')
     fireEvent.click(screen.getByRole('button', { name: 'Add income' }))
     await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled())
     expect(onSubmit.mock.calls[0][0].categoryId).toBe('refunds')

@@ -3,14 +3,15 @@ import { Plus, Check, X } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { DateField } from '../ui/DateField'
-import { Label, Input, Select } from '../ui/Field'
+import { Label, Input } from '../ui/Field'
 import { DecimalHint, DecimalInput } from '../ui/DecimalInput'
 import { SharedPartsFields } from '../ui/SharedPartsFields'
 import { moneyText, parseDecimal } from '../../lib/decimal'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { useShops } from '../../hooks/useShops'
-import { PAID_BY_OPTIONS } from '../../data/constants'
+import { PAYER_MISSING, payerOptionsFor, startingPayer } from '../../lib/payers'
+import { PayerSelect } from './PayerSelect'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
 import { PEOPLE, SHARED, checkSplit, emptySplit, partsColumnsReady, splitFrom, staleNote, storedParts } from '../../lib/sharedParts'
@@ -51,7 +52,10 @@ export function ExpenseForm({
   const [managingCategories, setManagingCategories] = useState(false)
   const [amount, setAmount] = useState(initial ? moneyText(initial.amount) : '')
   const [description, setDescription] = useState(initial?.description ?? '')
-  const [paidBy, setPaidBy] = useState(initial?.paid_by ?? 'shared')
+  // The accounts, plus "Shared" only for an expense that is Shared (it
+  // keeps it, plan 9P K216); no default payer (K217).
+  const payerOptions = payerOptionsFor(initial?.paid_by)
+  const [paidBy, setPaidBy] = useState(() => startingPayer(initial?.paid_by))
   const keptParts = initial?.paid_by === SHARED ? storedParts(initial) : null
   const [split, setSplit] = useState(() => (keptParts ? splitFrom(keptParts) : emptySplit()))
   const [triedParts, setTriedParts] = useState(false)
@@ -83,6 +87,7 @@ export function ExpenseForm({
     const value = parseDecimal(amount)
     if (!(value > 0)) return setDateError(amount.trim() ? 'Enter an amount above 0, like 13,60.' : 'Enter the amount.')
     if (!dateOk) return setDateError('Fix the date first (DD/MM/YYYY).')
+    if (!paidBy) return setDateError(PAYER_MISSING)
     setTriedParts(true)
     if (splitCheck?.problem) return
     if (paidBy === SHARED && ready === null) {
@@ -165,13 +170,7 @@ export function ExpenseForm({
 
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => choosePayer(e.target.value)} aria-label="Paid by">
-              {PAID_BY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            <PayerSelect value={paidBy} onChange={(v) => { choosePayer(v); setDateError('') }} options={payerOptions} label="Paid by" />
           </div>
           {splitOn && (
             <SharedPartsFields

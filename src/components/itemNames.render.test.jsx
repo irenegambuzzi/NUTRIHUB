@@ -354,10 +354,17 @@ describe('SHOP "Add to SHOP list"', () => {
   })
 })
 
+const withPayer = (ui) => {
+  const view = render(ui)
+  fireEvent.change(screen.getByLabelText('Paid by'), { target: { value: 'joint' } })
+  return view
+}
+
 describe('MONEY "Add expense"', () => {
   const expenseCategories = [{ id: 'groceries', name: 'Groceries', parent_id: null }]
+  // No default payer (plan 9P K217): the form chooses one first.
   const form = () =>
-    render(
+    withPayer(
       <PurchaseForm
         expenseCategories={expenseCategories}
         mainCategories={expenseCategories}

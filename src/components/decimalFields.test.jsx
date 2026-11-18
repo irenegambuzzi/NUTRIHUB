@@ -216,7 +216,8 @@ describe('the item editor (HOME)', () => {
 })
 
 describe('confirming a purchase', () => {
-  const cart = [{ id: 'g1', name: 'Cheese', category_id: 'misc', quantity: 2, unit: 'pcs', price: 3, price_qty: 1, price_unit: 'pcs', payer: 'shared', in_cart: true, completed: false }]
+  // A card whose payer is chosen (plan 9P K217: Confirm waits for one).
+  const cart = [{ id: 'g1', name: 'Cheese', category_id: 'misc', quantity: 2, unit: 'pcs', price: 3, price_qty: 1, price_unit: 'pcs', payer: 'joint', in_cart: true, completed: false }]
   const setup = () => {
     const edits = vi.fn(async () => ({}))
     render(<ConfirmPurchase cartItems={cart} pantryItems={[]} categoryName={() => 'Misc'} totalOf={(i) => lineTotal(i, null)} updatePricing={edits} updatePayer={edits} toggleCart={edits} onClose={() => {}} />)

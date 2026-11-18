@@ -9,6 +9,8 @@ import { PackSizeField } from '../ui/PackSizeField'
 import { ExpenseCategoryManager, ExpenseCategoryPicker } from './ExpenseCategoryPicker'
 import { ShopPicker } from './ShopPicker'
 import { PAID_BY_OPTIONS } from '../../data/constants'
+import { PAYER_MISSING, payerOptionsFor, startingPayer } from '../../lib/payers'
+import { PayerSelect } from './PayerSelect'
 import { localDateString } from '../../lib/expensePeriods'
 import { categoryTree } from '../../lib/moneyList'
 import { ORDER_UNITS, normalizeUrl, orderBase } from '../../lib/orders'
@@ -79,7 +81,11 @@ export function OrderForm({
   const [details, setDetails] = useState(initial?.details ?? '')
   const [shopId, setShopId] = useState(initial?.shop_id ?? start?.shopId ?? '')
   const [orderDate, setOrderDate] = useState(initial?.order_date ?? localDateString())
-  const [paidBy, setPaidBy] = useState(initial?.paid_by ?? start?.paidBy ?? 'shared')
+  // The accounts, plus "Shared" only for an order that is Shared (plan 9P
+  // K216); a new order starts with nobody chosen unless "Order online"
+  // brought the card's chosen payer (K217).
+  const payerOptions = payerOptionsFor(initial?.paid_by)
+  const [paidBy, setPaidBy] = useState(() => startingPayer(initial ? initial.paid_by : start?.paidBy ?? ''))
   const [mainId, setMainId] = useState(initialMain?.id ?? '')
   const [subId, setSubId] = useState(startCategory && startCategory !== initialMain?.id ? startCategory : '')
   const flow = useFlow()
@@ -131,6 +137,7 @@ export function OrderForm({
 
   const problem = () => {
     if (!itemName.trim()) return 'Give the order a name.'
+    if (!group && !paidBy) return PAYER_MISSING
     if (decimalProblem(price.total)) return `Total price: ${decimalProblem(price.total)}`
     if (withQuantity && decimalProblem(price.unit)) return `Unit price: ${decimalProblem(price.unit)}`
     if (withQuantity && decimalProblem(quantity)) return `Quantity: ${decimalProblem(quantity)}`
@@ -226,7 +233,7 @@ export function OrderForm({
         {group ? (
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-soft)] p-2.5 text-[11px] space-y-0.5">
             <p className="text-[var(--color-text)]">
-              {shopName(shopId) ?? 'No store'} · ordered {parseLocalDate(orderDate).toLocaleDateString('en-GB')} · paid by {PAID_BY_OPTIONS.find((o) => o.value === paidBy)?.label ?? paidBy}
+              {shopName(shopId) ?? 'No store'} · ordered {parseLocalDate(orderDate).toLocaleDateString('en-GB')} · paid by {PAID_BY_OPTIONS.find((o) => o.value === (paidBy || initial?.paid_by))?.label ?? (paidBy || initial?.paid_by)}
             </p>
             <p className="text-[var(--color-text-muted)]">Store, date and payer are set on the order group.</p>
           </div>
@@ -351,13 +358,7 @@ export function OrderForm({
         {!group && (
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => setPaidBy(e.target.value)} aria-label="Paid by">
-              {PAID_BY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            <PayerSelect value={paidBy} onChange={setPaidBy} options={payerOptions} label="Paid by" />
           </div>
         )}
 

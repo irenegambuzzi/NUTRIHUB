@@ -38,6 +38,8 @@ vi.mock('../lib/stores', async (original) => {
     expensesBefore: (key) => before('expenses', key.split('|')[0]),
     incomeBefore: (day) => before('income', day),
     pantryStore: fake(() => []),
+    // No transfers (supabase/033 there, nothing saved): every number as before.
+    transferStore: fake(() => []),
     groceryStore: fake(() => []),
     orderStore: fake(() => []),
     budgetMapStore: fake(() => []),
@@ -264,7 +266,8 @@ describe('Money → top card: the leftover (K164–K172)', () => {
   })
 
   it('a "Shared" pill on either side: no line, no bar', () => {
-    load(OCTOBER, NOVEMBER, { expenses: [], income: [earned('i5', 10, '2026-11-06', 'shared', 'other')] })
+    // A Shared expense in November, so its "Paid by" pill is on offer (plan 9P K216).
+    load(OCTOBER, NOVEMBER, { expenses: [spent('x9', 10, '2026-11-07', 'shared', parts(5, 5))], income: [earned('i5', 10, '2026-11-06', 'shared', 'other')] })
     page()
     paidBy(SHARED)
     expect(leftoverLine()).toBeNull()

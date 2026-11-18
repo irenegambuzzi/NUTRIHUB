@@ -16,7 +16,9 @@ import { OneTimeToggle } from '../inventory/OneTimeToggle'
 import { UnitOptions } from '../grocery/shared'
 import { ShopPicker } from './ShopPicker'
 import { ExpenseCategoryManager } from './ExpenseCategoryPicker'
-import { DEFAULT_UNIT, PAID_BY_OPTIONS } from '../../data/constants'
+import { DEFAULT_UNIT } from '../../data/constants'
+import { ACCOUNT_OPTIONS, PAYER_MISSING } from '../../lib/payers'
+import { PayerSelect } from './PayerSelect'
 import { budgetAutoFill } from '../../lib/categorySuggest'
 import { cn } from '../../lib/cn'
 import { decimalProblem, moneyText } from '../../lib/decimal'
@@ -94,7 +96,8 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   const [shopId, setShopId] = useState('')
   const [date, setDate] = useState(localDateString)
   const [dateOk, setDateOk] = useState(true)
-  const [paidBy, setPaidBy] = useState('shared')
+  // No payer at the start (plan 9P K217): saving waits until one is chosen.
+  const [paidBy, setPaidBy] = useState('')
   const [split, setSplit] = useState(emptySplit)
   const [rows, setRows] = useState(() => [emptyRow(1)])
   const [nextKey, setNextKey] = useState(2)
@@ -139,7 +142,7 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
   // Shared expense, checked again whenever a price or discount changes.
   const splitOn = ready === true && paidBy === SHARED
   const splitCheck = splitOn ? checkSplit(split, total) : null
-  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : problems.find(Boolean) || priced.problem || splitCheck?.problem || ''
+  const formProblem = !dateOk ? 'Fix the date first (DD/MM/YYYY).' : !paidBy ? PAYER_MISSING : problems.find(Boolean) || priced.problem || splitCheck?.problem || ''
 
   // Another payer than Shared: the parts typed are cleared (K11).
   const choosePayer = (value) => {
@@ -298,13 +301,8 @@ export function PurchaseForm({ expenseCategories, mainCategories, subsOf, addCat
           </div>
           <div>
             <Label>Paid by</Label>
-            <Select value={paidBy} onChange={(e) => choosePayer(e.target.value)} aria-label="Paid by">
-              {PAID_BY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            {/* New data: the accounts only, never "Shared" (plan 9P K216). */}
+            <PayerSelect value={paidBy} onChange={choosePayer} options={ACCOUNT_OPTIONS} label="Paid by" />
           </div>
         </div>
         {splitOn && (
