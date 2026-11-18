@@ -8,7 +8,8 @@ import { ExplorerCharts, ExplorerList } from '../components/expenses/MoneyExplor
 import { useMoneyExplorer } from '../hooks/useMoneyExplorer'
 import { ClosedBar } from '../components/ui/ClosedBar'
 import { ExpenseRow, TripRow } from '../components/expenses/EntryRows'
-import { BulkStoreDialog, TripStoreDialog } from '../components/expenses/StoreDialogs'
+import { BulkStoreDialog } from '../components/expenses/StoreDialogs'
+import { OrderGroupChangePanel, PurchaseChangePanel } from '../components/expenses/ChangePurchase'
 import { useFlow } from '../hooks/useFlow'
 import { ExpenseGroup, PurchaseGroup } from '../components/expenses/ExpenseGroup'
 import { CategoryTotals } from '../components/expenses/CategoryTotals'
@@ -101,13 +102,21 @@ export function ExpensesPage() {
       <Layers size={12} /> Open the order group
     </button>
   )
-  const [tripStoreFor, setTripStoreFor] = useState(null) // a trip
   const [bulkStore, setBulkStore] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const tripOf = (tripId, items) => tripById.get(tripId) ?? { id: tripId, trip_date: items[0].expense_date, shop_id: null, source: 'shop' }
   // Every loaded expense of a purchase (the whole purchase, whatever the
   // filters show).
   const tripExpenses = (tripId) => expenses.filter((e) => e.trip_id === tripId)
+  // "Change purchase ▾" (plan 9P K204, K207): the inline panel of a
+  // purchase row (Store · Date · Paid by of the whole purchase: every
+  // expense of it, also those a filter or a person pill hides), and of an
+  // order group's row (saved like its "Order group" sheet).
+  const purchasePanel = (trip) => (close) => {
+    const all = tripExpenses(trip.id)
+    return <PurchaseChangePanel trip={trip} expenses={all} shopId={tripShopId(all, trip)} flowReady={flow.ready} onClose={close} />
+  }
+  const groupPanel = (groupId) => (close) => <OrderGroupChangePanel groupId={groupId} onClose={close} />
 
   // An expense of a purchase: deleting it alone would leave the rest of
   // the purchase as it is, so undoing the purchase the way it was made is
@@ -351,6 +360,7 @@ export function ExpensesPage() {
             note={groupDiscountNote(members) || null}
             noteOf={discountNote}
             extra={openGroupButton(g.orderGroupId)}
+            changePanel={groupPanel(g.orderGroupId)}
           />
         )
       }
@@ -385,7 +395,7 @@ export function ExpensesPage() {
           itemOf={(line) => pantryById.get(line.pantry_item_id) ?? null}
           onEdit={editExpense}
           onDelete={removeExpense}
-          onChangeStore={setTripStoreFor}
+          changePanel={purchasePanel(trip)}
           onUndo={undoPurchase}
           onSplitMerged={(t) => splitPurchase(t.id)}
         />
@@ -540,6 +550,7 @@ export function ExpensesPage() {
                               icon={Layers}
                               note={groupDiscountNote(groupMembers(part.orderGroupId, orders)) || null}
                               extra={openGroupButton(part.orderGroupId)}
+                              changePanel={groupPanel(part.orderGroupId)}
                             />
                           ) : (
                             <TripRow
@@ -549,7 +560,7 @@ export function ExpensesPage() {
                               shop={shopOf(tripShopId(part.items, tripById.get(part.tripId)))}
                               fullTotal={purchasePart(part.items, tripExpenses(part.tripId)).fullTotal}
                               renderEntry={renderExpense}
-                              onChangeTripStore={setTripStoreFor}
+                              changePanel={purchasePanel(tripOf(part.tripId, part.items))}
                             />
                           )
                         )
@@ -559,15 +570,6 @@ export function ExpensesPage() {
             ))}
         </div>
 
-        {tripStoreFor && (
-          <TripStoreDialog
-            trip={tripStoreFor}
-            count={expenses.filter((e) => e.trip_id === tripStoreFor.id).length}
-            current={tripShopId(expenses.filter((e) => e.trip_id === tripStoreFor.id), tripStoreFor)}
-            flowReady={flow.ready}
-            onClose={() => setTripStoreFor(null)}
-          />
-        )}
         {groupSheet && <OrderGroupSheet groupId={groupSheet} shopById={shopById} onClose={() => setGroupSheet(null)} />}
         {bulkStore && <BulkStoreDialog expenses={filteredExpenses.map(realExpense)} shopOf={shopOf} names={namesOf} onClose={() => setBulkStore(false)} />}
 

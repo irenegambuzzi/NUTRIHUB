@@ -36,7 +36,7 @@ const row = (props) =>
       lineOf={(e) => (e.id === 'e1' ? { quantity: 2, unit: 'pcs' } : null)}
       onEdit={vi.fn()}
       onDelete={vi.fn()}
-      onChangeStore={vi.fn()}
+      changePanel={() => null}
       onUndo={vi.fn()}
       {...props}
     />
@@ -71,7 +71,9 @@ describe('a purchase in the MONEY list', () => {
     const sub = container.querySelector('[data-dot="sub"]')
     expect(sub.className).toContain('w-[5px] h-[5px]')
     expect(screen.getAllByLabelText('Edit expense')).toHaveLength(2)
-    expect(screen.getByText(/Change the store of the whole purchase/)).toBeTruthy()
+    // Plan 9P K204: one "Change purchase ▾" in place of the store button.
+    expect(screen.getByRole('button', { name: 'Change purchase' })).toBeTruthy()
+    expect(screen.queryByText(/Change the store of the whole purchase/)).toBeNull()
     expect(screen.getByText('Undo purchase')).toBeTruthy()
   })
 

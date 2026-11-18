@@ -3489,9 +3489,9 @@ describe('9J: "It arrived!" through arrive_order / unarrive_order as they are (n
     }
   }, 120000)
 
-  it('no SQL file after 028 touches them (029, 030, 032 and 033 never do; 031 replaces unarrive_order, tested in its own block, and never arrive_order), and here arrive_order / unarrive_order are still the ones of 021', async () => {
+  it('no SQL file after 028 touches them (029, 030, 032, 033 and 034 never do; 031 replaces unarrive_order, tested in its own block, and never arrive_order), and here arrive_order / unarrive_order are still the ones of 021', async () => {
     const later = fs.readdirSync(dir).filter((f) => /^\d{3}_.*\.sql$/.test(f) && f >= '029').sort()
-    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql', '031_reopen_created_items.sql', '032_item_names.sql', '033_transfers.sql'])
+    expect(later).toEqual(['029_shared_parts.sql', '030_new_item_units.sql', '031_reopen_created_items.sql', '032_item_names.sql', '033_transfers.sql', '034_change_purchase.sql'])
     for (const f of later.filter((f) => f !== '031_reopen_created_items.sql')) expect(fs.readFileSync(path.join(dir, f), 'utf8')).not.toMatch(/arrive_order/)
     const v031 = fs.readFileSync(path.join(dir, '031_reopen_created_items.sql'), 'utf8').replace(/--.*$/gm, '')
     expect([...v031.matchAll(/create or replace function (\w+)/g)].map((m) => m[1])).toEqual(['reopen_shopping_trip', 'unarrive_order'])
@@ -7863,5 +7863,436 @@ describe('033: transfers between the accounts and Joint\'s starting balance — 
     expect(cardOf(P2)).toEqual({ income: 1400, expenses: 625.25, balance: 893.16, line: 438.41, available: { amount: 1518.41, percent: 41, over: false } })
     expect(cardOf(P1)).toEqual({ income: 2648, expenses: 456.36, balance: 3798, line: 1906.36, available: { amount: 4254.36, percent: 11, over: false } })
     expect(cardOf('all')).toEqual({ income: 4048, expenses: 1228.42, balance: 5216.83, line: 2344.77, available: { amount: 6445.25, percent: 19, over: false } })
+  })
+})
+
+describe('034: change_purchase — the date and the payer of a whole purchase in one go, guarded with "was" (plan 9P K204–K209)', () => {
+  const file = '034_change_purchase.sql'
+  const sql = fs.readFileSync(path.join(dir, file), 'utf8')
+  const STRANGER = '99999999-9999-9999-9999-999999999999'
+  // The two people as PAID_BY_OPTIONS lists them (never written out here), Joint and Shared.
+  const [P1, P2] = PEOPLE
+  const JOINT = 'joint'
+  const SHARED_CODE = 'shared'
+  const [C1, C2] = PEOPLE.map(partColumn)
+  const DATES = { 1082: (v) => v }
+  let d
+  let older
+  let clientDb
+  let lib, hook, labelOf, ACCOUNT_OPTIONS, chosenPayer, leftoverCard, runToastAction, personalExpenses
+  const CAT = {}
+  const T = {}
+  const rows = async (text, params) => (await d.query(text, params, { parsers: DATES })).rows
+  async function as(db, role, userId, fn) {
+    await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [userId ?? ''])
+    await db.exec(`set role ${role}`)
+    try {
+      return await fn()
+    } finally {
+      await db.exec('reset role')
+    }
+  }
+  const member = (fn) => as(d, 'authenticated', MEMBER, fn)
+  const failure = async (fn) => {
+    try {
+      await fn()
+      return null
+    } catch (error) {
+      return error
+    }
+  }
+  async function databaseBefore(stopAt) {
+    const db = await newDatabase()
+    for (const f of fs.readdirSync(dir).filter((f) => /^0(1[5-9]|2\d|3[0-3])_.*\.sql$/.test(f) && !f.includes('ROLLBACK') && f < stopAt).sort()) await db.exec(fs.readFileSync(path.join(dir, f), 'utf8'))
+    return db
+  }
+  const run = async () => (await d.exec(sql)).at(-1).rows
+  const send = async (payload) => (await member(() => d.query('select * from change_purchase($1::jsonb)', [JSON.stringify(payload)], { parsers: DATES }))).rows[0]
+
+  // A small PostgREST look-alike over PGlite for the app's own
+  // readPurchase / changePurchase / undoChange (lib/supabaseClient).
+  function from(table) {
+    const where = []
+    const params = []
+    const b = new Proxy(
+      {},
+      {
+        get: (_, key) => {
+          if (key === 'then')
+            return (resolve, reject) =>
+              clientDb
+                .query(`select * from ${table}${where.length ? ` where ${where.join(' and ')}` : ''}`, params, { parsers: DATES })
+                .then((r) => ({ data: r.rows, error: null }), (e) => ({ data: null, error: { message: e.message, code: e.code } }))
+                .then(resolve, reject)
+          if (key === 'eq') return (c, v) => (params.push(v), where.push(`${c} = $${params.length}`), b)
+          return () => b
+        },
+      }
+    )
+    return b
+  }
+  async function rpc(name, args) {
+    try {
+      const r = await as(clientDb, 'authenticated', MEMBER, () => clientDb.query(`select to_jsonb(t) as r from ${name}(payload => $1::jsonb) t`, [JSON.stringify(args.payload)]))
+      return { data: r.rows[0]?.r ?? null, error: null }
+    } catch (e) {
+      return { data: null, error: { message: e.message, code: e.code } }
+    }
+  }
+
+  // Everything but change_purchase: rows, columns, constraints, functions,
+  // policies, grants, live sync.
+  const everythingElse = async () => ({
+    tables: await rows(`select c.relname as t, (xpath('/row/h/text()', query_to_xml(format('select md5(coalesce(string_agg(x::text, ''|'' order by x::text), '''')) as h from public.%I x', c.relname), false, true, '')))[1]::text as h
+      from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r' order by 1`),
+    columns: await rows(`select table_name, column_name, data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' order by 1, 2`),
+    constraints: await rows(`select conrelid::regclass::text as t, conname, pg_get_constraintdef(c.oid) as d from pg_constraint c join pg_namespace s on s.oid = c.connamespace where s.nspname = 'public' order by 1, 2`),
+    functions: await rows(`select p.oid::regprocedure::text as f, md5(p.prosrc) as src, p.prosecdef, p.proconfig::text as cfg, p.proacl::text as acl from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public' and p.proname <> 'change_purchase' order by 1`),
+    policies: await rows(`select tablename, policyname, cmd, roles::text, qual, with_check from pg_policies order by 1, 2`),
+    grants: await rows(`select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by 1, 2, 3`),
+    realtime: await rows(`select tablename from pg_publication_tables where pubname = 'supabase_realtime' order by 1`),
+  })
+  let before
+
+  // A purchase written straight into the tables. lines: [{ amount, paid_by?,
+  // parts?: { code: € }, date?, merged?, before? (the store before the merge) }].
+  async function purchase({ date, paidBy = null, source = 'shop', lines, photos = [], cards = [], shop = null, cat }) {
+    const id = crypto.randomUUID()
+    const total = lines.reduce((s, l) => s + Math.round(l.amount * 100), 0) / 100
+    await rows(`insert into shopping_trips (id, trip_date, paid_by, source, total, shop_id) values ($1, $2, $3, $4, $5, $6)`, [id, date, paidBy, source, total, shop])
+    for (const [i, l] of lines.entries()) {
+      await rows(
+        `insert into expenses (category_id, amount, description, paid_by, expense_date, trip_id, shop_id, ${C1}, ${C2}, merged_at, shop_before_merge)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [cat, l.amount, `TEST 034 line ${i + 1}`, l.paid_by ?? paidBy, l.date ?? date, id, shop, l.parts?.[P1] ?? null, l.parts?.[P2] ?? null, l.merged ? '2026-11-15T10:00:00Z' : null, l.merged ? l.before ?? null : null]
+      )
+    }
+    for (const [i, p] of photos.entries()) await rows(`insert into receipt_photos (receipt_date, trip_id, path) values ($1, $2, $3)`, [p, id, `test/${id}/${i}.jpg`])
+    for (const payer of cards) await rows(`insert into grocery_items (name, payer, trip_id, completed) values ('TEST 034 card', $1, $2, true)`, [payer, id])
+    return id
+  }
+  // The purchase as the app reads it (lib/changePurchase.purchaseState).
+  async function stateOf(id) {
+    const [trip] = await rows('select * from shopping_trips where id = $1', [id])
+    const of = (table) => rows(`select * from ${table} where trip_id = $1`, [id])
+    return lib.purchaseState({ trip, expenses: await of('expenses'), photos: await of('receipt_photos'), cards: await of('grocery_items') })
+  }
+  // What change_purchase must never touch.
+  const kept = async (id) => ({
+    expenses: await rows(`select id, amount::text, merged_at::text, shop_before_merge, shop_id, category_id, description from expenses where trip_id = $1 order by id`, [id]),
+    trip: await rows(`select total::text, shop_id, source, coupon_total::text from shopping_trips where id = $1`, [id]),
+    cards: await rows(`select id, in_cart, completed, name from grocery_items where trip_id = $1 order by id`, [id]),
+    photos: await rows(`select id, path from receipt_photos where trip_id = $1 order by id`, [id]),
+  })
+  // The Money "Paid by" pills of a month for one category (the app's own
+  // personalExpenses: a person's own expenses + their part of each Shared one).
+  async function pills(fromDay, toDay, cat) {
+    const list = await rows(
+      `select id, expense_date, amount::float as amount, paid_by, ${C1}::float as ${C1}, ${C2}::float as ${C2} from expenses where category_id = $1 and expense_date >= $2 and expense_date < $3`,
+      [cat, fromDay, toDay]
+    )
+    const total = (who) => personalExpenses(list, who).reduce((s, e) => s + Math.round(Number(e.amount) * 100), 0) / 100
+    return { all: total('all'), [P1]: total(P1), [P2]: total(P2), [JOINT]: total(JOINT), shared: list.some((e) => e.paid_by === SHARED_CODE) }
+  }
+  const sameMoney = (amounts) => amounts.reduce((s, a) => s + Math.round(a * 100), 0) / 100
+
+  beforeAll(async () => {
+    d = await databaseBefore('034')
+    lib = await import('../src/lib/changePurchase.js')
+    hook = await import('../src/hooks/useChangePurchase.js')
+    const { PAID_BY_OPTIONS } = await import('../src/data/constants.js')
+    labelOf = (code) => PAID_BY_OPTIONS.find((o) => o.value === code).label
+    ;({ ACCOUNT_OPTIONS, chosenPayer } = await import('../src/lib/payers.js'))
+    ;({ leftoverCard } = await import('../src/lib/leftover.js'))
+    ;({ runToastAction } = await import('../src/lib/feedback.js'))
+    ;({ personalExpenses } = await import('../src/lib/sharedParts.js'))
+    for (const name of ['A', 'C', 'D', 'H']) CAT[name] = (await rows(`insert into expense_categories (name) values ($1) returning id`, [`Groceries 034 ${name}`]))[0].id
+    // A (cases a, b): 15/11/2026, the first person, 13 expenses €40.41, a
+    // photo on its day and one moved alone to 16/11; around it the months.
+    T.A = await purchase({ date: '2026-11-15', paidBy: P1, cat: CAT.A, lines: [...Array(12).fill({ amount: 3.11 }), { amount: 3.09 }], photos: ['2026-11-15', '2026-11-16'], cards: [P1, P1] })
+    await rows(
+      `insert into expenses (category_id, amount, description, paid_by, expense_date) values
+        ($1, 100.00, 'TEST 034 oct 1', $2, '2026-10-10'), ($1, 50.00, 'TEST 034 oct 2', $3, '2026-10-10'),
+        ($1, 20.00, 'TEST 034 nov 1', $2, '2026-11-05'), ($1, 30.00, 'TEST 034 nov 2', $3, '2026-11-05')`,
+      [CAT.A, P1, P2]
+    )
+    await rows(
+      `insert into income (amount, income_date, received_by, source) values (1000, '2026-10-01', $1, 'TEST 034'), (800, '2026-10-01', $2, 'TEST 034'), (1000, '2026-11-01', $1, 'TEST 034'), (800, '2026-11-01', $2, 'TEST 034')`,
+      [P1, P2]
+    )
+    // C (case c): the two Shared purchases of 14/11 (36 + 4 expenses, €111.05
+    // + €35.76, parts €73.40 / €73.41 in all), and each person's own November.
+    const lidl = [...Array(35).fill(3.08), 3.25]
+    const coop = Array(4).fill(8.94)
+    const shared = (amounts, first, second) => spreadParts(amounts, { [P1]: first, [P2]: second }).map((p, i) => ({ amount: amounts[i], parts: p }))
+    T.lidl = await purchase({ date: '2026-11-14', paidBy: SHARED_CODE, cat: CAT.C, lines: shared(lidl, 55.52, 55.53), cards: [SHARED_CODE, SHARED_CODE, SHARED_CODE] })
+    T.coop = await purchase({ date: '2026-11-14', paidBy: SHARED_CODE, cat: CAT.C, lines: shared(coop, 17.88, 17.88), cards: [SHARED_CODE] })
+    await rows(`insert into expenses (category_id, amount, description, paid_by, expense_date) values ($1, 456.36, 'TEST 034 own 1', $2, '2026-11-10'), ($1, 625.25, 'TEST 034 own 2', $3, '2026-11-10')`, [CAT.C, P1, P2])
+    // D (case d): mixed payers, 3 + 2 expenses, the purchase's payer empty.
+    T.mixed = await purchase({ date: '2026-11-07', paidBy: null, cat: CAT.D, lines: [{ amount: 1, paid_by: P1 }, { amount: 2, paid_by: P1 }, { amount: 3, paid_by: P1 }, { amount: 4, paid_by: P2 }, { amount: 5, paid_by: P2 }] })
+    before = await everythingElse()
+    clientDb = d
+    Object.assign(appClient, { from, rpc })
+  }, 240000)
+
+  afterAll(() => {
+    for (const k of ['from', 'rpc']) delete appClient[k]
+  })
+  beforeEach(() => vi.spyOn(console, 'error').mockImplementation(() => {}))
+  afterEach(() => {
+    getToasts().forEach((t) => dismissToast(t.id))
+    clientDb = d
+    vi.restoreAllMocks()
+  })
+
+  it('the file: one transaction, the guard (032 and 033), only change_purchase made, no data written, the word list, ends with "-- End of 034"', () => {
+    expect(sql.match(/^begin;$/gm)).toHaveLength(1)
+    expect(sql.match(/^commit;$/gm)).toHaveLength(1)
+    expect(sql.trimEnd().split('\n').pop()).toBe('-- End of 034')
+    expect(sql).toContain("raise exception 'Run 032_item_names.sql first.'")
+    expect(sql).toContain("raise exception 'Run 033_transfers.sql first.'")
+    const code = sql.replace(/--.*$/gm, '')
+    expect([...code.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(\w+)/gi)].map((m) => m[1])).toEqual(['change_purchase'])
+    expect(code).not.toMatch(/\b(drop|delete|truncate|alter)\b/i)
+    // `update` only inside the function's body, never while the file runs.
+    const body = code.slice(code.indexOf('create or replace function change_purchase'), code.indexOf('end $$;', code.indexOf('create or replace function change_purchase')))
+    expect(body.match(/\bupdate\s+\w+\s+\w+\s+set\b/gi).map((s) => s.split(/\s+/)[1])).toEqual(['expenses', 'receipt_photos', 'grocery_items', 'shopping_trips'])
+    expect(body.match(/\bupdate\b/gi)).toHaveLength(8) // the four writes and the four row locks (for update)
+    // Outside it (quoted texts of the check SELECT left out): no write at all.
+    expect(code.replace(body, '').replace(/'[^']*'/g, "''").match(/\b(update|insert)\b/gi)).toBeNull()
+    expect(code).toMatch(/security invoker/)
+    expect(code).toMatch(/set search_path = public/)
+    expect(code).toContain('revoke execute on function change_purchase(jsonb) from public, anon;')
+    expect(code).toContain('grant execute on function change_purchase(jsonb) to authenticated;')
+    // The header answers the word list.
+    for (const word of ['drop     no', 'delete   no', 'truncate no', 'update   yes']) expect(sql).toContain(word)
+    // No household label anywhere in it (the payer codes name the part columns, as in 029).
+    for (const code of PEOPLE) expect(sql).not.toContain(labelOf(code))
+  })
+
+  it('before 033: refused with "Run 033_transfers.sql first.", nothing made', async () => {
+    older = await databaseBefore('033')
+    const error = await failure(() => older.exec(sql))
+    expect(error.message).toContain('Run 033_transfers.sql first.')
+    await older.exec('rollback')
+    expect((await older.query(`select to_regprocedure('public.change_purchase(jsonb)') as f`)).rows[0].f).toBeNull()
+  }, 240000)
+
+  it('run twice: 10 check rows, each "ok"; every other function, policy, grant and row unchanged after each run', async () => {
+    const first = await run()
+    expect(first).toHaveLength(10)
+    expect(first.filter((r) => r.status !== 'ok')).toEqual([])
+    expect(await everythingElse()).toEqual(before)
+    const second = await run()
+    expect(second.map((r) => r.status)).toEqual(Array(10).fill('ok'))
+    expect(await everythingElse()).toEqual(before)
+  }, 60000)
+
+  it('anon may not run it; a logged-in stranger is refused (42501); nothing changes', async () => {
+    const was = await stateOf(T.A)
+    const payload = lib.changePayload(T.A, was, lib.withDate(was, '2026-11-13'))
+    const anon = await failure(() => as(d, 'anon', null, () => d.query('select * from change_purchase($1::jsonb)', [JSON.stringify(payload)])))
+    expect(anon.message).toMatch(/permission denied/)
+    const stranger = await failure(() => as(d, 'authenticated', STRANGER, () => d.query('select * from change_purchase($1::jsonb)', [JSON.stringify(payload)])))
+    expect(stranger.code).toBe('42501')
+    expect(await stateOf(T.A)).toEqual(was)
+  })
+
+  it('a: 15/11 → 13/11 through the app (readPurchase, changePurchase): the 13 expenses, the purchase and both photos on 13/11, amounts and payer unchanged, the toast; Undo → 15/11 and the photo on 16/11 again; November unchanged', async () => {
+    const novBefore = await pills('2026-11-01', '2026-12-01', CAT.A)
+    expect(novBefore).toMatchObject({ all: 90.41, [P1]: 60.41 })
+    const untouched = await kept(T.A)
+    const was = await hook.readPurchase(T.A)
+    expect(was.expenses).toHaveLength(13)
+    expect(sameMoney((await kept(T.A)).expenses.map((e) => Number(e.amount)))).toBe(40.41)
+    const now = lib.withDate(was, '2026-11-13')
+    const result = await hook.changePurchase(lib.changePayload(T.A, was, now), { message: lib.dateToast(now.expenses.length, '2026-11-13') })
+    expect(result.error).toBeNull()
+    const after = await stateOf(T.A)
+    expect(after.trip).toEqual({ trip_date: '2026-11-13', paid_by: P1 })
+    expect(after.expenses.every((e) => e.expense_date === '2026-11-13' && e.paid_by === P1 && e[C1] === null && e[C2] === null)).toBe(true)
+    expect(after.photos.map((p) => p.receipt_date)).toEqual(['2026-11-13', '2026-11-13'])
+    expect(after.cards.map((c) => c.payer)).toEqual([P1, P1])
+    expect(await kept(T.A)).toEqual(untouched)
+    expect(await pills('2026-11-01', '2026-12-01', CAT.A)).toEqual(novBefore)
+    const toast = getToasts().find((t) => t.message === 'Date changed for 13 expenses of this purchase · 13/11/2026')
+    expect(toast.action.label).toBe('Undo')
+    await runToastAction(toast.id)
+    expect(await stateOf(T.A)).toEqual(was)
+    expect((await stateOf(T.A)).photos.map((p) => p.receipt_date).sort()).toEqual(['2026-11-15', '2026-11-16'])
+    expect(await kept(T.A)).toEqual(untouched)
+  })
+
+  it('b: → 28/10/2026: November −€40.41, October +€40.41 (the person and Everyone), the December leftover from November unchanged; Undo exact', async () => {
+    const months = async () => ({ oct: await pills('2026-10-01', '2026-11-01', CAT.A), nov: await pills('2026-11-01', '2026-12-01', CAT.A) })
+    const december = async () => {
+      const expenses = await rows(`select id, expense_date, amount::float as amount, paid_by, ${C1}, ${C2} from expenses where category_id = $1 and expense_date < '2026-12-01'`, [CAT.A])
+      const income = await rows(`select id, income_date, amount::float as amount, received_by from income where source = 'TEST 034' and income_date < '2026-12-01'`)
+      const view = { pill: 'month', from: 2026 * 12 + 11, months: 1, choice: null }
+      const card = (who) => leftoverCard({ view, incomePerson: who, expensesPerson: who, income: 0, expenses: 0, before: { expenses, income, transfers: [] }, transfers: [] }).line
+      return { all: card('all').amount, [P1]: card(P1).amount, month: card('all').month }
+    }
+    const was = await stateOf(T.A)
+    const first = await months()
+    expect(first.oct).toMatchObject({ all: 150, [P1]: 100 })
+    expect(first.nov).toMatchObject({ all: 90.41, [P1]: 60.41 })
+    const dec = await december()
+    // 3600.00 received − 240.41 spent before December; the person 2000.00 − 160.41.
+    expect(dec).toMatchObject({ all: 3359.59, [P1]: 1839.59 })
+    const payload = lib.changePayload(T.A, was, lib.withDate(was, '2026-10-28'))
+    await send(payload)
+    const moved = await months()
+    expect(moved.nov).toMatchObject({ all: 50, [P1]: 20 })
+    expect(moved.oct).toMatchObject({ all: 190.41, [P1]: 140.41 })
+    expect(sameMoney([first.nov.all, -moved.nov.all])).toBe(40.41)
+    expect(sameMoney([moved.oct[P1], -first.oct[P1]])).toBe(40.41)
+    expect(await december()).toEqual(dec)
+    await send(lib.undoPayload(payload))
+    expect(await stateOf(T.A)).toEqual(was)
+    expect(await months()).toEqual(first)
+  })
+
+  it('c: the two Shared purchases of 14/11 → Joint, each: every expense Joint without parts, the purchase and its cards Joint; the November pills; Undo of each → Shared with the exact parts per expense', async () => {
+    const nov = () => pills('2026-11-01', '2026-12-01', CAT.C)
+    expect(await nov()).toEqual({ all: 1228.42, [P1]: 529.76, [P2]: 698.66, [JOINT]: 0, shared: true })
+    const wasLidl = await stateOf(T.lidl)
+    const wasCoop = await stateOf(T.coop)
+    expect([wasLidl.expenses.length, wasCoop.expenses.length]).toEqual([36, 4])
+    const partTotal = (code) => sameMoney([...wasLidl.expenses, ...wasCoop.expenses].map((e) => e[partColumn(code)]))
+    expect([partTotal(P1), partTotal(P2)]).toEqual([73.4, 73.41])
+    expect(lib.payerNowLine(wasLidl.expenses, ACCOUNT_OPTIONS)).toBe(`Now: ${labelOf(SHARED_CODE)} — its parts are cleared when you save.`)
+    expect(lib.startPayer(wasLidl.expenses, ACCOUNT_OPTIONS)).toBe('')
+    const toLidl = lib.changePayload(T.lidl, wasLidl, lib.withPayer(wasLidl, JOINT))
+    const toCoop = lib.changePayload(T.coop, wasCoop, lib.withPayer(wasCoop, JOINT))
+    await send(toLidl)
+    await send(toCoop)
+    for (const id of [T.lidl, T.coop]) {
+      const s = await stateOf(id)
+      expect(s.trip.paid_by).toBe(JOINT)
+      expect(s.expenses.every((e) => e.paid_by === JOINT && e[C1] === null && e[C2] === null)).toBe(true)
+      expect(s.cards.every((c) => c.payer === JOINT)).toBe(true)
+    }
+    expect(await nov()).toEqual({ all: 1228.42, [P1]: 456.36, [P2]: 625.25, [JOINT]: 146.81, shared: false })
+    expect(lib.payerToast(36, JOINT)).toBe(`Paid by changed for 36 expenses of this purchase · ${labelOf(JOINT)}`)
+    await send(lib.undoPayload(toLidl))
+    expect(await stateOf(T.lidl)).toEqual(wasLidl)
+    expect(await nov()).toMatchObject({ [JOINT]: 35.76, shared: true })
+    await send(lib.undoPayload(toCoop))
+    expect(await stateOf(T.coop)).toEqual(wasCoop)
+    expect(await nov()).toEqual({ all: 1228.42, [P1]: 529.76, [P2]: 698.66, [JOINT]: 0, shared: true })
+  })
+
+  it('d: mixed payers (3 + 2, the purchase\'s payer empty): "Now: … (3) · … (2)", the select on "Choose…"; → Joint all 5; Undo → 3 + 2 exactly, the payer empty again', async () => {
+    const was = await stateOf(T.mixed)
+    expect(was.trip.paid_by).toBeNull()
+    expect(lib.payerNowLine(was.expenses, ACCOUNT_OPTIONS)).toBe(`Now: ${labelOf(P1)} (3) · ${labelOf(P2)} (2)`)
+    expect(lib.startPayer(was.expenses, ACCOUNT_OPTIONS)).toBe('')
+    const payload = lib.changePayload(T.mixed, was, lib.withPayer(was, JOINT))
+    expect((await send(payload)).paid_by).toBe(JOINT)
+    expect((await stateOf(T.mixed)).expenses.map((e) => e.paid_by)).toEqual(Array(5).fill(JOINT))
+    await send(lib.undoPayload(payload))
+    const back = await stateOf(T.mixed)
+    expect(back).toEqual(was)
+    expect(back.expenses.filter((e) => e.paid_by === P1)).toHaveLength(3)
+    expect(back.expenses.filter((e) => e.paid_by === P2)).toHaveLength(2)
+  })
+
+  it('e: K208 — Paid by → Joint, then "Reopen purchase": the cards are back in the cart with Joint chosen (K225)', async () => {
+    const cards = await rows(
+      `insert into grocery_items (name, quantity, unit, price, payer, in_cart) values ('TEST 034 milk', 1, 'pcs', 1.5, $1, true), ('TEST 034 bread', 1, 'pcs', 2, $1, true) returning id`,
+      [P1]
+    )
+    const tripId = crypto.randomUUID()
+    await member(() =>
+      d.query('select confirm_shopping_trip($1::jsonb)', [
+        JSON.stringify({
+          id: tripId, trip_date: '2026-11-15', at: '2026-11-15T10:00:00Z', shop_id: null, paid_by: P1, photo_ids: [],
+          items: cards.map((c, i) => ({ grocery_item_id: c.id, line_total: [1.5, 2][i], payer: P1, expense_category_id: CAT.D, durable: true })),
+        }),
+      ])
+    )
+    const was = await stateOf(tripId)
+    expect(was.cards.map((c) => c.payer)).toEqual([P1, P1])
+    await send(lib.changePayload(tripId, was, lib.withPayer(was, JOINT)))
+    expect((await member(() => d.query('select reopen_shopping_trip($1) as n', [tripId]))).rows[0].n).toBeGreaterThan(0)
+    const back = await rows(`select payer, in_cart, completed from grocery_items where id = any($1)`, [cards.map((c) => c.id)])
+    expect(back).toEqual([{ payer: JOINT, in_cart: true, completed: false }, { payer: JOINT, in_cart: true, completed: false }])
+    expect(back.map((c) => chosenPayer(c.payer))).toEqual([JOINT, JOINT])
+  })
+
+  it('f: the guard — another device changed the date, or added an expense, after the app read it → refused with the guard text, nothing written; the same request twice → the second writes nothing, no error; a purchase gone → refused', async () => {
+    const id = await purchase({ date: '2026-11-12', paidBy: P2, cat: CAT.D, lines: [{ amount: 1 }, { amount: 2 }], photos: ['2026-11-12'] })
+    const seen = await stateOf(id)
+    const payload = lib.changePayload(id, seen, lib.withDate(seen, '2026-11-11'))
+    // The other device moves one expense.
+    await rows(`update expenses set expense_date = '2026-11-10' where id = $1`, [seen.expenses[0].id])
+    const changed = await stateOf(id)
+    const refused = await failure(() => send(payload))
+    expect(refused.message).toBe(lib.CHANGED_MEANWHILE)
+    expect(await stateOf(id)).toEqual(changed)
+    // Read again: now it goes through.
+    const fresh = await stateOf(id)
+    const again = lib.changePayload(id, fresh, lib.withDate(fresh, '2026-11-11'))
+    await send(again)
+    const xmin = async () => rows(`select xmin::text from expenses where trip_id = $1 union all select xmin::text from shopping_trips where id = $1 union all select xmin::text from receipt_photos where trip_id = $1`, [id])
+    const written = await xmin()
+    expect(await send(again)).toMatchObject({ id, trip_date: '2026-11-11' })
+    expect(await xmin()).toEqual(written)
+    // A row added by the other device after the read.
+    const read = await stateOf(id)
+    await rows(`insert into expenses (category_id, amount, description, paid_by, expense_date, trip_id) values ($1, 3, 'TEST 034 added', $2, '2026-11-11', $3)`, [CAT.D, P2, id])
+    const withRow = await stateOf(id)
+    expect((await failure(() => send(lib.changePayload(id, read, lib.withPayer(read, JOINT))))).message).toBe(lib.CHANGED_MEANWHILE)
+    expect(await stateOf(id)).toEqual(withRow)
+    // The app's own answer: the guard text in the panel's red line.
+    const viaApp = await hook.changePurchase(lib.changePayload(id, read, lib.withPayer(read, JOINT)), { message: 'x' })
+    expect(viaApp.refusal).toBe(lib.CHANGED_MEANWHILE)
+    expect(getToasts().filter((t) => t.message === 'x')).toEqual([])
+    // Gone.
+    expect((await failure(() => send(lib.changePayload(crypto.randomUUID(), read, read)))).message).toBe(lib.CHANGED_MEANWHILE)
+  })
+
+  it('h: a merged purchase and a SHOP purchase with a merged expense: the merged expenses follow date and payer; "Split" afterwards gives back only the store', async () => {
+    const [shopNow, shopBefore] = (await rows(`insert into shops (name) values ('TEST 034 store now'), ('TEST 034 store before') returning id`)).map((r) => r.id)
+    const merged = await purchase({ date: '2026-11-15', paidBy: P1, source: 'merged', shop: shopNow, cat: CAT.H, lines: [1, 2, 3].map((amount) => ({ amount, merged: true, before: shopBefore })) })
+    const mixedIn = await purchase({ date: '2026-11-15', paidBy: P1, shop: shopNow, cat: CAT.H, lines: [{ amount: 4 }, { amount: 5 }, { amount: 6, merged: true, before: shopBefore }] })
+    for (const id of [merged, mixedIn]) {
+      const untouched = await kept(id)
+      const was = await stateOf(id)
+      await send(lib.changePayload(id, was, lib.withDate(was, '2026-11-14')))
+      const dated = await stateOf(id)
+      await send(lib.changePayload(id, dated, lib.withPayer(dated, JOINT)))
+      expect((await stateOf(id)).expenses.every((e) => e.expense_date === '2026-11-14' && e.paid_by === JOINT)).toBe(true)
+      expect(await kept(id)).toEqual(untouched)
+    }
+    const mergedIds = (await rows(`select id from expenses where merged_at is not null and category_id = $1`, [CAT.H])).map((r) => r.id)
+    expect(mergedIds).toHaveLength(4)
+    for (const id of [merged, mixedIn]) await member(() => d.query('select split_merged_purchase($1, null)', [id]))
+    const split = await rows(`select trip_id, merged_at, shop_id, expense_date, paid_by from expenses where id = any($1)`, [mergedIds])
+    expect(split).toEqual(Array(4).fill({ trip_id: null, merged_at: null, shop_id: shopBefore, expense_date: '2026-11-14', paid_by: JOINT }))
+  })
+
+  it('refusals, nothing written: Shared without both parts, a person with parts, `now` naming other rows; the 034 notice through the app before 034', async () => {
+    const id = await purchase({ date: '2026-11-09', paidBy: P1, cat: CAT.D, lines: [{ amount: 7 }, { amount: 8 }] })
+    const was = await stateOf(id)
+    const withExpenses = (expenses) => lib.changePayload(id, was, { ...was, expenses })
+    const shared = withExpenses(was.expenses.map((e) => ({ ...e, paid_by: SHARED_CODE })))
+    expect((await failure(() => send(shared))).message).toContain('A Shared expense needs both parts')
+    const partsOnPerson = withExpenses(was.expenses.map((e) => ({ ...e, paid_by: P2, [C1]: 1, [C2]: 0 })))
+    expect((await failure(() => send(partsOnPerson))).message).toContain('A Shared expense needs both parts')
+    const fewer = withExpenses(was.expenses.slice(1).map((e) => ({ ...e, paid_by: P2 })))
+    expect((await failure(() => send(fewer))).message).toBe(lib.CHANGED_MEANWHILE)
+    expect(await stateOf(id)).toEqual(was)
+    // A Shared expense with both parts, each 0 or more, is accepted (as the
+    // Undo of case c sends); its own Undo puts the purchase back.
+    const sharedOk = withExpenses(was.expenses.map((e) => ({ ...e, paid_by: SHARED_CODE, [C1]: 0, [C2]: Number(e.id === was.expenses[0].id ? 7 : 8) })))
+    expect(await failure(() => send(sharedOk))).toBeNull()
+    await send(lib.undoPayload(sharedOk))
+    expect(await stateOf(id)).toEqual(was)
+    // Before 034 (the database of the test above): the app says the notice, nothing else.
+    clientDb = older
+    const notice = await hook.changePurchase(lib.changePayload(id, was, lib.withDate(was, '2026-11-08')), { message: 'x' })
+    expect(notice.refusal).toBe(lib.CHANGE_PURCHASE_NOTICE)
+    expect(lib.missingChangePurchase(notice.error)).toBe(true)
   })
 })

@@ -1,6 +1,7 @@
 import { NoCategoryLabel } from '../ui/NoCategoryLabel'
 import { useState } from 'react'
-import { ChevronDown, Pencil, RotateCcw, ShoppingCart, Split, Store, Trash2 } from 'lucide-react'
+import { ChevronDown, Pencil, RotateCcw, ShoppingCart, Split, Trash2 } from 'lucide-react'
+import { ChangePurchaseButton } from './ChangePurchase'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { parseLocalDate } from '../../lib/week'
 import { ShopTag } from '../ui/ShopIcon'
@@ -140,20 +141,24 @@ const shortDate = (date) => parseLocalDate(date).toLocaleDateString('en-GB')
 // look and work the same). Collapsed: store · date · total, one dot per
 // main category in it, payers. Opened: the items by main category with a
 // subtotal each; every item with its sub-category (small dot), quantity,
-// amount, and edit / delete as for any expense; then "Change the store of
-// the whole purchase" and Reopen / Undo purchase / Split by its source.
+// amount, and edit / delete as for any expense; then "Change purchase ▾"
+// (plan 9P K204) and Reopen / Undo purchase / Split by its source.
 //   group        { date, items, total } — the expenses shown (with a
 //                category filter on, only that category's part)
 //   fullTotal    the whole purchase, when only a part is shown
 //   mainOf(categoryId), subName(categoryId), styleFor(categoryId)
 //   lineOf(expense) → its purchase line (quantity, unit), if any
 //   itemOf(line) → the HOME item it went into (for its stock unit), if any
+//   changePanel(close) → the inline panel of "Change purchase ▾"
+//                (components/expenses/ChangePurchase.jsx), shown under the
+//                buttons while open; no button without it
 //   onUndo(trip, items) → Reopen / Undo purchase / Split
 //   onSplitMerged(trip) → only the merged expenses out (SHOP/MONEY purchase)
 // The expenses of an order group (plan 9I) use the same row, with no trip:
 // `icon` (instead of the cart), `note` (instead of the coupon, e.g.
 // "(order discount −€3.23)"), `noteOf(expense)` (each item's line instead
-// of its purchase line's history) and `extra` (its own button).
+// of its purchase line's history) and `extra` (its own button); its
+// "Change purchase ▾" saves like the "Order group" sheet (K207).
 export function PurchaseGroup({
   group,
   trip,
@@ -166,7 +171,7 @@ export function PurchaseGroup({
   itemOf = () => null,
   onEdit,
   onDelete,
-  onChangeStore = null,
+  changePanel = null,
   onUndo = null,
   onSplitMerged = null,
   icon: Icon = ShoppingCart,
@@ -175,6 +180,7 @@ export function PurchaseGroup({
   extra = null,
 }) {
   const [open, setOpen] = useState(false)
+  const [changing, setChanging] = useState(false)
   const { items, total } = group
   const date = trip?.trip_date ?? group.date
   const sections = purchaseSections(items, mainOf)
@@ -277,11 +283,7 @@ export function PurchaseGroup({
           ))}
           <div className="mt-2 flex flex-wrap gap-x-4">
             {extra}
-            {trip && onChangeStore && (
-              <button type="button" onClick={() => onChangeStore(trip)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
-                <Store size={12} /> Change the store of the whole purchase
-              </button>
-            )}
+            {changePanel && <ChangePurchaseButton open={changing} onToggle={() => setChanging((v) => !v)} />}
             {trip && onUndo && (
               <button type="button" onClick={() => onUndo(trip, items)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">
                 {undo.kind === 'split' ? <Split size={12} /> : <RotateCcw size={12} />} {undo.label}
@@ -293,6 +295,7 @@ export function PurchaseGroup({
               </button>
             )}
           </div>
+          {changePanel && changing && changePanel(() => setChanging(false))}
         </div>
       )}
     </div>

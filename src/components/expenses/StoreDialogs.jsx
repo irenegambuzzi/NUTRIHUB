@@ -6,7 +6,6 @@ import { SearchBox } from '../ui/SearchBox'
 import { ShopTag } from '../ui/ShopIcon'
 import { ShopPicker } from './ShopPicker'
 import { setExpensesShop } from '../../hooks/useExpenses'
-import { setTripShop } from '../../hooks/usePurchase'
 import { parseLocalDate } from '../../lib/week'
 import { cn } from '../../lib/cn'
 
@@ -34,35 +33,8 @@ function Sheet({ label, onClose, children }) {
   )
 }
 
-// The store of a whole purchase, changed at once: every expense of the
-// purchase (in every budget category) and the purchase itself. Undo is
-// offered.
-export function TripStoreDialog({ trip, count, current, flowReady, onClose }) {
-  const [shopId, setShopId] = useState(current ?? '')
-  const [busy, setBusy] = useState(false)
-  const save = async () => {
-    setBusy(true)
-    const { error } = await setTripShop(trip.id, shopId, { flowReady })
-    setBusy(false)
-    if (!error) onClose()
-  }
-  return (
-    <Sheet label="Store of this purchase" onClose={onClose}>
-      <p className="text-xs text-[var(--color-text-soft)]">
-        Purchase of {parseLocalDate(trip.trip_date).toLocaleDateString('en-GB')}: the store changes for all {count} of its expenses, in every budget category.
-      </p>
-      <ShopPicker value={shopId} onChange={setShopId} label="Bought at" />
-      <div className="flex gap-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button type="button" className="flex-1" disabled={busy} onClick={save}>
-          {busy ? 'Saving…' : 'Save for the whole purchase'}
-        </Button>
-      </div>
-    </Sheet>
-  )
-}
+// (The store of a whole purchase is changed inline now: "Change purchase
+// ▾" → Store, components/expenses/ChangePurchase.jsx, plan 9P K204.)
 
 // One store for several single expenses at once (e.g. older ones, from
 // before stores, or from before trips were saved). Expenses of a shopping

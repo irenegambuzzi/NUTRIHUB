@@ -41,7 +41,8 @@ Contents
      as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
    - 9P. Update round (decided 15–16/11): the search in "Confirm purchase", the
      date and payer of a whole purchase, the Reopen / Undo bug report, the
-     shared bank account; K200–K232, prompts 1 and 2 as built (SQL 033)
+     shared bank account; K200–K237, prompts 1, 2 and 2b as built (SQL 033),
+     prompt 3 "Change purchase ▾" as built (SQL 034)
 10. Risks and decisions
 
 ---
@@ -6860,7 +6861,7 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K202** Under the field "1 of 10 shown — the total counts all 10."; × to clear; when a hidden card needs an answer the bottom line says so with "Show all". Built in prompt 1.
 - **K203** (A) "Paid by (everything)" keeps changing every card, hidden ones too.
 - **K204** (A) Money's opened purchase row gets ONE button "Change purchase ▾"; "Reopen purchase" / "Undo purchase" stay visible. ▾ opens an inline panel (no popup) with Store (today's "Change the store of the whole purchase" moved into it: "Bought at" + save), Date, Paid by. SHOP "Confirm purchase" only gets the search (K201).
-- **K205** Paid by = one payer for the whole purchase (K92), no per-line payer; the payers offered follow K216. Moving to Shared needs the parts (old 9K rule); moving away from Shared clears them.
+- **K205** Paid by = one payer for the whole purchase (K92), no per-line payer, every expense of it (merged ones too). The payers offered are Irene / Akbar / Joint (K216), never Shared; moving away from Shared clears the parts (both empty on every expense, 9K K11). (Corrected 18/11, prompt 3: the old "Moving to Shared needs the parts" no longer applies.)
 - **K206** (A) A date after today is refused: "A purchase can't be after today."
 - **K207** The ▾ on every purchase row of "Expenses History" (SHOP, MONEY, merged, order groups — order groups through the existing save_order_group).
 - **K208** (A) Changing Paid by also changes the payer of the purchase's SHOP cards (Reopen brings them back with the corrected payer). MONEY purchases have no cards.
@@ -6891,12 +6892,14 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K233** (18/11; Kata ragu 1 = b) "Joint's money before day D" = income received by Joint − expenses paid by Joint + transfers into Joint − transfers out of Joint + Joint starting balances, every row dated before D (cents; the Joint card's leftover sum without K166, every period kind). The Income "Received by" pill "Joint" shows by K222 OR when Joint's money before the period's first day is not €0.00 — every period kind, Week too. While that money is not known (rows not read, offline, a failed read): the pill only by K222, but a chosen (or remembered) "Joint" is never reset; known and hidden → "Everyone" the K174 way (remembered). The transfers table missing (before 033) = no transfers (known). Nothing else of the top card changes (Week: no leftover, no "This month", no bar, K169; K166 on the Joint card).
 - **K234** (18/11; Kata ragu 2 = b) Money → Transfers `Joint now €…` = Joint's money before the day after the period's last day (every Joint row up to and including the period's end; future-dated rows of a running period count, K192). Every period kind, Week too; not affected by the person pills; shown also ≤ 0 (`Joint now −€74.33`), same look; hidden while not known. It no longer follows the Joint card's BALANCE.
 - **K235** (18/11; A) the Money "Shared" pill stays by data (K216): shown in a period with a Shared expense. November 2026 shows it today because the two 14/11 purchases (40 expenses, €146.81) are still Shared; it goes by itself once they are changed to Joint (the household's manual step after prompt 3). No date rule; nothing to build.
+- **K236** (A) The "Paid by" choice of "Change purchase ▾" is a select (the existing PayerSelect, like "Edit expense"), label "Paid by", options Irene / Akbar / Joint only. It starts on the payer when every expense of the purchase has the same one of the three. Shared, or mixed payers → it starts on "Choose…" with a grey line under it: `Now: Shared — its parts are cleared when you save.` / `Now: Irene (3) · Akbar (2)` (labels from PAID_BY_OPTIONS in their order; counts = expenses; when a Shared part exists in a mixed purchase, ` — its parts are cleared when you save.` is added). Save without a choice: `Choose who paid.` (the existing text).
+- **K237** Texts (exact; singular with 1: "1 expense"). Button `Change purchase ▾`. Choices `Store` · `Date` · `Paid by`. Every save button `Save for the whole purchase`, next to `Cancel`. Store: today's sheet content moved inline — "Bought at" (ShopPicker), the grey line `Purchase of {DD/MM/YYYY}: the store changes for all {n} of its expenses, in every budget category.`; saved by today's setTripShop unchanged (its toast "Store changed for {n} expense(s) of this purchase" + Undo); the store is not part of change_purchase. Date: DateField labelled `Date`, starting on the purchase date; grey line `All {n} expenses of this purchase move to this day.` (n = 1: `The 1 expense of this purchase moves to this day.`); invalid date: `Fix the date first (DD/MM/YYYY).` Paid by: grey line `All {n} expenses of this purchase get this payer.` (n = 1: `The 1 expense of this purchase gets this payer.`). Toasts with Undo (TOAST_WITH_ACTION_MS = 20 s): `Date changed for {n} expenses of this purchase · {DD/MM/YYYY}` and `Paid by changed for {n} expenses of this purchase · {label}`. Guard: `This purchase changed meanwhile (on another device?) — open it again. Nothing was changed.` Before 034 (function missing): `This needs the database update supabase/034_change_purchase.sql` in the panel's red line for Date and Paid by; Store keeps working. Offline: `You're offline — this needs a connection.` (nothing queued). Failed save: `Couldn't save — check your connection.` + Retry; the panel keeps what was chosen. n = ALL expenses of the purchase (merged ones included), also when a category filter or a person pill shows only part of it. Saving the value it already has → nothing sent, the panel closes, no toast. A purchase whose expenses have different dates (one edited by hand): the date choice starts on shopping_trips.trip_date and the save puts every expense on the new date (one date per purchase, K205).
 
 **Order of work (decided 16/11).**
 
 1. Prompt 1 (no SQL): the Reopen / Undo fix, the search in "Confirm purchase", K195 B, K198 B (as built below).
 2. Prompt 2 (SQL 033): the payer "Joint", transfers, K216–K218 and the transfer screen (designed before the prompt).
-3. Prompt 3 (SQL 034): "Change purchase ▾" + change_purchase (K204–K209).
+3. Prompt 3 (SQL 034): "Change purchase ▾" + change_purchase (K204–K209). Built 18/11 (below); SQL 034 written, not run yet.
 4. Then the household's own changes: the two 14/11 purchases to Joint, the deposits, the starting balance, the date of the 15/11 purchase.
 5. Then the AI round (round 8), then Family Tree (K193).
 
@@ -7294,6 +7297,262 @@ reads the rows before the week (the prompt allows it; nothing else of Week
 changes, K169); before 033 the table missing counts as no transfers, so in
 December the pill shows from Joint's own expenses alone (K233 text);
 future-dated rows inside a running period count in `Joint now` (K192).
+
+iPhone test of Update round prompt 2 and 2b done 18/11/2026: all OK.
+
+### Update round prompt 3 as built (18/11; SQL 034 written, not run)
+
+Built: K204–K209 with K205 (corrected), K216, K236, K237, and the plan.
+One new SQL file, `supabase/034_change_purchase.sql` (never run by
+Claude). No other file in `supabase/` changed except
+`supabase/migrations.test.js` (tests; the 9J file list now includes 034).
+No new browser storage, no new offline queue. Deployed before 034 is run:
+it works before and after it (before: Date and Paid by say the 034 notice,
+Store works as before).
+
+**Files.** New: `lib/changePurchase.js` (the request's shape, `purchaseState`,
+`withDate`, `withPayer`, `changePayload`, `undoPayload`, `hasDate`,
+`hasPayer`, `startPayer`, `payerNowLine`, `dateProblem`, the texts, the
+034 notice, the refusal texts), `hooks/useChangePurchase.js`
+(`readPurchase`, `changePurchase`, `undoChange`), 
+`components/expenses/ChangePurchase.jsx` (`ChangePurchaseButton`,
+`PurchaseChangePanel`, `OrderGroupChangePanel`). Changed:
+`components/expenses/ExpenseGroup.jsx` (`PurchaseGroup`: `changePanel`
+instead of `onChangeStore`), `components/expenses/EntryRows.jsx`
+(`TripRow`: `changePanel` instead of `onChangeTripStore`),
+`pages/ExpensesPage.jsx` (the panels on every purchase and order-group
+row; `TripStoreDialog` and its state gone), `components/expenses/StoreDialogs.jsx`
+(`TripStoreDialog` removed: used nowhere any more; `BulkStoreDialog`
+unchanged). Tests: new `lib/changePurchase.test.js`,
+`components/changePurchase.render.test.jsx`; changed
+`components/expenses/purchaseRow.render.test.jsx`,
+`supabase/migrations.test.js`.
+
+**Where (tap paths).** Money → section Expenses → bar "Expenses (N)" → a
+purchase row "{store} · {DD/MM/YYYY}" → tap (it opens) → bottom, the
+button row: (order groups: "Open the order group") · `Change purchase ▾`
+(pencil icon, accent colour, 36 px, `aria-expanded`; the ▾ is the
+chevron, turned while open) · "Reopen purchase" (SHOP) / "Undo purchase"
+(MONEY) / "Split" (merged) · "Split merged expenses" (a SHOP / MONEY
+purchase with merged expenses) — all as before, wrapping at 375 px. The
+same `Change purchase ▾` on a purchase line and an order-group line of
+the "Sort by" views (a card of "Sort by category" / "Sort by period" → the
+line "{store} · {DD/MM} · {n} items" → tap → under its expenses). It
+replaces "Change the store of the whole purchase" everywhere it was.
+
+**The panel** (inline under the button row, the card look of the "Sort
+by" panels; `region` "Change purchase"): three choice buttons `Store` ·
+`Date` · `Paid by` (`aria-pressed`, 36 px, wrap), none chosen when it
+opens, one open at a time (tapping the open one closes it). Tapping ▾
+again, `Cancel` or a save closes the whole panel. Every choice ends with
+the red line (only when there is something to say), then `Cancel` ·
+`Save for the whole purchase` (36 px, wrap).
+
+| Choice | Field | Grey line | Saved by |
+|---|---|---|---|
+| Store | "Bought at" (ShopPicker), on the store now | `Purchase of 15/11/2026: the store changes for all 13 of its expenses, in every budget category.` | `setTripShop` unchanged (toast `Store changed for 13 expenses of this purchase` + Undo) |
+| Date | DateField `Date`, on `shopping_trips.trip_date` | `All 13 expenses of this purchase move to this day.` / `The 1 expense of this purchase moves to this day.` | `change_purchase` |
+| Paid by | select `Paid by` (PayerSelect): `Choose…` (only while none), Irene, Akbar, Joint | under the select, only for Shared / mixed: `Now: Shared — its parts are cleared when you save.` / `Now: Irene (3) · Akbar (2)` (+ ` — its parts are cleared when you save.` with a Shared part); then `All 5 expenses of this purchase get this payer.` / `The 1 expense of this purchase gets this payer.` | `change_purchase` |
+
+Red lines (in this order where they apply): `Fix the date first
+(DD/MM/YYYY).` · `A purchase can't be after today.` (the device's local
+date, like the transfer form) · `Choose who paid.` · `This needs the
+database update supabase/034_change_purchase.sql` (before 034) · `This
+purchase changed meanwhile (on another device?) — open it again. Nothing
+was changed.` · `Not allowed: log in with the household account.` Toasts:
+`Date changed for 13 expenses of this purchase · 13/11/2026` and `Paid by
+changed for 40 expenses of this purchase · Joint` (n = 1: `1 expense`),
+each with Undo (20 s); `You're offline — this needs a connection.`
+(nothing sent, nothing queued, the panel keeps the choice); a failed
+connection `Couldn't save — check your connection.` + Retry (presses Save
+again while the panel is open; closed: nothing). The Undo of a change
+sends the old values back; refused (the guard) → an error toast with that
+text, no Retry; a failed connection → `Couldn't undo — check your
+connection.` + Retry. n = every expense of the purchase (the database's
+count once read; the loaded ones until then), whatever a category filter
+or a person pill shows. Saving the value it already has (Date: the
+purchase and every expense already on that day; Paid by: every expense
+already that payer without parts; Store: the same store) → nothing sent,
+the panel closes, no toast.
+
+**What the app sends.** When Date or Paid by is chosen, the app reads the
+purchase from the database (`readPurchase`: the trip, every expense with
+its `trip_id`, its receipt photos, its SHOP cards) — its "was"; read again
+at Save when that read failed. The payload (`lib/changePurchase.js`,
+also in the 034 header):
+
+```js
+{ trip_id,
+  was: { trip:     { trip_date, paid_by },                        // paid_by null for a mixed purchase
+         expenses: [{ id, expense_date, paid_by, part_irene, part_akbar }],   // every expense, merged ones too
+         photos:   [{ id, receipt_date }],
+         cards:    [{ id, payer }] },
+  now: { the same shape, the same ids } }
+```
+
+Date: `now` = every expense, the purchase and every photo on the new day.
+Paid by: every expense the payer with both parts empty, the purchase and
+every card the payer (K208). Undo = the same call with `was` and `now`
+swapped (`undoPayload`). After a save the rows are shown at once
+(`patchLocal` on every list that has them) and every started list is read
+again (a purchase moved into another month lands there and in the
+leftover's rows). The store keeps its own path (`setTripShop`).
+
+**Order-group rows** (`OrderGroupChangePanel`, K207): the same three
+choices, saved through the existing `saveGroupDetails` →
+`save_order_group` exactly like the "Order group" sheet: fields `Store`
+(ShopPicker, online by default), `Order date` (DateField), `Paid by`
+(PayerSelect: the accounts, + Shared only for a Shared group); refusals
+`Choose the store of the order.` · `Fix the order date first
+(DD/MM/YYYY).` · `Choose who paid.`; the amber line `Saving changes the
+store, order date and payer of all {n} orders and of their expenses (paid
+by {label}).` (the "(paid by …)" only when the payer changes); the
+database's own refusals in the red line; toast `Order group saved` +
+Undo. Each choice saves only its own field (the others as the group has
+them); the discount stays (`groupDiscount(group)`). The "Order group"
+sheet and "Open the order group" are unchanged.
+
+**SQL 034** (`supabase/034_change_purchase.sql`): one new function
+`change_purchase(payload jsonb) returns shopping_trips`, `language
+plpgsql`, `security invoker`, `set search_path = public`, the household
+check (42501), revoked from public and anon, granted to authenticated.
+One transaction (`begin; … commit;`); a guard at the start (015, 032 —
+`pantry_items.names` and `save_item_names` —, 033 — the `transfers`
+table: `Run 033_transfers.sql first.`). In the function: the purchase is
+locked `for update`, and its expenses, photos and cards; gone → the guard
+text; the rows already equal `now` → nothing written, the purchase
+returned (sent twice = no error); the rows differ from `was` (a value, or
+a row added or missing) → the guard text, nothing written; `now` naming
+other rows → the guard text; `now` without a date → refused; parts: a
+Shared expense needs both (each ≥ 0), any other payer none → refused
+(`A Shared expense needs both parts (each 0 or more); any other payer has
+none. Nothing was changed.`); then only the changed rows of expenses,
+receipt_photos and grocery_items, then the purchase; returns the
+shopping_trips row (as report C.3: the app already knows what it wrote,
+from `now`). No date check in SQL (the app checks; a time zone can never
+refuse Italy's "today"). Never amounts, stock, HOME items (also not
+`pantry_items.payer` / `last_purchased_at`), stock_logs,
+shopping_trip_items, orders, `merged_at`, `shop_before_merge`, the store.
+No existing function replaced; safe to run twice; writes no data while
+being run. The check SELECT has 10 rows, each "ok": the function (returns
+shopping_trips), one version only, security invoker, search_path =
+public, household check, the guard, the parts rule (and
+`expenses_parts_ok` there), public cannot run it, anon cannot run it,
+authenticated can; last line `-- End of 034`. **Destructive words:**
+drop no, delete no, truncate no; `update` yes — four statements, only
+inside the function's body (run when the app calls it, never while the
+file runs; the other four "update" words are the row locks `for update`).
+The header says so; a Supabase "destructive operation" warning, if any,
+comes from those.
+
+**Differences found against report Part C** (written 15/11, before
+Joint; these win):
+
+- Payers: Part C's "Who paid" pills Irene / Akbar / Shared with the parts
+  box for "A person → Shared" (C.4, C.5) are NOT built: "Paid by" (K204) is
+  a select with Irene / Akbar / Joint only (K216, K236); moving away from
+  Shared clears the parts (K205).
+- The request: C.3 sent `was: { trip_date, expenses }` and the new payer
+  per expense; built: `was` / `now` with every value of every row written
+  (trip, expenses, photos, cards), so the Undo restores each photo's own
+  date, each card's payer and the empty payer of a mixed purchase too.
+- The function is in 034 (033 became the transfers file).
+- C.3 "refuse a date after today" in SQL → only in the app (K206).
+- C.2: the popup `TripStoreDialog` is gone (store inline); `setTripShop`
+  unchanged.
+- C.1 / Kata ragu 9 suggested no ▾ on order groups → K207: they get it,
+  through `save_order_group`.
+- C.4's toast "moved to 28/10/2026" → K237's `Date changed for … · 28/10/2026`;
+  C.5's "Shopping day" → `Date`; "on the other phone?" → "on another
+  device?".
+- SHOP cards: `shared` = "not chosen" (K225): the 14/11 cards go to `joint`
+  (chosen, lit after a Reopen) and back to `shared` on Undo.
+- The "Sort by" lines (`TripRow`) had the store button too: they get the
+  ▾ (C.5 did not mention them).
+
+**Decided by rule.** An order group's date after today is accepted, as the
+sheet and `save_order_group` accept it (K207: no new rule). An order
+group whose payer moves away from Shared keeps its expenses' parts, as
+`save_order_group` does (K207; the app reads parts only while Shared, 9K).
+Each choice of an order-group row saves only its own field (K204 one
+choice at a time, K237 a save button per choice). The order-group panel
+shows the sheet's labels, refusals and amber line instead of the
+purchase's grey lines (K207 "exactly … of the sheet"). A date change moves
+every receipt photo of the purchase, also one moved alone to another day;
+its Undo puts each back (K205 "whole purchase", prompt section 4). "The
+value it already has" = the purchase's date and every expense on it /
+every expense on that payer without parts (K237). The guard also answers a
+purchase that is gone (deleted or reopened) (K237 guard text). Offline is
+a toast and nothing is queued; a failed connection is a toast with Retry
+pressing Save again while the panel is open (K237, as Confirm in prompt
+1c). The guard and the 034 notice are in the panel's red line; on an Undo
+they are an error toast.
+
+**Tests: 2723 → 2763 (143 → 145 files).** New `lib/changePurchase.test.js`
+(10: the state's shape; withDate also over an expense on another day;
+withPayer clears parts and sets the cards; the Undo row by row; the same
+value; K236 start and the `Now:` lines; the texts with 1; K206 at 00:30 on
+14/11 local; the 034 notice and the refusal kinds). New
+`components/changePurchase.render.test.jsx` (18, the Money page with the
+real panel and the real `changePurchase` / `undoChange`: the button
+instead of the store button, Reopen kept, no choice at first, ▾ turns, ▾
+and Cancel close; one choice at a time, 36 px; Date 15/11 → 13/11 sends
+the 3 expenses, toast + Undo sends `was`/`now` swapped; K206 tomorrow
+refused, today saved; an invalid date; the same value sends nothing
+(Date, Paid by, Store); Store through `setTripShop`; a mixed purchase
+(options, `Choose…`, `Now: … (3) · … (2)`, `Choose who paid.`, → Joint,
+toast); a Shared purchase (`Now: Shared …`, no Shared option, 1 expense);
+a category filter (the "Sort by" line has the ▾, n = 3, `of total
+€10.22`); a person pill (n = 3); MONEY and merged rows; before 034;
+offline; a failed save + Retry; the guard; an order-group row (Order date
+25/11 accepted, the amber line, `saveGroupDetails` with the place; Paid
+by options, "(paid by …)", the same store sends nothing, Shared group
+offers Shared)). `supabase/migrations.test.js` (+12, block "034": the
+file — one transaction, the two guards, only change_purchase, no
+drop/delete/truncate/alter, `update` only in the body, the word list, no
+household label —; before 033 refused; run twice → 10 ok rows and every
+other function, policy, grant and row unchanged; anon and a stranger
+(42501); a: 13 expenses €40.41 15/11 → 13/11 through the app's
+`readPurchase` / `changePurchase`, the photos too, amounts and payer
+unchanged, the toast, Undo back to 15/11 and the photo on 16/11, November
+€90.41 / €60.41 unchanged; b: → 28/10: November €90.41 → €50.00 and
+€60.41 → €20.00, October €150.00 → €190.41 and €100.00 → €140.41,
+December leftover €3359.59 / €1839.59 unchanged, Undo exact; c: Lidl 36
+expenses €111.05 and Iper Coop 4 expenses €35.76, parts €73.40 / €73.41 →
+Joint: pills Joint €0.00 → €146.81, Irene €529.76 → €456.36, Akbar
+€698.66 → €625.25, Everyone €1228.42, Shared gone; Undo of each → the
+exact parts, Shared back; d: mixed 3 + 2 → Joint → Undo exact, the payer
+empty again; e: K208 + `reopen_shopping_trip` → the cards in the cart on
+Joint, chosen; f: the guard (a date changed, a row added, through the app
+too), sent twice → no row rewritten (xmin), gone; h: a merged purchase and
+a SHOP purchase with a merged expense follow, `split_merged_purchase`
+gives back only the store; refusals and the 034 notice through the app).
+`purchaseRow.render.test.jsx`: the store-button test now expects
+`Change purchase`; the 9J test's file list includes 034. Mutation checks
+(each put back with Edit; the new files are not in git yet, so checked
+by search): the guard off → 1 fails; parts not cleared → 2; the cards'
+payer not changed → 3; K206 off → 2; the Undo with one payer for all → 2.
+Seen while running the whole suite: once the new Retry test timed out —
+a real race (Retry tapped before the screen drew again saw the save still
+busy), fixed in the panel (the busy state is also kept in a ref); once
+`pages/shopAdd.render.test.jsx` "the safety net asks the same questions"
+failed under load (a Shop test this prompt does not touch; green in every
+other run).
+
+**Kata ragu (18/11 prompt 3, tanya Zidane).** Built the safe way until
+answered.
+
+1. A purchase whose rows already break 034's parts rule: a Shared expense
+   without parts (saved by an older app version, 9K K4/K5) or a person's
+   expense still carrying parts. None today (the only Shared expense
+   without a purchase is 27/10 "SPESE CONDOMINIO", with parts; the 14/11
+   purchases have parts). Example: an old Shared purchase without parts →
+   Paid by Joint is saved; its Undo is refused (`A Shared expense needs
+   both parts …`), so it stays Joint. Options: (a) as built (034 strict:
+   Shared → both parts, anything else → none); (b) 034 also accepts a
+   Shared expense with both parts empty (as 9K K11 lets an old one be
+   saved), so that Undo is exact; (c) the app refuses Paid by for such a
+   purchase. Suggestion: (b), changed in 034 before it is run.
 
 ---
 

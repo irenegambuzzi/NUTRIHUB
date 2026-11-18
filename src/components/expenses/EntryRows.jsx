@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ChevronDown, Pencil, ShoppingCart, Store, Trash2 } from 'lucide-react'
+import { ChevronDown, Pencil, ShoppingCart, Trash2 } from 'lucide-react'
+import { ChangePurchaseButton } from './ChangePurchase'
 import { cn } from '../../lib/cn'
 import { PAID_BY_OPTIONS } from '../../data/constants'
 import { ShopTag } from '../ui/ShopIcon'
@@ -90,12 +91,14 @@ export function IncomeRow({ entry, names, onEdit, onDelete }) {
 
 // The expenses of one purchase (SHOP, MONEY or merged) inside a sorted
 // group: one line ("Conad · 16/10 · 3 items"), opened to see and edit each
-// expense, with the store changeable for the whole purchase. `fullTotal`:
-// the whole purchase, when the group shows only a part of it. The expenses
-// of an order group (plan 9I) use the same line, with no trip: `icon`,
-// `note` ("(order discount −€3.23)") and `extra` (its own button).
-export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore, fullTotal = null, icon: Icon = ShoppingCart, note = null, extra = null }) {
+// expense, with "Change purchase ▾" (plan 9P K204: `changePanel(close)` →
+// its inline panel, shown under the button while open). `fullTotal`: the
+// whole purchase, when the group shows only a part of it. The expenses of
+// an order group (plan 9I) use the same line, with no trip: `icon`, `note`
+// ("(order discount −€3.23)") and `extra` (its own button).
+export function TripRow({ part, trip, shop, renderEntry, changePanel = null, fullTotal = null, icon: Icon = ShoppingCart, note = null, extra = null }) {
   const [open, setOpen] = useState(false)
+  const [changing, setChanging] = useState(false)
   const date = trip?.trip_date ?? part.items[0].expense_date
   const payers = [...new Set(part.items.map((e) => paidByLabel(e.paid_by)))]
   const rowNote = note ?? purchaseCouponNote(trip)
@@ -125,12 +128,11 @@ export function TripRow({ part, trip, shop, renderEntry, onChangeTripStore, full
       {open && (
         <div className="pl-2 mb-1.5 border-l-2 border-[var(--color-border)]">
           {part.items.map(renderEntry)}
-          {extra}
-          {trip && onChangeTripStore && (
-            <button type="button" onClick={() => onChangeTripStore(trip)} className="min-h-9 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)]">
-              <Store size={12} /> Change the store of the whole purchase
-            </button>
-          )}
+          <div className="flex flex-wrap gap-x-4">
+            {extra}
+            {changePanel && <ChangePurchaseButton open={changing} onToggle={() => setChanging((v) => !v)} />}
+          </div>
+          {changePanel && changing && changePanel(() => setChanging(false))}
         </div>
       )}
     </div>
