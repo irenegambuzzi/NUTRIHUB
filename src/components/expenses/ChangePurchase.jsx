@@ -20,6 +20,7 @@ import {
   dateToast,
   hasDate,
   hasPayer,
+  ORDER_GROUP_GONE,
   payerLine,
   payerNowLine,
   payerToast,
@@ -275,7 +276,7 @@ export function OrderGroupChangePanel({ groupId, onClose }) {
   if (!group || !members.length) {
     return (
       <Panel choice={choice} onChoice={setChoice}>
-        <Grey>{loaded ? 'This order group no longer exists (ungrouped, maybe on the other phone).' : 'The order group is still loading — it needs a connection.'}</Grey>
+        <Grey>{loaded ? ORDER_GROUP_GONE : 'The order group is still loading — it needs a connection.'}</Grey>
       </Panel>
     )
   }

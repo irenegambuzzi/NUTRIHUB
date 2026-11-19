@@ -41,8 +41,9 @@ Contents
      as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
    - 9P. Update round (decided 15–16/11): the search in "Confirm purchase", the
      date and payer of a whole purchase, the Reopen / Undo bug report, the
-     shared bank account; K200–K237, prompts 1, 2 and 2b as built (SQL 033),
-     prompt 3 "Change purchase ▾" as built (SQL 034)
+     shared bank account; K200–K239, prompts 1, 2 and 2b as built (SQL 033),
+     prompt 3 "Change purchase ▾" as built (SQL 034), the household's manual
+     steps (18–19/11), prompt 3c as built
 10. Risks and decisions
 
 ---
@@ -6894,13 +6895,15 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K235** (18/11; A) the Money "Shared" pill stays by data (K216): shown in a period with a Shared expense. November 2026 shows it today because the two 14/11 purchases (40 expenses, €146.81) are still Shared; it goes by itself once they are changed to Joint (the household's manual step after prompt 3). No date rule; nothing to build.
 - **K236** (A) The "Paid by" choice of "Change purchase ▾" is a select (the existing PayerSelect, like "Edit expense"), label "Paid by", options Irene / Akbar / Joint only. It starts on the payer when every expense of the purchase has the same one of the three. Shared, or mixed payers → it starts on "Choose…" with a grey line under it: `Now: Shared — its parts are cleared when you save.` / `Now: Irene (3) · Akbar (2)` (labels from PAID_BY_OPTIONS in their order; counts = expenses; when a Shared part exists in a mixed purchase, ` — its parts are cleared when you save.` is added). Save without a choice: `Choose who paid.` (the existing text).
 - **K237** Texts (exact; singular with 1: "1 expense"). Button `Change purchase ▾`. Choices `Store` · `Date` · `Paid by`. Every save button `Save for the whole purchase`, next to `Cancel`. Store: today's sheet content moved inline — "Bought at" (ShopPicker), the grey line `Purchase of {DD/MM/YYYY}: the store changes for all {n} of its expenses, in every budget category.`; saved by today's setTripShop unchanged (its toast "Store changed for {n} expense(s) of this purchase" + Undo); the store is not part of change_purchase. Date: DateField labelled `Date`, starting on the purchase date; grey line `All {n} expenses of this purchase move to this day.` (n = 1: `The 1 expense of this purchase moves to this day.`); invalid date: `Fix the date first (DD/MM/YYYY).` Paid by: grey line `All {n} expenses of this purchase get this payer.` (n = 1: `The 1 expense of this purchase gets this payer.`). Toasts with Undo (TOAST_WITH_ACTION_MS = 20 s): `Date changed for {n} expenses of this purchase · {DD/MM/YYYY}` and `Paid by changed for {n} expenses of this purchase · {label}`. Guard: `This purchase changed meanwhile (on another device?) — open it again. Nothing was changed.` Before 034 (function missing): `This needs the database update supabase/034_change_purchase.sql` in the panel's red line for Date and Paid by; Store keeps working. Offline: `You're offline — this needs a connection.` (nothing queued). Failed save: `Couldn't save — check your connection.` + Retry; the panel keeps what was chosen. n = ALL expenses of the purchase (merged ones included), also when a category filter or a person pill shows only part of it. Saving the value it already has → nothing sent, the panel closes, no toast. A purchase whose expenses have different dates (one edited by hand): the date choice starts on shopping_trips.trip_date and the save puts every expense on the new date (one date per purchase, K205).
+- **K238** (18/11; Kata ragu 1 of prompt 3 = a) 034 stays strict about the parts: a Shared expense needs both parts (each 0 or more), any other payer none. Decided with data: a read-only query of 18/11 found 418 expenses that belong to a purchase and 0 that break this rule; after K216 and the household's manual step a (the two 14/11 purchases to Joint) such a purchase can practically not appear; if one does, the change is only refused and nothing is lost. 034 was run as written.
+- **K239** (process, 19/11) Prompt 3c (the "device" text and this plan update) runs after the household's manual steps a–d.
 
 **Order of work (decided 16/11).**
 
 1. Prompt 1 (no SQL): the Reopen / Undo fix, the search in "Confirm purchase", K195 B, K198 B (as built below).
 2. Prompt 2 (SQL 033): the payer "Joint", transfers, K216–K218 and the transfer screen (designed before the prompt).
-3. Prompt 3 (SQL 034): "Change purchase ▾" + change_purchase (K204–K209). Built 18/11 (below); SQL 034 written, not run yet.
-4. Then the household's own changes: the two 14/11 purchases to Joint, the deposits, the starting balance, the date of the 15/11 purchase.
+3. Prompt 3 (SQL 034): "Change purchase ▾" + change_purchase (K204–K209). Built 18/11 (below); SQL 034 run 18/11/2026.
+4. Then the household's own changes: the two 14/11 purchases to Joint, the deposits, the starting balance, the date of the 15/11 purchase. Done 18–19/11/2026 (below, "The household's manual steps").
 5. Then the AI round (round 8), then Family Tree (K193).
 
 ### Update round prompt 1 as built (16/11; code and tests only, no SQL)
@@ -7553,6 +7556,57 @@ answered.
    Shared expense with both parts empty (as 9K K11 lets an old one be
    saved), so that Undo is exact; (c) the app refuses Paid by for such a
    purchase. Suggestion: (b), changed in 034 before it is run.
+
+(Answered 18/11: 1 → K238.)
+
+SQL 034 run 18/11/2026: all 10 checks ok.
+
+Test of Update round prompt 3 done 18/11/2026 (computer and iPhone): all OK.
+
+### The household's manual steps (18–19/11/2026; in the app, no code, no SQL)
+
+Done on the computer, each after an "Export JSON", with the expected numbers checked on screen.
+
+- **a.** Money → Expenses → the two purchases of 14/11/2026 paid from the shared account (Lidl, 36 expenses, €111.05; Iper Coop, 4 expenses, €35.76; K215) → "Change purchase ▾" → "Paid by" → Joint. Money, November 2026, "Paid by" pills: Irene €529.76 → €456.36, Akbar €698.66 → €625.25, Joint €0.00 → €146.81, Everyone €1228.42 unchanged; the "Shared" pill is gone (K235).
+- **b.** Money → Transfers → "Add transfer": Akbar → Joint €300.00 (13/11/2026), Akbar → Joint €20.00 (14/11/2026; the Aptamil, K213), Irene → Joint €300.00 (13/11/2026).
+- **c.** "Starting balance" Joint €52.48 on 01/11/2026 (K219; the shared account had no movement after 16/11/2026, still €525.67).
+- **d.** The purchase of 15/11/2026 (paid by Irene, €40.41, 13 expenses) → "Change purchase ▾" → "Date" → 11/11/2026. 11/11 is the household's best guess, still to be checked against the receipt; if wrong, change it again the same way (a date in another month moves money between months: ask first).
+
+Seen on screen 19/11/2026 (Money → Month November 2026; both pills, "Paid by" and "Received by", on the same account):
+
+| Card | Leftover | INCOME | EXPENSES | Grey lines | BALANCE | This month | Available · spent |
+|---|---|---|---|---|---|---|---|
+| Joint | none (K166) | €0.00 | €146.81 | Transfers · Joint +€620.00; Starting balance · Joint +€52.48 | +€525.67 (= the shared account) | none | €672.48 · 22% |
+| Akbar | October +€438.41 | €1400.00 | €625.25 | Transfers · Akbar −€320.00 | +€893.16 | +€454.75 | €1518.41 · 41% |
+| Irene | October +€1906.36 | €2648.00 | €456.36 | Transfers · Irene −€300.00 | +€3798.00 | +€1891.64 | €4254.36 · 11% |
+| Everyone | October +€2344.77 (Irene +€1906.36 · Akbar +€438.41) | €4048.00 | €1228.42 | Starting balance · Joint +€52.48 | +€5216.83 | +€2872.06 | €6445.25 · 19% |
+
+Money → Transfers: `Joint now €525.67` in Month November 2026 and in Week 9–15 Nov and 16–22 Nov; "Transfers (4)"; the Income pill "Received by: Joint" shows (K222). The period choices never offer a month that has not started (as wanted), so the December leftover (+€5216.83 = Irene +€3798.00 · Akbar +€893.16 · Joint +€525.67) is checked only by the tests of prompts 2 and 2b until December comes.
+
+### Update round prompt 3c as built (19/11; text and plan only, no SQL)
+
+Part 1 (app). In the order-group panel of "Change purchase ▾"
+(`OrderGroupChangePanel`, `src/components/expenses/ChangePurchase.jsx`) the
+grey line shown when the order group is gone changed from
+`This order group no longer exists (ungrouped, maybe on the other phone).` to
+`This order group no longer exists (ungrouped, maybe on another device).`
+(same wording as the guard of K237). The text now lives in
+`src/lib/changePurchase.js` as `ORDER_GROUP_GONE`, used by the panel. No other
+behaviour changed. Test: `src/components/changePurchase.render.test.jsx`, new
+"the group is gone while the panel is open …" (opens the ▾ of an order-group
+row, then the group disappears; checks the exact new text and that no
+"phone" shows). Mutation check: "phone" put back in the constant → the test
+failed → new text put back → green. The same old text is still in
+`OrderGroupSheet.jsx` (the "Order group" sheet) and other "phone" texts exist
+in other files; they were not part of this prompt and are left as they are.
+
+Part 2 (plan). The contents list (9P now K200–K239), K238 and K239 in the
+Decisions, items 3 and 4 of the Order of work, the answer / SQL 034 run / test
+lines after the Kata ragu of prompt 3, and the subsection "The household's
+manual steps".
+
+Tests: 145 files, 2763 → 2764 tests (one new). Lint: only the old warning
+`supabase/migrations.test.js:538`. Build ok. No file in `supabase/` changed.
 
 ---
 

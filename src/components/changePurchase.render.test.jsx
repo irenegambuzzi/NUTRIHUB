@@ -104,7 +104,7 @@ const { ExpensesPage } = await import('../pages/ExpensesPage')
 const { dismissToast, getToasts, runToastAction } = await import('../lib/feedback')
 const { forgetPartsForTest } = await import('../hooks/useExpenseParts')
 const { setOnlineForTest } = await import('../lib/connection')
-const { CHANGED_MEANWHILE, CHANGE_PURCHASE_NOTICE } = await import('../lib/changePurchase')
+const { CHANGED_MEANWHILE, CHANGE_PURCHASE_NOTICE, ORDER_GROUP_GONE } = await import('../lib/changePurchase')
 
 const [P1, P2] = PAID_BY_OPTIONS.filter((o) => o.kind === 'person').map((o) => o.value)
 const JOINT = 'joint'
@@ -485,5 +485,17 @@ describe('an order-group row (K207): the ▾ saves like the "Order group" sheet'
     fireEvent.click(changeButton())
     choose('Paid by')
     expect([...panel().getByLabelText('Paid by').options].map((o) => o.value)).toEqual([P1, P2, JOINT, SHARED])
+  })
+
+  it('the group is gone while the panel is open (read, but no row of it any more): the grey line says "another device", never "phone"', () => {
+    const { rerender } = render(<ExpensesPage />)
+    openList()
+    openRow(/Iper Coop · 10\/11\/2026/)
+    fireEvent.click(changeButton())
+    data.groups = []
+    rerender(<ExpensesPage />)
+    expect(panel().getByText('This order group no longer exists (ungrouped, maybe on another device).')).toBeTruthy()
+    expect(panel().getByText(ORDER_GROUP_GONE)).toBeTruthy()
+    expect(panel().queryByText(/phone/)).toBeNull()
   })
 })

@@ -26,6 +26,7 @@ export const CHANGE_PURCHASE_FILE = 'supabase/034_change_purchase.sql'
 export const CHANGE_PURCHASE_NOTICE = `This needs the database update ${CHANGE_PURCHASE_FILE}`
 export const FUTURE_PURCHASE = "A purchase can't be after today."
 export const CHANGED_MEANWHILE = 'This purchase changed meanwhile (on another device?) — open it again. Nothing was changed.'
+export const ORDER_GROUP_GONE = 'This order group no longer exists (ungrouped, maybe on another device).'
 export const DATE_INVALID = 'Fix the date first (DD/MM/YYYY).'
 export const CLEARED_PARTS = ' — its parts are cleared when you save.'
 
