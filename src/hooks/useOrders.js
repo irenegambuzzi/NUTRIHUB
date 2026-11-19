@@ -235,7 +235,7 @@ export function syncListFor(order, itemId = null) {
   })
 }
 
-export const alreadyArrivedMessage = (order) => `"${order.item_name}" was already marked as arrived (on the other phone?) — nothing was added again.`
+export const alreadyArrivedMessage = (order) => `"${order.item_name}" was already marked as arrived (on another device?) — nothing was added again.`
 
 // An order arrived — linked to a HOME item, or through "It arrived!" (plan
 // 9J): the stock (`delta`, in the item's own unit) goes to the item `itemId`
@@ -300,7 +300,7 @@ export function arrivedToast(message, arrival) {
   showToast({ message, ...(arrival ? { action: { label: 'Undo', onClick: () => undoArrival(arrival) } } : {}) })
 }
 
-export const changedMeanwhileMessage = (order) => `"${order.item_name}" changed meanwhile (on the other phone?) — nothing was undone.`
+export const changedMeanwhileMessage = (order) => `"${order.item_name}" changed meanwhile (on another device?) — nothing was undone.`
 
 // Whether the order still has the arrival we made (K5): arrived, with the
 // same history row — or, when nothing was added, the same day and no

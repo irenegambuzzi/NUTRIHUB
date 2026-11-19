@@ -265,7 +265,7 @@ describe('the Undo guard against the other phone (K5)', () => {
     await undoArrival(arrival)
     expect(order(o.id)).toEqual(theirs)
     expect(item(oil.id).current_stock).toBe(3)
-    expect(messages()).toContain('"Olive Oil" changed meanwhile (on the other phone?) — nothing was undone.')
+    expect(messages()).toContain('"Olive Oil" changed meanwhile (on another device?) — nothing was undone.')
     expect(db.calls.filter((c) => c.op === 'rpc').map((c) => c.name)).toEqual(['arrive_order', 'unarrive_order', 'arrive_order'])
   })
 
@@ -274,7 +274,7 @@ describe('the Undo guard against the other phone (K5)', () => {
     const { arrival } = await arriveLinkedOrder(asShown(o.id), { itemId: null, delta: 0, date: TODAY })
     await db.supabase.rpc('unarrive_order', { order_id: o.id })
     await undoArrival(arrival)
-    expect(messages()).toContain('"Desk Lamp" changed meanwhile (on the other phone?) — nothing was undone.')
+    expect(messages()).toContain('"Desk Lamp" changed meanwhile (on another device?) — nothing was undone.')
   })
 
   it('offline: Undo is refused, nothing changes', async () => {
@@ -560,7 +560,7 @@ describe('durable and service arrivals through arrive_order (K24)', () => {
     expect(added).toBe(false)
     expect(order(o.id)).toEqual(theirs)
     const toast = getToasts().at(-1)
-    expect(toast.message).toBe('"Desk Chair" was already marked as arrived (on the other phone?) — nothing was added again.')
+    expect(toast.message).toBe('"Desk Chair" was already marked as arrived (on another device?) — nothing was added again.')
     expect(toast.action).toBeNull()
     expect(messages()).not.toContain('“Desk Chair” arrived — durable, nothing added to HOME.')
   })

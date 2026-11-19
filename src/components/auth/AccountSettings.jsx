@@ -24,7 +24,7 @@ export function AccountSettings() {
     setBusy(false)
     if (problem) return setError(problem)
     setForm({ current: '', next: '', repeat: '' })
-    showToast({ message: 'Password changed. Use the new one on the other phone too.' })
+    showToast({ message: 'Password changed. Use the new one on another device too.' })
   }
 
   // Changes made offline that haven't reached Supabase would be lost:
@@ -35,14 +35,14 @@ export function AccountSettings() {
     if (waiting) {
       const anyway = await confirmDialog({
         title: 'Changes not sent yet',
-        message: `${waiting} change${waiting === 1 ? '' : 's'} made offline ${waiting === 1 ? "hasn't" : "haven't"} reached the other phone yet. Logging out deletes ${waiting === 1 ? 'it' : 'them'} from this device. Wait until you're online and the "waiting" pill is gone, or log out anyway.`,
+        message: `${waiting} change${waiting === 1 ? '' : 's'} made offline ${waiting === 1 ? "hasn't" : "haven't"} reached another device yet. Logging out deletes ${waiting === 1 ? 'it' : 'them'} from this device. Wait until you're online and the "waiting" pill is gone, or log out anyway.`,
         confirmLabel: 'Log out anyway',
       })
       if (!anyway) return
     } else {
       const ok = await confirmDialog({
         title: 'Log out of this device?',
-        message: 'The data kept on this device (offline copies, photos, remembered choices) is deleted. The other phone stays logged in.',
+        message: 'The data kept on this device (offline copies, photos, remembered choices) is deleted. Another device stays logged in.',
         confirmLabel: 'Log out',
       })
       if (!ok) return

@@ -135,7 +135,7 @@ describe('"It arrived!" (an order not linked to HOME)', () => {
     await db.supabase.rpc('arrive_order', { order_id: o.id, item_id: null, add_qty: 0, arrived_on: '2026-10-30' })
     await open(shown)
     click("Don't add to HOME")
-    const text = await toast('"Bird Seed" was already marked as arrived (on the other phone?) — nothing was added again.')
+    const text = await toast('"Bird Seed" was already marked as arrived (on another device?) — nothing was added again.')
     expect(within(text.closest('[role="status"]')).queryByRole('button', { name: 'Undo' })).toBeNull()
   })
 

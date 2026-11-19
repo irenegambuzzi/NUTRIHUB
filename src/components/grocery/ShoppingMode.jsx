@@ -146,8 +146,8 @@ export function ShoppingMode({ items, shopOrder, categoryName, totalOf, costOf, 
       {arranging && (
         <p className="text-[11px] text-[var(--color-text-muted)]">
           {sort === 'route'
-            ? 'Drag the handle to put each item where you find it in the shop. Both phones get the same order.'
-            : 'Move categories up or down into the order of the aisles. Both phones get the same order.'}
+            ? 'Drag the handle to put each item where you find it in the shop. Every device gets the same order.'
+            : 'Move categories up or down into the order of the aisles. Every device gets the same order.'}
         </p>
       )}
 

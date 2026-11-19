@@ -73,7 +73,7 @@ export async function splitPurchase(tripId, expenseIds = null, { offerUndo = tru
   if (result.error) return result
   const count = Number(result.data) || 0
   if (count === 0) {
-    showToast({ message: 'Nothing to split — it was already split (on the other phone?).' })
+    showToast({ message: 'Nothing to split — it was already split (on another device?).' })
     return result
   }
   const undo = before ? undoSplit(tripId, before) : null

@@ -50,6 +50,7 @@ const { PurchaseGroup } = await import('./expenses/ExpenseGroup')
 const { groupPurchases, purchasePart } = await import('../lib/moneyList')
 const { groupDiscountNote, groupLabel, groupMembers } = await import('../lib/orderGroups')
 const { expenseDiscountNote } = await import('../lib/orders')
+const { ORDER_GROUP_GONE } = await import('../lib/changePurchase')
 
 // The 17/10 order at Amazon.it, grouped with −€3.23.
 const shares = [0.87, 0.75, 0.62, 0.24, 0.31, 0.14, 0.3]
@@ -256,6 +257,14 @@ describe('the "Order group" sheet', () => {
     fireEvent.click(screen.getByLabelText('Order discount in percent'))
     fireEvent.change(screen.getByLabelText('Order discount'), { target: { value: '150' } })
     expect(screen.getByRole('alert').textContent).toBe("A discount can't be more than 100%.")
+  })
+
+  it('a group that no longer exists: the same grey line as "Change purchase ▾" (ORDER_GROUP_GONE, "another device", never "phone")', () => {
+    data.groups = []
+    render(<OrderGroupSheet groupId="g1" shopById={shops} onClose={() => {}} />)
+    expect(screen.getByText(ORDER_GROUP_GONE)).toBeTruthy()
+    expect(ORDER_GROUP_GONE).toBe('This order group no longer exists (ungrouped, maybe on another device).')
+    expect(screen.queryByText(/phone/)).toBeNull()
   })
 })
 

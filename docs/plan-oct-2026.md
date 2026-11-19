@@ -41,9 +41,9 @@ Contents
      as built; K177–K193, prompts 2–4 as built, the new order of work (K193)
    - 9P. Update round (decided 15–16/11): the search in "Confirm purchase", the
      date and payer of a whole purchase, the Reopen / Undo bug report, the
-     shared bank account; K200–K239, prompts 1, 2 and 2b as built (SQL 033),
+     shared bank account; K200–K241, prompts 1, 2 and 2b as built (SQL 033),
      prompt 3 "Change purchase ▾" as built (SQL 034), the household's manual
-     steps (18–19/11), prompt 3c as built
+     steps (18–19/11), prompts 3c and 3d as built
 10. Risks and decisions
 
 ---
@@ -93,6 +93,7 @@ toasts, code, comments, commit messages — is English.
   (`lib/payers.js`, plan 9P K216).
 - Phone first: tap targets ≥ 36 px (`min-h-9`), no horizontal scroll, inline
   rows rather than popups where the brief says "no popups".
+- Texts say "device", never "phone": the household uses computers, iPhones and an iPad (9P K240).
 
 **Finish every round with:** `npm test` (all green), `npm run lint`,
 `npm run build`; then commit only your files with a clear message (end it
@@ -6897,6 +6898,8 @@ K198 B. Parts F–G: the read-only queries and the test labels.
 - **K237** Texts (exact; singular with 1: "1 expense"). Button `Change purchase ▾`. Choices `Store` · `Date` · `Paid by`. Every save button `Save for the whole purchase`, next to `Cancel`. Store: today's sheet content moved inline — "Bought at" (ShopPicker), the grey line `Purchase of {DD/MM/YYYY}: the store changes for all {n} of its expenses, in every budget category.`; saved by today's setTripShop unchanged (its toast "Store changed for {n} expense(s) of this purchase" + Undo); the store is not part of change_purchase. Date: DateField labelled `Date`, starting on the purchase date; grey line `All {n} expenses of this purchase move to this day.` (n = 1: `The 1 expense of this purchase moves to this day.`); invalid date: `Fix the date first (DD/MM/YYYY).` Paid by: grey line `All {n} expenses of this purchase get this payer.` (n = 1: `The 1 expense of this purchase gets this payer.`). Toasts with Undo (TOAST_WITH_ACTION_MS = 20 s): `Date changed for {n} expenses of this purchase · {DD/MM/YYYY}` and `Paid by changed for {n} expenses of this purchase · {label}`. Guard: `This purchase changed meanwhile (on another device?) — open it again. Nothing was changed.` Before 034 (function missing): `This needs the database update supabase/034_change_purchase.sql` in the panel's red line for Date and Paid by; Store keeps working. Offline: `You're offline — this needs a connection.` (nothing queued). Failed save: `Couldn't save — check your connection.` + Retry; the panel keeps what was chosen. n = ALL expenses of the purchase (merged ones included), also when a category filter or a person pill shows only part of it. Saving the value it already has → nothing sent, the panel closes, no toast. A purchase whose expenses have different dates (one edited by hand): the date choice starts on shopping_trips.trip_date and the save puts every expense on the new date (one date per purchase, K205).
 - **K238** (18/11; Kata ragu 1 of prompt 3 = a) 034 stays strict about the parts: a Shared expense needs both parts (each 0 or more), any other payer none. Decided with data: a read-only query of 18/11 found 418 expenses that belong to a purchase and 0 that break this rule; after K216 and the household's manual step a (the two 14/11 purchases to Joint) such a purchase can practically not appear; if one does, the change is only refused and nothing is lost. 034 was run as written.
 - **K239** (process, 19/11) Prompt 3c (the "device" text and this plan update) runs after the household's manual steps a–d.
+- **K240** (A, 19/11; Kata ragu of prompt 3c) Every app text says "device", never "phone" (the household opens the app on 2 computers, 3 iPhones and 1 iPad). The 11 old texts found in prompt 3c were changed in prompt 3d; the "Order group" sheet uses the same constant as the "Change purchase ▾" panel. Budget category words and keywords about phone bills ("phone plan", "Internet & Phone") are not device texts and stay.
+- **K241** (19/11) The headings of "Update round prompt 2 as built" and "Update round prompt 3 as built" say that SQL 033 and 034 were run (18/11/2026).
 
 **Order of work (decided 16/11).**
 
@@ -7047,7 +7050,7 @@ the "older read" rule off → 2.
 
 iPhone test of Update round prompt 1 done 16/11/2026: all OK (part C, the K214 test in Chrome, skipped: Chrome's request blocking did not reach the app's realtime connection; covered by the automated tests).
 
-### Update round prompt 2 as built (18/11; SQL 033 written, not run)
+### Update round prompt 2 as built (18/11; SQL 033 run 18/11/2026)
 
 Built: K210, K211 (October unchanged), K216, K216a, K217, K218 (b), K219,
 K221–K231 (and the plan). One new SQL file, `supabase/033_transfers.sql`
@@ -7303,7 +7306,7 @@ future-dated rows inside a running period count in `Joint now` (K192).
 
 iPhone test of Update round prompt 2 and 2b done 18/11/2026: all OK.
 
-### Update round prompt 3 as built (18/11; SQL 034 written, not run)
+### Update round prompt 3 as built (18/11; SQL 034 run 18/11/2026)
 
 Built: K204–K209 with K205 (corrected), K216, K236, K237, and the plan.
 One new SQL file, `supabase/034_change_purchase.sql` (never run by
@@ -7606,6 +7609,59 @@ lines after the Kata ragu of prompt 3, and the subsection "The household's
 manual steps".
 
 Tests: 145 files, 2763 → 2764 tests (one new). Lint: only the old warning
+`supabase/migrations.test.js:538`. Build ok. No file in `supabase/` changed.
+
+### Update round prompt 3d as built (19/11; texts and plan only, no SQL)
+
+K240: every app text says "device", never "phone". Part 1 (app), the texts
+(full sentences; only the word and the grammar the change forces):
+
+| File | Text before | Text after |
+|---|---|---|
+| `src/components/expenses/OrderGroupSheet.jsx` | `This order group no longer exists (ungrouped, maybe on the other phone).` | `ORDER_GROUP_GONE` from `src/lib/changePurchase.js`: `This order group no longer exists (ungrouped, maybe on another device).` (the same constant as the panel of "Change purchase ▾") |
+| `src/components/auth/AccountSettings.jsx` | `Password changed. Use the new one on the other phone too.` | `Password changed. Use the new one on another device too.` |
+| `src/components/auth/AccountSettings.jsx` | `{n} change(s) made offline hasn't / haven't reached the other phone yet. Logging out deletes it / them from this device. Wait until you're online and the "waiting" pill is gone, or log out anyway.` | `… reached another device yet. …` (rest unchanged) |
+| `src/components/auth/AccountSettings.jsx` | `The data kept on this device (offline copies, photos, remembered choices) is deleted. The other phone stays logged in.` | `… is deleted. Another device stays logged in.` |
+| `src/components/layout/SyncStatus.jsx` | `No connection. Checking off, quantities and stock − / + are saved on this phone and sync when you're back online; other changes need a connection.` | `… are saved on this device and sync when you're back online; …` |
+| `src/components/grocery/ShoppingMode.jsx` | `Drag the handle to put each item where you find it in the shop. Both phones get the same order.` | `… in the shop. Every device gets the same order.` |
+| `src/components/grocery/ShoppingMode.jsx` | `Move categories up or down into the order of the aisles. Both phones get the same order.` | `… the aisles. Every device gets the same order.` |
+| `src/hooks/useMerge.js` | `Nothing to split — it was already split (on the other phone?).` | `Nothing to split — it was already split (on another device?).` |
+| `src/hooks/useOrders.js` | `"{item}" was already marked as arrived (on the other phone?) — nothing was added again.` | `… (on another device?) — nothing was added again.` |
+| `src/hooks/useOrders.js` | `"{item}" changed meanwhile (on the other phone?) — nothing was undone.` | `… (on another device?) — nothing was undone.` |
+| `src/lib/merge.js` | `{text} They may have just been merged on the other phone — nothing was changed.` | `{text} They may have just been merged on another device — nothing was changed.` |
+
+Tests changed (they expect the app's real text): `arrivedUndo.render.test.jsx`
+(already arrived), `arrivalUndo.test.js` (two "changed meanwhile", one "already
+marked as arrived"), `merge.test.js`, `useMerge.test.js`, and the fixture `src/hooks/arrivalDb.fixture.js`. Test added:
+`orderGroups.render.test.jsx`, "a group that no longer exists …" (the sheet
+shows `ORDER_GROUP_GONE`, the exact new text, no "phone"). Mutation check: the
+old text put back in `OrderGroupSheet.jsx` → that test failed → restored →
+`git diff` shows only the intended changes.
+
+Left as it is, on purpose: `changedMeanwhileText` in `src/lib/itemNames.js`
+(still "on the other phone?"). No screen shows it: it is the copy "word for
+word as supabase/032 says it", and two tests in `supabase/migrations.test.js`
+(stage 4, tests 2 and 5) compare the database's real message with it. Changing
+it means a new SQL and a changed test in `supabase/`, which prompt 3d does not
+allow (a question for Zidane).
+
+Left as they are, on purpose: messages the database raises (SQL files in
+`supabase/`, still "on the other phone?", e.g. 028, 032) and the tests that
+only pass such a message through (`mergeSeparate.test.js`,
+`orderGroups.test.js`, `itemNameActions.test.js`): no SQL in this prompt; they
+show only when two devices race. Also left: the budget category words and
+keywords about phone bills ("Internet & Phone", "phone plan", "phone case" …),
+code comments, identifiers and test titles. The rule line "Phone first" in
+section 0 is about screen size for developers, not an app text.
+
+Part 2 (plan): (a) the contents list (9P now K200–K241, "prompts 3c and 3d as
+built"); (b) the bullet "Texts say "device", never "phone"" in section 0;
+(c) K240 and K241 in the Decisions; (d) the headings of prompts 2 and 3 now say
+SQL 033 / 034 run 18/11/2026 (the only other "written, not run" lines are
+SQL 030 and 031 in an older list of the order of work, about 9L and 9M, not changed); (e) this
+subsection.
+
+Tests: 145 files, 2764 → 2765 tests (one new). Lint: only the old warning
 `supabase/migrations.test.js:538`. Build ok. No file in `supabase/` changed.
 
 ---

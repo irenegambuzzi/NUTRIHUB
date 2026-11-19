@@ -20,7 +20,7 @@ export function SyncStatus({ className }) {
       title={
         online
           ? 'Sending the changes made offline.'
-          : 'No connection. Checking off, quantities and stock − / + are saved on this phone and sync when you\'re back online; other changes need a connection.'
+          : 'No connection. Checking off, quantities and stock − / + are saved on this device and sync when you\'re back online; other changes need a connection.'
       }
       className={cn(
         'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold border shadow-sm',

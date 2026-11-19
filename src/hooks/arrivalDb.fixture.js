@@ -175,7 +175,7 @@ export function arrivalDb({ units = false } = {}) {
     const asked = [...(payload.add ?? []), ...(payload.edit ?? [])]
     const holds = (n, a) => Object.entries(a).every(([k, v]) => same(n[k], v))
     if (!asked.some((a) => !names.some((n) => holds(n, a))) && !(payload.remove ?? []).some((r) => names.some((n) => key(n.name) === key(r)))) return { ...pi }
-    if (JSON.stringify(names) !== JSON.stringify(payload.was?.names ?? null)) throw new Error(`"${pi.name}" changed meanwhile (on the other phone?) — open it again. Nothing was changed.`)
+    if (JSON.stringify(names) !== JSON.stringify(payload.was?.names ?? null)) throw new Error(`"${pi.name}" changed meanwhile (on another device?) — open it again. Nothing was changed.`)
     let next = names.filter((n) => !(payload.remove ?? []).some((r) => key(r) === key(n.name)))
     for (const e of payload.edit ?? []) {
       const fields = Object.fromEntries(Object.entries(e).filter(([k]) => ['packaging_unit', 'quantity_per_pack', 'price', 'price_qty', 'price_unit'].includes(k)))

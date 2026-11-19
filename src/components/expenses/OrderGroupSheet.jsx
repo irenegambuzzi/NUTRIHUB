@@ -12,6 +12,7 @@ import { PAYER_MISSING, payerOptionsFor, startingPayer } from '../../lib/payers'
 import { confirmDialog } from '../../lib/feedback'
 import { couponText, discountProblem, parseDiscount } from '../../lib/discounts'
 import { ORDER_STATUS } from '../../lib/orders'
+import { ORDER_GROUP_GONE } from '../../lib/changePurchase'
 import { groupDiscount, groupLabel, groupMembers, groupPreview } from '../../lib/orderGroups'
 import { money } from '../../lib/pricing'
 import { orderGroupStore, orderStore } from '../../lib/stores'
@@ -52,7 +53,7 @@ export function OrderGroupSheet({ groupId, shopById, onClose }) {
           <GroupForm key={group.id} group={group} members={members} label={groupLabel(members, shopName)} onClose={onClose} />
         ) : (
           <p className="text-xs text-[var(--color-text-muted)]">
-            {loaded ? 'This order group no longer exists (ungrouped, maybe on the other phone).' : 'The order group is still loading — it needs a connection.'}
+            {loaded ? ORDER_GROUP_GONE : 'The order group is still loading — it needs a connection.'}
           </p>
         )}
       </div>

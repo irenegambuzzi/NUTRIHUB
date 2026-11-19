@@ -61,7 +61,7 @@ describe('adding to an existing purchase', () => {
 
 describe('two phones merging the same expenses', () => {
   it('the second is told plainly that nothing changed', () => {
-    expect(mergeErrorMessage('"Bread" is already part of a purchase — only single expenses can be merged.')).toMatch(/merged on the other phone — nothing was changed/)
+    expect(mergeErrorMessage('"Bread" is already part of a purchase — only single expenses can be merged.')).toMatch(/merged on another device — nothing was changed/)
     expect(mergeErrorMessage('Only expenses of the same day can be merged into one purchase.')).toBe('Only expenses of the same day can be merged into one purchase.')
   })
 })

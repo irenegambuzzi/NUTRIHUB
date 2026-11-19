@@ -56,7 +56,7 @@ describe('Merge into one purchase', () => {
   it('two phones: the second is refused clearly, and nothing changed', async () => {
     fakeDb({ answers: { merge_expenses_into_purchase: { data: null, error: { message: '"Bread" is already part of a purchase — only single expenses can be merged.' } } } })
     const { error } = await mergeExpenses({ id: 'new', expenseIds: ['a', 'b'], shopId: 'conad' })
-    expect(error.message).toMatch(/already part of a purchase.*other phone — nothing was changed/)
+    expect(error.message).toMatch(/already part of a purchase.*another device — nothing was changed/)
     expect(getToasts().at(-1)).toMatchObject({ tone: 'error', message: error.message })
   })
 })

@@ -55,6 +55,6 @@ export function joinablePurchases(selected, trips, expenses) {
 // purchase"), which is said plainly.
 export function mergeErrorMessage(message) {
   const text = String(message ?? '')
-  if (/already part of a purchase/i.test(text)) return `${text} They may have just been merged on the other phone — nothing was changed.`
+  if (/already part of a purchase/i.test(text)) return `${text} They may have just been merged on another device — nothing was changed.`
   return text
 }
